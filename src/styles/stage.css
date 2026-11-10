@@ -1,0 +1,92 @@
+/* The stage: the persistent frame every film plays inside. A film is canvas
+   layers under one HTML layer, all sharing a 1280 x 520 design space. */
+.stage-frame {
+  position: relative;
+  min-height: 250px;
+  min-width: 0;
+  border: 1px solid var(--line-2);
+  background: var(--stage);
+  overflow: hidden;
+  isolation: isolate;
+}
+.stage { position: absolute; inset: 0; }
+@media (max-width: 899px) { .stage-frame { aspect-ratio: 1280 / 520; min-height: 0; } }
+
+.scene { position: absolute; inset: 0; opacity: 1; transition: opacity .36s var(--ease-in-out), transform .36s var(--ease-in-out); }
+.scene.is-entering { opacity: 0; transform: translateY(6px); }
+.scene.is-leaving { opacity: 0; transform: translateY(-6px); pointer-events: none; }
+.scene-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.scene-html { position: absolute; left: 0; top: 0; width: 1280px; height: 520px; transform-origin: 0 0; font: 400 13px/1.3 var(--sans); letter-spacing: -0.01em; color: var(--text); pointer-events: none; }
+.scene-html * { box-sizing: border-box; }
+.scene-html p, .scene-html h4, .scene-html ul, .scene-html ol { margin: 0; padding: 0; list-style: none; }
+.scene-html button, .scene-html [data-click] { pointer-events: auto; }
+.scene-error { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; font: 400 12px/1.5 var(--mono); color: var(--alert); text-align: center; }
+@media (prefers-reduced-motion: reduce) { .scene { transition: none; } }
+
+/* ---- The instrument rail --------------------------------------------------- */
+.rail { position: absolute; left: 920px; top: 26px; width: 332px; height: 468px; display: flex; flex-direction: column; gap: 12px; }
+.ins { display: grid; gap: 7px; min-width: 0; }
+.ins + .ins { padding-top: 12px; border-top: 1px solid var(--line-2); }
+.ins-pair { grid-template-columns: 1fr 1fr; column-gap: 20px; align-items: start; }
+.ins-pair > .ins { padding-top: 0; border-top: 0; }
+.ins-label { font: 500 10.5px/1.08 var(--sans); letter-spacing: .04em; text-transform: uppercase; font-feature-settings: "case", "kern"; color: var(--muted); }
+.tone-old > .ins-label { color: var(--old); }
+/* Large numerals are light and tight, with the unit as a small label on the baseline. */
+.ins-value { display: flex; align-items: baseline; font: 400 46px/1 var(--sans); letter-spacing: -0.02em; font-feature-settings: "tnum", "kern"; color: var(--ink); }
+.size-m .ins-value { font-size: 34px; }
+.size-s .ins-value { font-size: 24px; }
+.tone-old .ins-value { color: var(--old); }
+.tone-muted .ins-value { color: var(--muted); }
+.tone-alert .ins-value { color: var(--alert); }
+.ins-unit, .ins-prefix { font: 500 11.5px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-left: 7px; white-space: nowrap; }
+.ins-unit:empty { display: none; }
+.ins-prefix { margin: 0 7px 0 0; }
+.tone-old .ins-unit, .tone-old .ins-prefix { color: var(--old); opacity: .85; }
+.odo { display: inline-flex; align-items: baseline; height: 1em; }
+.odo-col { display: block; width: .64em; height: 1em; overflow: hidden; }
+.odo-strip { display: block; white-space: pre; line-height: 1; text-align: center; will-change: transform; }
+.odo-point { display: block; line-height: 1; }
+.ins-bar { position: relative; height: 1px; background: var(--line-2); overflow: hidden; }
+.ins-bar > i { position: absolute; inset: 0; background: var(--ink); transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }
+.tone-old .ins-bar > i { background: var(--old); }
+.tone-muted .ins-bar > i { background: var(--muted); }
+
+.ins-phase { gap: 7px; }
+.phase-window { position: relative; height: 30px; overflow: hidden; }
+.phase-window span { position: absolute; left: 0; top: 0; font: 500 23px/30px var(--sans); letter-spacing: -0.025em; color: var(--ink); white-space: nowrap; will-change: transform, opacity; }
+
+.dots { display: flex; flex-wrap: wrap; gap: 5px; }
+.dots i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--wire); background: transparent; }
+.dots i[data-s="1"] { background: var(--mark); border-color: var(--mark); }
+.dots i[data-s="2"] { background: var(--old); border-color: var(--old); }
+.dots i[data-s="3"] { background: var(--ink); border-color: var(--ink); }
+.dots i[data-s="4"] { border-color: var(--mark); }
+.dots i[data-s="5"] { background: var(--alert); border-color: var(--alert); }
+.dots i[data-s="6"] { background: var(--live); border-color: var(--live); }
+.dots-legend { font: 400 12px/1.25 var(--sans); color: var(--muted); }
+.dots-legend:empty { display: none; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border: 1px solid var(--line-2); font: 500 10px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; font-feature-settings: "case"; color: var(--faint); white-space: nowrap; }
+.chip[data-s="1"] { border-color: var(--dim); color: var(--ink); }
+.chip[data-s="2"] { border-color: var(--ink); color: #000; background: var(--ink); }
+.chip[data-s="3"] { border-color: var(--old); color: var(--old); }
+.chip[data-s="4"] { border-color: var(--alert); color: var(--alert); }
+.chip[data-s="5"] { border-color: var(--live); color: #000; background: var(--live); }
+.log { display: grid; gap: 6px; }
+.log-row { display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 8px; height: 14px; font: 400 12px/1 var(--sans); color: var(--faint); white-space: nowrap; }
+.log-row i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--wire); }
+.log-row em { font: 400 10.5px/1 var(--mono); font-style: normal; letter-spacing: 0; color: var(--muted); }
+.log-row[data-on="1"] { color: var(--ink); }
+.log-row[data-on="1"] i { background: var(--ink); border-color: var(--ink); }
+.ins-chart canvas { display: block; }
+.ins-note { margin-top: auto !important; padding-top: 11px !important; border-top: 1px solid var(--line-2); font: 400 12px/1.3 var(--sans); color: var(--faint); }
+
+/* ---- Shared vocabulary for mock interfaces in the HTML layer ---------------- */
+.ui-abs { position: absolute; left: 0; top: 0; will-change: transform, opacity; }
+.ui-panel { background: rgba(10, 11, 11, .96); border: 1px solid var(--line-2); }
+.ui-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 28px; padding: 0 11px; border-bottom: 1px solid var(--line-2); font: 500 10px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.ui-tag { font: 500 10px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+.ui-mono { font-family: var(--mono); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.ui-ink { color: var(--ink); } .ui-muted { color: var(--muted); } .ui-faint { color: var(--faint); }
+.ui-mark { color: var(--mark); } .ui-old { color: var(--old); } .ui-alert { color: var(--alert); } .ui-live { color: var(--live); }

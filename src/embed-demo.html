@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Drop-in demo: a stand-in for an article</title>
+<style>
+  /* This page stands in for an existing article. Nothing here belongs to the widget. */
+  body{margin:0;background:#0b0b0b;color:#e9e7e1;font:18px/1.55 Georgia,"Times New Roman",serif}
+  main{max-width:1180px;margin:0 auto;padding:56px 24px 96px}
+  .kicker{font:600 12px/1 system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#a09c92;margin:0 0 14px}
+  h1{margin:0 0 8px;font:700 clamp(34px,5vw,60px)/1.02 Georgia,serif}
+  .dek{max-width:680px;color:#b9b5aa;margin:0 0 28px}
+  .list{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}
+  .list button,.nav button{background:none;border:1px solid #3a3935;color:#b9b5aa;font:14px system-ui,sans-serif;cursor:pointer;padding:6px 10px}
+  .list button[aria-current="true"]{color:#0b0b0b;background:#e9e7e1;border-color:#e9e7e1}
+  .nav{display:flex;gap:8px;margin:0 0 26px}
+  h2{font:700 30px/1.1 Georgia,serif;margin:0 0 14px}
+  code{font:14px ui-monospace,Menlo,monospace;color:#dff140}
+  .note{margin-top:36px;font-size:15px;color:#8d8a80;max-width:720px}
+</style>
+</head>
+<body>
+<main>
+  <p class="kicker">Stand-in article</p>
+  <h1>Ten wins</h1>
+  <p class="dek">Everything on this page above the stage is a placeholder for a real article with its own markup and its own script. The stage is the only thing the widget adds.</p>
+  <div class="list" id="list"></div>
+  <div class="nav"><button id="prev">Previous</button><button id="next">Next</button></div>
+  <h2 id="win-title">Fury</h2>
+
+  <!-- ↓↓↓ The only two lines added to the page. ↓↓↓ -->
+  <div data-wins-motion data-follow="#win-title"></div>
+  <script src="wins-motion.js"></script>
+  <!-- ↑↑↑ -->
+
+  <p class="note">The stage follows the heading with no extra wiring: <code>data-follow="#win-title"</code> tells it to watch that element and play the matching film whenever the name in it changes. The article's own script, below, knows nothing about the widget.</p>
+</main>
+<script>
+  // The article's own navigation, reduced to its essentials.
+  var names = ['Fury', 'Leonidas', 'Ward 250', 'Talon-A2', 'Varda W-5', 'LUCAS', 'Quarterhorse', 'Marauder', 'Victus Haze', 'Blackbeard'];
+  var at = 0, list = document.getElementById('list');
+  function go(i) {
+    at = (i + names.length) % names.length;
+    document.getElementById('win-title').textContent = names[at];
+    [].forEach.call(list.children, function (b, k) { b.setAttribute('aria-current', String(k === at)); });
+  }
+  names.forEach(function (n, i) { var b = document.createElement('button'); b.textContent = n; b.onclick = function () { go(i); }; list.appendChild(b); });
+  document.getElementById('prev').onclick = function () { go(at - 1); };
+  document.getElementById('next').onclick = function () { go(at + 1); };
+  go(0);
+</script>
+</body>
+</html>
