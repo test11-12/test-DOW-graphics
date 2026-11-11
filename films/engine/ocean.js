@@ -246,7 +246,8 @@ void main(){
   float vis = clamp(dot(N, uSunDir)*6.0, 0.0, 1.0)*smoothstep(-0.01, 0.03, uSunDir.y);
   float glint = 1.0;
   if (uSparkle > 0.0) glint = mix(1.0, 0.35+glints(vW, across, uTime), uSparkle);
-  col += uSunColor*uGlitter*min(Dg*Fh/(4.0*max(NV, 0.1)), 220.0)*vis*shadow*glint;
+  vec3 gl = uSunColor*uGlitter*min(Dg*Fh/(4.0*max(NV, 0.1)), 220.0)*vis*shadow*glint;
+  col += gl*min(1.0, 2.0e4/max(max(gl.r, max(gl.g, gl.b)), 1e-6));   // glints stay inside half-float range
 
   // foam: diffuse, lit by sun and sky
   float fl = max(dot(N, uSunDir), 0.0)*0.8+sunUp*0.2;

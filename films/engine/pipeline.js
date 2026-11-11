@@ -312,7 +312,8 @@ void main(){
       if (disk > 0.0){
         vec3 Tv = exp(-sunTau(RG+uCamAlt, rd.y));
         float limb = 1.0-0.55*(1.0-sqrt(clamp((cv-cs)/(1.0-cs),0.0,1.0)));
-        skyc += uSunE*14700.0*uSunDisk*Tv*disk*limb;
+        vec3 sd = uSunE*14700.0*uSunDisk*Tv*disk*limb;
+        skyc += sd*min(1.0, 3.0e4/max(max(sd.r, max(sd.g, sd.b)), 1e-6));
       }
       col += skyc*(1.0-sc.a);
     }
@@ -366,7 +367,8 @@ void main(){
   if (disk > 0.0){
     vec3 Tv = exp(-sunTau(RG+uCamAlt, rd.y));
     float limb = 1.0-0.55*(1.0-sqrt(clamp((cv-cs)/(1.0-cs),0.0,1.0)));
-    col += uSunE*14700.0*uSunDisk*Tv*disk*limb;
+    vec3 sd = uSunE*14700.0*uSunDisk*Tv*disk*limb;
+    col += sd*min(1.0, 3.0e4/max(max(sd.r, max(sd.g, sd.b)), 1e-6));   // stay inside half-float range, keep the hue
   }
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -488,7 +490,7 @@ precision highp float;
 uniform sampler2D tColor, tVelFull; uniform vec3 uDof;  // focus distance (m), px of blur per unit (z-S)/z, max blur (px)
 varying vec2 vUv;
 void main(){
-  vec3 c = min(texture2D(tColor, vUv).rgb, vec3(4.0e3));
+  vec3 c = texture2D(tColor, vUv).rgb; c *= min(1.0, 4.0e3/max(max(c.r, max(c.g, c.b)), 1e-6));
   float z = texture2D(tVelFull, vUv).z;
   gl_FragColor = vec4(c, clamp((z-uDof.x)/z*uDof.y, -uDof.z, uDof.z)*0.5);
 }`;
@@ -526,7 +528,8 @@ void main(){
   vec4 q = uInvProj*vec4(vUv*2.0-1.0, 1.0, 1.0);
   vec3 rd = normalize(uCamRot*normalize(q.xyz/q.w));
   float m = step(0.999999, texture2D(tDepth, vUv).x)*pow(max(dot(rd,uSunDir), 0.0), 20.0);
-  gl_FragColor = vec4(min(texture2D(tColor, vUv).rgb, vec3(80.0))*m, 1.0);
+  vec3 c = texture2D(tColor, vUv).rgb;
+  gl_FragColor = vec4(c*min(1.0, 80.0/max(max(c.r, max(c.g, c.b)), 1e-6))*m, 1.0);   // cap brightness, keep the sun's hue
 }`;
 const RAY_BLUR_FRAG = /* glsl */`
 precision highp float;
@@ -570,7 +573,7 @@ void main(){
     // anamorphic streak: long, thin, fading smoothly
     vec3 st = vec3(0.0); float ws = 0.0;
     for (int i=-32;i<=32;i++){ float w = exp(-abs(float(i))/7.0); st += thr(vUv+vec2(float(i)*uTexel.x*2.2, 0.0))*w; ws += w; }
-    res += st/ws*vec3(0.5,0.7,1.0)*uK.z;
+    res += st/ws*vec3(0.78,0.88,1.0)*uK.z*0.45;   // a faint, nearly neutral streak: documentary glass, not a stylised anamorphic
   }
   gl_FragColor = vec4(res, 1.0);
 }`;
@@ -578,7 +581,7 @@ const BLOOM_DOWN_FRAG = /* glsl */`
 precision highp float;
 uniform sampler2D tIn; uniform vec2 uTexel; uniform float uFirst;
 varying vec2 vUv;
-vec3 S(vec2 o){ return min(texture2D(tIn, vUv+o*uTexel).rgb, vec3(6.0e3)); }
+vec3 S(vec2 o){ vec3 c = texture2D(tIn, vUv+o*uTexel).rgb; return c*min(1.0, 6.0e3/max(max(c.r, max(c.g, c.b)), 1e-6)); }   // cap brightness, keep hue
 float kw(vec3 c){ return 1.0/(1.0+max(c.r,max(c.g,c.b))*uFirst); }
 void main(){
   vec3 a=S(vec2(-2,2)), b=S(vec2(0,2)), c=S(vec2(2,2)), d=S(vec2(-2,0)), e=S(vec2(0,0)), f=S(vec2(2,0)),
