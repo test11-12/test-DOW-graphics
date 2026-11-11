@@ -166,14 +166,23 @@ writes one into the outputs and switches the pixel to the layered lighting (cavi
 reflection, relief under a low sun kept energy-neutral). `layerMeanAlbedo(L_NAME)` lets a recipe regrade a scan
 to a target colour or use it as a multiplier over its own painted surface. `layerAniso` / `layerAnisoB` set
 the anisotropy of the two arrays (albedo + height; normal + roughness + occlusion); `detail: [k, strength]`
-lays the scan over itself k times finer (k a whole number) where the camera magnifies it.
+lays the scan over itself k times finer (k a whole number) where the camera magnifies it; `relief` (metres per
+unit of the height channel) marches the scan's height field towards the sun within a few centimetres per pixel,
+so stones, cracks and broom ridges cast their own shadows under a low sun (`Surf.sh`, debug view `uDebug = 9`).
+Recipe options: `partialGround: true` finds the ground behind half-covered pixels (the fine blades at a plant's
+edge) instead of shading it on the impostor's plane; `ambSat` (0..1) takes saturation out of the sky light on
+the layered ground. Heights are R32F, or hi + lo in RG16F on GPUs without `OES_texture_float_linear` (`?hsplit=1`
+forces that path for testing); read them with `hLod()` / `hRead()`, which add the parts.
 
 **Scrub** (`src/scrub.js`): `await buildScrub(pipe, { atlas, terrain, clouds, field })` returns
 `{ group, update(camera, film) }`. Plants are impostors relit from the baked sun and sky light groups, with
-baked ground-shadow decals; nothing is stored per plant. A field (`{ pitch, cell, bounds, glsl }`, GLSL
-`scrubDensity`, `scrubSpecies`, `scrubDrawn`) says where plants grow; the film's terrain recipe includes the
-same GLSL so the ground's tone stands in for plants too small to draw. Film 1: `SCRUB_FIELD_NM` (in
-`scrub.js`); film 2: `src/scrub_mojave.js`.
+baked ground-shadow decals; nothing is stored per plant. A field (`{ pitch, cell, bounds, density, species,
+glsl, sizes, tone }`, GLSL `scrubD` (grass, shrubs per slot), `scrubDensity`, `scrubGrassy`, `scrubDrawn`) says
+where plants grow and how big and bright each species is (`sizes`: scale on the baked plant, `tone`: gain on its
+baked albedo, or `[gain, saturation]`); the film's terrain recipe includes the same GLSL so the ground's tone
+stands in for plants too small to draw. Keep the scrub as the photographs show it: low (creosote under about
+1.5 m), metres apart, graded strips beside the pavement. Film 1: `SCRUB_FIELD_NM` (in `scrub.js`); film 2:
+`src/scrub_mojave.js`.
 
 **Sea** (`engine/ocean.js`): `new Ocean(pipe, {clouds, sea: {wind, amp, long, chop, spread}})` draws a
 displaced grid depth-only and lights it in one full-screen pass (sea level is world y = 0). Call

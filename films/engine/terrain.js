@@ -17,8 +17,10 @@ import { loadTexture } from './assets.js';
 // so any number of layers costs two samplers.
 // Optional per layer: detail = [k, strength]: where the camera is close enough to magnify the scan (a texel wider than
 // a pixel), the same scan, k times finer, is laid over it as grain (albedo contrast and relief), so the ground a metre
-// from the lens stays crisp. Recipe-wide: layerSize (array resolution, default 1024), layerAniso (albedo + height
-// array, default 2), layerAnisoB (normal + roughness + occlusion array, default 1).
+// from the lens stays crisp. relief = metres per unit of the height channel: close to the lens the height field is
+// marched towards the sun, so every stone and ridge casts its own shadow under a low sun (Surf.sh).
+// Recipe-wide: layerSize (array resolution, default 1024), layerAniso (albedo + height array, default 2), layerAnisoB
+// (normal + roughness + occlusion array, default 1).
 const HEXS = 3.4641016151377544;   // 2*sqrt(3): hex cells are about 0.58 texture tiles across
 const LAYERS_GLSL = names => /* glsl */`
 #define TERRAIN_LAYERS 1
@@ -29,14 +31,15 @@ uniform vec4 uLayerK[${names.length}];   // x: texture tiles per metre, y: rando
 uniform vec4 uLayerP[${names.length}];   // xy: camera position in the skewed hex lattice (fraction), zw: texture phase at the lattice anchor
 uniform ivec2 uLayerI[${names.length}];  // integer lattice anchor, so the per-cell random transforms stay fixed to the world
 uniform vec4 uLayerMA[${names.length}], uLayerMB[${names.length}];   // each layer's mean (albedo + height, normal + roughness + occlusion)
-uniform vec4 uLayerD[${names.length}];    // x: detail scale (0: none), y: strength, z: texels per tile
+uniform vec4 uLayerD[${names.length}];    // x: detail scale (0: none), y: strength, z: texels per tile, w: relief (m per height unit)
 // Lighting inputs a recipe sets through surfApply(); tRough < 0 keeps the default terrain lighting.
-float tRough = -1.0, tAO = 1.0, tF0 = 0.03, tFp = 1.0, tW = 0.0;   // tW: weight of the layered lighting (fade it out where the recipe hands over to its own far-field look)
-// A sampled surface. d: slope perturbation in world (x, z), added to the normal as N += vec3(d.x, 0.0, d.y).
-struct Surf { vec3 alb; float h; vec2 d; float rough; float ao; };
+float tRough = -1.0, tAO = 1.0, tF0 = 0.03, tFp = 1.0, tW = 0.0, tSh = 1.0;   // tW: weight of the layered lighting (fade it out where the recipe hands over to its own far-field look); tSh: sun visibility over the micro-relief
+// A sampled surface. d: slope perturbation in world (x, z), added to the normal as N += vec3(d.x, 0.0, d.y);
+// sh: sun visibility over the scan's own relief (1 lit, 0 in the shadow of a stone).
+struct Surf { vec3 alb; float h; vec2 d; float rough; float ao; float sh; };
 uvec2 lPcg(uvec2 v){ v = v*1664525u+1013904223u; v.x += v.y*1664525u; v.y += v.x*1664525u; v ^= v>>16u; v.x += v.y*1664525u; v.y += v.x*1664525u; v ^= v>>16u; return v; }
 vec4 lRand(ivec2 c){ uvec2 h = lPcg(uvec2(c)); return vec4(float(h.x&65535u), float(h.x>>16u), float(h.y&65535u), float(h.y>>16u))/65535.0; }
-Surf surfMix(Surf a, Surf b, float t){ Surf s; s.alb = mix(a.alb, b.alb, t); s.h = mix(a.h, b.h, t); s.d = mix(a.d, b.d, t); s.rough = mix(a.rough, b.rough, t); s.ao = mix(a.ao, b.ao, t); return s; }
+Surf surfMix(Surf a, Surf b, float t){ Surf s; s.alb = mix(a.alb, b.alb, t); s.h = mix(a.h, b.h, t); s.d = mix(a.d, b.d, t); s.rough = mix(a.rough, b.rough, t); s.ao = mix(a.ao, b.ao, t); s.sh = mix(a.sh, b.sh, t); return s; }
 // b takes over from a as t goes 0 -> 1, first where b stands proud of a (height-aware blend; soft: transition width)
 Surf surfBlendH(Surf a, Surf b, float t, float soft){
   float ha = a.h+1.0-2.0*t, hb = b.h-1.0+2.0*t, m = max(ha, hb)-max(soft, 1e-3);
@@ -46,8 +49,26 @@ Surf surfBlendH(Surf a, Surf b, float t, float soft){
 // the layer's average (measured from its last mip at load): what it converges to far away
 Surf layerMean(int k){
   vec4 a = uLayerMA[k], b = uLayerMB[k];
-  Surf s; s.alb = a.rgb; s.h = a.a; s.d = vec2(0.0); s.rough = max(b.b, 0.93); s.ao = 1.0; return s;
+  Surf s; s.alb = a.rgb; s.h = a.a; s.d = vec2(0.0); s.rough = max(b.b, 0.93); s.ao = 1.0; s.sh = 1.0; return s;
 }
+// Sun visibility over layer k's own height field: from texture position c (tiles, layer), march towards the sun
+// (dir: texture tiles per metre of ground in the sun's direction) and find where the relief stands above the sun
+// ray. lod: mip of the march taps. Only within a few centimetres per pixel; elsewhere 1.
+float lSunVis(int k, vec2 c, vec2 dir, float lod){
+  float rel = uLayerD[k].w, far = smoothstep(0.012, 0.032, tFp);
+  if (rel <= 0.0 || far >= 1.0 || uSunDir.y <= 0.0) return 1.0;
+  float tanEl = uSunDir.y/max(length(uSunDir.xz), 1e-3);
+  if (tanEl > 1.2) return 1.0;                                   // high sun: the stones' shadows hide under them
+  float L = float(k), h0 = textureLod(tLayerA, vec3(c, L), lod).a*rel, s = 1.0;
+  float t = max(1.5/(uLayerD[k].z*uLayerK[k].x), 0.0025);       // first step: a texel and a half
+  for (int j=0;j<5;j++){
+    float d = textureLod(tLayerA, vec3(c+dir*t, L), lod+0.5*float(j)).a*rel-h0-t*tanEl;   // m the relief stands above the ray
+    s = min(s, clamp(0.5-d/(0.0012+0.04*t), 0.0, 1.0));
+    t *= 2.0;
+  }
+  return mix(s, 1.0, far);
+}
+vec2 lSunTex(){ return normalize(vec2(uSunDir.x, -uSunDir.z)+1e-6); }   // the sun's azimuth in world (x, -z)
 vec3 layerMeanAlbedo(int k){ return uLayerMA[k].rgb; }
 // world slope from a tangent-space normal sampled with texture coords rotated by R relative to world (x, -z). The
 // layer's mean normal is taken out first: a scan's slight overall tilt, turned a different way in every hex cell,
@@ -69,6 +90,9 @@ void lDetail(int k, vec2 st, vec2 dx, vec2 dy, mat2 R, inout Surf s){
   s.d += lSlope(b.xy, R, k)*m*0.6;
   s.ao *= mix(1.0, lAO(b.a, k), m*0.5);
 }
+// metres-per-pixel footprint axes of this pixel in world (x, -z), for building dx / dy of layerSampleST
+vec2 lFootX(){ return vec2(gGx.x, -gGx.y)*1000.0; }
+vec2 lFootY(){ return vec2(gGy.x, -gGy.y)*1000.0; }
 // layer k in a mapping of the caller's own: st in texture tiles, dx / dy its footprint per pixel, ang the rotation of
 // st relative to world (x, -z) (for per-slab offsets, directional finishes, ...). No hex tiling.
 Surf layerSampleST(int k, vec2 st, vec2 dx, vec2 dy, float ang){
@@ -76,12 +100,12 @@ Surf layerSampleST(int k, vec2 st, vec2 dx, vec2 dy, float ang){
   vec3 c = vec3(st, float(k));
   vec4 a = textureGrad(tLayerA, c, dx, dy), b = textureGrad(tLayerB, c, dx, dy);
   Surf s; s.alb = a.rgb; s.h = a.a; s.d = lSlope(b.xy, R, k); s.rough = lRoughAt(b.b, tFp*uLayerK[k].x); s.ao = lAO(b.a, k);
+  // the caller's mapping is st = scale * R * world (x, -z); its scale from the footprint it passed
+  float sc = length(dx)/max(length(lFootX()), 1e-6);
+  s.sh = lSunVis(k, st, R*lSunTex()*sc, max(log2(max(length(dx), 1e-6)*uLayerD[k].z), 0.0));
   lDetail(k, st, dx, dy, R, s);
   return s;
 }
-// metres-per-pixel footprint axes of this pixel in world (x, -z), for building dx / dy of layerSampleST
-vec2 lFootX(){ return vec2(gGx.x, -gGx.y)*1000.0; }
-vec2 lFootY(){ return vec2(gGy.x, -gGy.y)*1000.0; }
 // layer k at this pixel, hex-tiled (Mikkelsen 2022): three world-fixed hex cells, each with its own random offset (and
 // rotation), blended by barycentric weight sharpened by height. Footprint-correct gradients; far away it fades to the
 // layer mean, which costs one cached tap.
@@ -99,15 +123,15 @@ Surf layerSample(int k){
   vec3 bw = vec3(-tz*s2, sg-f.y*s2, sg-f.x*s2);
   vec2 V[3]; V[0] = b0+vec2(sg); V[1] = b0+vec2(sg, 1.0-sg); V[2] = b0+vec2(1.0-sg, sg);
   vec2 uL = vec2(sk.x, 0.5*sk.x+0.8660254*sk.y)/${HEXS.toFixed(10)};
-  vec4 A[3], B[3]; mat2 R[3]; vec3 W = pow(bw, vec3(K.z)); W /= W.x+W.y+W.z;
+  vec4 A[3], B[3]; mat2 R[3]; vec2 ST[3]; vec3 W = pow(max(bw, 0.0), vec3(K.z)); W /= max(W.x+W.y+W.z, 1e-6);   // (bw can round below 0: pow of a negative base is undefined)
   for (int i=0;i<3;i++){
-    A[i] = vec4(0.0); B[i] = vec4(0.5, 0.5, 0.0, 1.0); R[i] = mat2(1.0);
+    A[i] = vec4(0.0); B[i] = vec4(0.5, 0.5, 0.0, 1.0); R[i] = mat2(1.0); ST[i] = vec2(0.0);
     if (W[i] < 0.03) continue;                           // well inside another cell: skip the taps
     vec4 r = lRand(ivec2(V[i])+uLayerI[k]);
     float ang = (r.x*2.0-1.0)*3.14159265*K.y, cs = cos(ang), sn = sin(ang);
     R[i] = mat2(cs, sn, -sn, cs);
     vec2 ci = vec2(V[i].x, 0.5*V[i].x+0.8660254*V[i].y)/${HEXS.toFixed(10)};
-    vec3 st = vec3(R[i]*(uL-ci)+ci+r.zw+P.zw, float(k));
+    vec3 st = vec3(R[i]*(uL-ci)+ci+r.zw+P.zw, float(k)); ST[i] = st.xy;
     A[i] = textureGrad(tLayerA, st, R[i]*dX, R[i]*dY);
     B[i] = nrm ? textureGrad(tLayerB, st, R[i]*dX, R[i]*dY) : uLayerMB[k];
   }
@@ -117,13 +141,18 @@ Surf layerSample(int k){
   s.alb = A[0].rgb*W.x+A[1].rgb*W.y+A[2].rgb*W.z; s.h = A[0].a*W.x+A[1].a*W.y+A[2].a*W.z;
   s.d = nrm ? (lSlope(B[0].xy, R[0], k)*W.x+lSlope(B[1].xy, R[1], k)*W.y+lSlope(B[2].xy, R[2], k)*W.z)*(1.0-smoothstep(0.025, 0.05, tpp)) : vec2(0.0);
   s.rough = lRoughAt(B[0].b*W.x+B[1].b*W.y+B[2].b*W.z, tpp); s.ao = lAO(B[0].a*W.x+B[1].a*W.y+B[2].a*W.z, k);
+  s.sh = 1.0;
+  if (tFp < 0.032){ // micro-shadows, marched in the cell that leads here
+    int m = W.x >= W.y && W.x >= W.z ? 0 : (W.y >= W.z ? 1 : 2);
+    s.sh = lSunVis(k, ST[m], R[m]*lSunTex()*K.x, max(log2(length(dX)*uLayerD[k].z), 0.0));
+  }
   if (far > 0.0) s = surfMix(s, layerMean(k), far);
   else lDetail(k, uL+P.zw, dX, dY, mat2(1.0), s);
   return s;
 }
 // write a surface into shadeTerrain's outputs; k scales the normal detail. Switches the pixel to the layered lighting.
 void surfApply(Surf s, float k, inout vec3 alb, inout vec3 N){
-  alb = s.alb; N = normalize(N+vec3(s.d.x, 0.0, s.d.y)*k); tRough = s.rough; tAO = s.ao; tW = 1.0;
+  alb = s.alb; N = normalize(N+vec3(s.d.x, 0.0, s.d.y)*k); tRough = s.rough; tAO = s.ao; tSh = s.sh; tW = 1.0;
 }
 `;
 const PACK_FRAG = /* glsl */`
@@ -167,25 +196,34 @@ float erosion(vec2 p, vec2 slope, float branch, int oct, float lodCells){
 }
 `;
 
+// Heights are stored as R32F where 32-bit float textures can be filtered (OES_texture_float_linear). Without it (iOS,
+// many Android GPUs) an R32F map with a linear filter is incomplete and reads 0, so the height is split over an RG16F
+// map instead: r = 16*floor((h - base)/16) (multiples of 16 m are exact in half float), g = the remainder (0..16 m,
+// about 8 mm steps). Filtering and mip averaging are linear, so r + g + base is the correctly filtered height.
+// Every reader goes through hRead() with uHBase (0 for the R32F path, whose g reads 0).
 const BAKE_H = recipe => /* glsl */`
 precision highp float;
 ${NOISE}
 ${EROSION}
 uniform vec2 uCenter; uniform float uExtent, uTexel;   // km
+uniform vec2 uHSplit;                                   // x: 1 to write hi + lo, y: base altitude (m)
 varying vec2 vUv;
 ${recipe}
 void main(){
   vec2 p = uCenter+(vUv-0.5)*uExtent;
-  gl_FragColor = vec4(terrainH(p, uTexel), 0.0, 0.0, 1.0);
+  float h = terrainH(p, uTexel);
+  if (uHSplit.x > 0.5){ float r = h-uHSplit.y, hi = 16.0*floor(r/16.0); gl_FragColor = vec4(hi, r-hi, 0.0, 1.0); }
+  else gl_FragColor = vec4(h, 0.0, 0.0, 1.0);
 }`;
 
 const BAKE_M = recipe => /* glsl */`
 precision highp float;
 ${NOISE}
 ${EROSION}
-uniform sampler2D tH; uniform vec2 uCenter; uniform float uExtent, uTexel, uRes; uniform vec3 uSunDir; uniform int uWhich;
+uniform sampler2D tH; uniform vec2 uCenter; uniform float uExtent, uTexel, uRes; uniform vec3 uSunDir; uniform int uWhich; uniform float uHBase;
 varying vec2 vUv;
 ${recipe}
+float hAt(vec2 uv){ vec4 t = textureLod(tH, uv, 0.0); return t.r+t.g+uHBase; }
 float shadow(vec2 uv, float h){
   vec2 hd = uSunDir.xz; float hl = length(hd);
   if (hl < 1e-4) return 1.0;
@@ -194,7 +232,7 @@ float shadow(vec2 uv, float h){
   for (int i=0;i<72;i++){
     vec2 q = uv+dUV*t;
     if (q.x<0.0||q.y<0.0||q.x>1.0||q.y>1.0) break;
-    float d = h+t*tanEl-texture2D(tH, q).r;
+    float d = h+t*tanEl-hAt(q);
     s = min(s, 0.5+7.0*d/t);
     if (s <= 0.0) break;
     t *= 1.12;
@@ -204,9 +242,9 @@ float shadow(vec2 uv, float h){
 void main(){
   vec2 p = uCenter+(vUv-0.5)*uExtent;
   float e = 1.0/uRes;
-  float h = texture2D(tH, vUv).r;
-  float hx = texture2D(tH, vUv+vec2(e,0)).r-texture2D(tH, vUv-vec2(e,0)).r;
-  float hz = texture2D(tH, vUv+vec2(0,e)).r-texture2D(tH, vUv-vec2(0,e)).r;
+  float h = hAt(vUv);
+  float hx = hAt(vUv+vec2(e,0))-hAt(vUv-vec2(e,0));
+  float hz = hAt(vUv+vec2(0,e))-hAt(vUv-vec2(0,e));
   vec2 grad = vec2(hx,hz)/(2.0*uTexel*1000.0);
   vec4 m0, m1; terrainMask(p, h, grad, uTexel, m0, m1);
   if (uWhich == 0) gl_FragColor = vec4(m0.rgb, shadow(vUv, h));
@@ -214,15 +252,17 @@ void main(){
 }`;
 
 const TERRAIN_COMMON = /* glsl */`
-uniform sampler2D tHNear, tHFar;
+uniform highp sampler2D tHNear, tHFar;
 uniform vec4 uNear, uFar;     // centre.xz (m), extent (m), texel (m)
+uniform float uHBase;         // height maps: h = r + g + uHBase (see BAKE_H)
 float nearW(vec2 w){ vec2 u = abs((w-uNear.xy)/uNear.z); return smoothstep(0.495, 0.44, max(u.x,u.y)); }
+float hRead(vec4 t){ return t.r+t.g+uHBase; }
 float hLod(vec2 w, float lodM){
   float bn = nearW(w);
-  if (bn >= 1.0) return textureLod(tHNear, (w-uNear.xy)/uNear.z+0.5, log2(max(lodM/uNear.w,1.0))).r;
-  float hf = textureLod(tHFar, (w-uFar.xy)/uFar.z+0.5, log2(max(lodM/uFar.w,1.0))).r;
+  if (bn >= 1.0) return hRead(textureLod(tHNear, (w-uNear.xy)/uNear.z+0.5, log2(max(lodM/uNear.w,1.0))));
+  float hf = hRead(textureLod(tHFar, (w-uFar.xy)/uFar.z+0.5, log2(max(lodM/uFar.w,1.0))));
   if (bn <= 0.0) return hf;
-  return mix(hf, textureLod(tHNear, (w-uNear.xy)/uNear.z+0.5, log2(max(lodM/uNear.w,1.0))).r, bn);
+  return mix(hf, hRead(textureLod(tHNear, (w-uNear.xy)/uNear.z+0.5, log2(max(lodM/uNear.w,1.0)))), bn);
 }
 `;
 
@@ -262,7 +302,7 @@ varying vec2 vUv;
 // sky radiance in direction d, from the pipeline's sky-view table (for reflections off water and pavement)
 vec3 skyRefl(vec3 d){
   d.y = max(d.y, 0.004); d = normalize(d);
-  float el = asin(d.y), v = clamp(0.5+0.5*sqrt(el/1.5707963), 0.004, 0.996), u = atan(d.z, d.x)/6.2831853+0.5;
+  float el = asin(min(d.y, 1.0)), v = clamp(0.5+0.5*sqrt(el/1.5707963), 0.004, 0.996), u = atan(d.z, d.x)/6.2831853+0.5;
   float c = dot(d, uSunDir), g = uMieG, g2 = g*g;
   float pR = 0.0596831*(1.0+c*c), pM = 0.1193662*((1.0-g2)*(1.0+c*c))/((2.0+g2)*pow(max(1.0+g2-2.0*g*c, 1e-4), 1.5));
   return textureLod(tSky, vec2(u, v/3.0), 0.0).rgb*pR+textureLod(tSky, vec2(u, (v+1.0)/3.0), 0.0).rgb*min(pM, 6.0)+textureLod(tSky, vec2(u, (v+2.0)/3.0), 0.0).rgb;
@@ -308,6 +348,18 @@ void main(){
   vec3 vd = normalize(q4.xyz/q4.w);
   vec3 rd = normalize(uCamRot*vd);
   float dist = viewZ(d)/max(-vd.z, 1e-4);
+#ifdef TERRAIN_PARTIAL_GROUND
+  if (cov < 0.996 && rd.y < -0.002){
+    // Partly covered pixel whose depth may belong to what covers it (the fine blades at a plant's edge, the rim of an
+    // object): if that point floats above the ground, the ground seen through it lies further along the ray. Without
+    // this the ground behind a plant is shaded on the impostor's vertical plane (vertical streaks in a box round it).
+    vec3 P = rd*dist; float hg = hLod(uOrigin.xz+P.xz, 0.5)-uOrigin.y-dot(P.xz, P.xz)/${(2 * RG).toFixed(1)};
+    if (P.y > hg+0.03){
+      vec3 Q = rd*(hg/rd.y); float hq = hLod(uOrigin.xz+Q.xz, 0.5)-uOrigin.y-dot(Q.xz, Q.xz)/${(2 * RG).toFixed(1)};
+      dist = max(dist, hq/rd.y);
+    }
+  }
+#endif
   vRel = rd*dist;
   vec2 w = uOrigin.xz+vRel.xz;
   vec3 V = -rd;
@@ -337,7 +389,7 @@ void main(){
   N = normalize(N);
   float nl = max(dot(N, uSunDir), 0.0);
   // Oren-Nayar-ish dusty response: flatter, brighter towards grazing light
-  float nv = max(dot(N, V), 0.0);
+  float nv = clamp(dot(N, V), 0.0, 1.0);
   float s = dot(uSunDir, V)-nl*nv; float tt = s>0.0 ? max(nl,nv) : 1.0;
   float on = nl*(0.84+0.30*s/max(tt,0.05));
   float sh = m0.a*terrainSunShadow(w, h0)*heroShadow(vRel+vec3(0.0, 0.04, 0.0));
@@ -346,7 +398,7 @@ void main(){
   vec3 col = alb*0.3183*(uSunGround*max(on,0.0)*sh + amb*ao*(0.55+0.45*N.y));
   { // dry-ground sheen towards the sun at grazing angles
     vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0);
-    float fr = 0.03+0.97*pow(1.0-max(dot(V,Hh),0.0), 5.0);
+    float fr = 0.03+0.97*pow(clamp(1.0-dot(V,Hh), 0.0, 1.0), 5.0);
     col += uSunGround*sh*nl*pow(nh, 10.0)*0.45*fr*0.35*(0.4+alb.g);
   }
 #ifdef TERRAIN_LAYERS
@@ -358,9 +410,15 @@ void main(){
     float nl0 = max(dot(tN0, uSunDir), 1e-3), gn = nl/nl0, nlc = nl0*gn/(0.5+0.5*gn);
     float sc2 = dot(uSunDir, V)-nlc*nv, tc = sc2 > 0.0 ? max(nlc, nv) : 1.0;
     float onc = nlc*(0.84+0.30*sc2/max(tc, 0.05));
-    float msh = mix(1.0, smoothstep(0.15, 0.95, tAO), 0.55*(1.0-nlc));   // cavities lose a grazing sun first
+    float msh = mix(1.0, smoothstep(0.15, 0.95, tAO), 0.55*(1.0-nlc)*smoothstep(0.012, 0.04, tFp))*tSh;   // cavities lose a grazing sun first (marched micro-shadows close up)
+#ifndef TERRAIN_AMB_SAT
+#define TERRAIN_AMB_SAT 1.0
+#endif
+    // sky light on the ground: under broken cloud and with the sunlit desert around, it is far less blue than the clear
+    // sky's own irradiance (recipe.ambSat < 1 takes some of its saturation out, keeping its brightness)
+    vec3 amb = mix(vec3(dot(amb, vec3(0.2126, 0.7152, 0.0722))), amb, TERRAIN_AMB_SAT);
     vec3 cl = alb*0.3183*(uSunGround*max(onc,0.0)*sh*msh + amb*ao*tAO*(0.55+0.45*N.y));
-    vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0), vh = max(dot(V,Hh),0.0);
+    vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0), vh = clamp(dot(V,Hh), 0.0, 1.0);
     float a = max(tRough*tRough, 0.03), a2 = a*a, dd = nh*nh*(a2-1.0)+1.0, D = a2/(3.14159*dd*dd);
     float nv2 = max(nv, 0.03);
     // Smith visibility, capped: clods and pebbles shadow and mask far more than a microfacet height field at grazing
@@ -374,7 +432,7 @@ void main(){
 #endif
   if (spec < 0.0){ // pavement: a broad glossy lobe towards a low sun, and the sky's sheen at grazing angles
     float k = -spec;
-    vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0), vh = max(dot(V,Hh),0.0);
+    vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0), vh = clamp(dot(V,Hh), 0.0, 1.0);
     float fr = 0.04+0.96*pow(1.0-vh, 5.0);
     float a2 = 0.05, dd = nh*nh*(a2-1.0)+1.0, D = a2/(3.14159*dd*dd);
     col += uSunGround*sh*D*fr*min(nl/(4.0*max(nv,0.02)*max(nl,0.02)+0.3), 2.0)*nl*k;
@@ -394,6 +452,7 @@ void main(){
   else if (uDebug == 4) col = vec3(tAO);
   else if (uDebug == 5) col = vec3(nl*4.0);
   else if (uDebug == 6) col = vec3(tRough);
+  else if (uDebug == 9) col = vec3(tSh);
 #endif
   gl_FragColor = vec4(sc.rgb+col*cov, 1.0);
 }`;
@@ -435,19 +494,25 @@ function ringsFor(preset, q = 1) {
 export class Terrain {
   // recipe: { height: glsl (float terrainH(vec2 km, float lodKm)), mask: glsl (void terrainMask(...)), shade: glsl (void shadeTerrain(...)),
   //           scales: detail slots, near: {center:[xkm,zkm], extent km, res}, far: {center, extent, res}, groundAlt,
-  //           uniforms: extra uniforms for the shading pass, defines: GLSL prepended to it }
+  //           uniforms: extra uniforms for the shading pass, defines: GLSL prepended to it,
+  //           layers / layerSize / layerAniso / layerAnisoB: photoscanned materials (see above), partialGround: bool,
+  //           ambSat: saturation of the sky light on the layered ground (default 1) }
   constructor(pipe, recipe) {
     this.pipe = pipe; this.recipe = recipe;
     const mk = (res, type, fmt, mip) => {
       const t = new THREE.WebGLRenderTarget(res, res, { type, format: fmt, depthBuffer: false, generateMipmaps: mip, minFilter: mip ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter, magFilter: THREE.LinearFilter });
-      t.texture.anisotropy = type === THREE.FloatType ? 1 : Math.min(4, pipe.maxAniso); return t;
+      t.texture.anisotropy = type === THREE.UnsignedByteType ? Math.min(4, pipe.maxAniso) : 1; return t;
     };
-    const lvl = (cfg) => ({ cfg, h: mk(cfg.res, THREE.FloatType, THREE.RedFormat, true), m0: mk(cfg.res, THREE.UnsignedByteType, THREE.RGBAFormat, true), m1: mk(cfg.res, THREE.UnsignedByteType, THREE.RGBAFormat, true) });
+    // heights: R32F, or hi + lo in RG16F where 32-bit float is not filterable (see BAKE_H; ?hsplit=1 forces it for testing)
+    const split = this.hSplit = !pipe.floatLinear || (typeof location !== 'undefined' && new URLSearchParams(location.search).get('hsplit') === '1');
+    const hBase = split ? (recipe.groundAlt ?? 0) : 0;
+    const lvl = (cfg) => ({ cfg, h: split ? mk(cfg.res, THREE.HalfFloatType, THREE.RGFormat, true) : mk(cfg.res, THREE.FloatType, THREE.RedFormat, true), m0: mk(cfg.res, THREE.UnsignedByteType, THREE.RGBAFormat, true), m1: mk(cfg.res, THREE.UnsignedByteType, THREE.RGBAFormat, true) });
     this.near = lvl(recipe.near); this.far = lvl(recipe.far);
-    this.pH = new Pass(BAKE_H(recipe.height), { uCenter: { value: new THREE.Vector2() }, uExtent: { value: 1 }, uTexel: { value: 1 } });
-    this.pM = new Pass(BAKE_M(recipe.height + '\n' + recipe.mask), { tH: { value: null }, uCenter: { value: new THREE.Vector2() }, uExtent: { value: 1 }, uTexel: { value: 1 }, uRes: { value: 1 }, uSunDir: pipe.atmo.uniforms.uSunDir, uWhich: { value: 0 } });
+    const uHBase = { value: hBase };
+    this.pH = new Pass(BAKE_H(recipe.height), { uCenter: { value: new THREE.Vector2() }, uExtent: { value: 1 }, uTexel: { value: 1 }, uHSplit: { value: new THREE.Vector2(split ? 1 : 0, hBase) } });
+    this.pM = new Pass(BAKE_M(recipe.height + '\n' + recipe.mask), { tH: { value: null }, uCenter: { value: new THREE.Vector2() }, uExtent: { value: 1 }, uTexel: { value: 1 }, uRes: { value: 1 }, uSunDir: pipe.atmo.uniforms.uSunDir, uWhich: { value: 0 }, uHBase });
     const S = pipe.shared;
-    const heights = this.heightUniforms = { tHNear: { value: this.near.h.texture }, tHFar: { value: this.far.h.texture }, uNear: { value: new THREE.Vector4() }, uFar: { value: new THREE.Vector4() } };
+    const heights = this.heightUniforms = { tHNear: { value: this.near.h.texture }, tHFar: { value: this.far.h.texture }, uNear: { value: new THREE.Vector4() }, uFar: { value: new THREE.Vector4() }, uHBase };
     this.uniforms = {
       ...heights,
       tScene: { value: null }, tDepth: S.tDepth, uLogFar: S.uLogFar, uInvProj: S.uInvProj, uCamRot: S.uCamRot, uRes: S.uRes,
@@ -470,10 +535,12 @@ export class Terrain {
         uLayerK: { value: L.map(l => new THREE.Vector4(1 / l.scale, l.rotate ?? 1, l.sharp ?? 6, l.hcontrast ?? 5)) },
         uLayerP: { value: L.map(() => new THREE.Vector4()) }, uLayerI: { value: new Int32Array(L.length * 2) },
         uLayerMA: { value: L.map(() => new THREE.Vector4(0.3, 0.3, 0.3, 0.5)) }, uLayerMB: { value: L.map(() => new THREE.Vector4(0.5, 0.5, 0.85, 1)) },
-        uLayerD: { value: L.map(l => new THREE.Vector4(l.detail ? l.detail[0] : 0, l.detail ? l.detail[1] : 0, recipe.layerSize || 1024, 0)) },
+        uLayerD: { value: L.map(l => new THREE.Vector4(l.detail ? l.detail[0] : 0, l.detail ? l.detail[1] : 0, recipe.layerSize || 1024, l.relief ?? 0)) },
       });
     }
-    this.shadePass = new Pass(SHADE_FRAG((L ? LAYERS_GLSL(L.map(l => l.name)) : '') + (recipe.defines || '') + recipe.shade), this.uniforms);
+    // recipe.partialGround: find the ground behind semi-transparent plants and object rims (see TERRAIN_PARTIAL_GROUND);
+    // recipe.ambSat: saturation of the sky light on the layered ground
+    this.shadePass = new Pass(SHADE_FRAG((recipe.partialGround ? '#define TERRAIN_PARTIAL_GROUND 1\n' : '') + (recipe.ambSat !== undefined ? `#define TERRAIN_AMB_SAT ${recipe.ambSat.toFixed(3)}\n` : '') + (L ? LAYERS_GLSL(L.map(l => l.name)) : '') + (recipe.defines || '') + recipe.shade), this.uniforms);
     this.ready = L ? this.loadLayers(L) : Promise.resolve(this);
     this.geos = {};
     this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
