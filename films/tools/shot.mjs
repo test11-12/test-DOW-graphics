@@ -5,7 +5,7 @@
 import path from 'node:path';
 import { launchBrowser, checkGL } from './gpu.mjs';
 import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const film = args.shift(), prefix = args.shift();
@@ -21,7 +21,7 @@ page.on('console', m => { const t = m.text(); if (!/GPU stall|GL Driver Message/
 page.on('pageerror', e => logs.push('[pageerror] ' + e.message));
 const q = new URLSearchParams({ render: '1', w: W, h: H, ...(opt.q ? Object.fromEntries(new URLSearchParams(opt.q)) : {}), ...(opt.cam ? { cam: opt.cam } : {}), ...(opt.haze ? { haze: opt.haze } : {}), ...(opt.cdiv ? { cdiv: opt.cdiv } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}), ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.prof ? { prof: 1 } : {}), ...(opt.off ? { off: opt.off } : {}), ...(opt.aniso ? { aniso: opt.aniso } : {}), ...(opt.debug ? { debug: opt.debug } : {}) });
 const t0 = Date.now();
-await page.goto('file://' + path.join(root, 'dist', `${film}.offline.html`) + '?' + q);
+await page.goto(pathToFileURL(path.join(root, 'dist', `${film}.offline.html`)).href + '?' + q);   // file:///C:/... on Windows
 await page.waitForFunction(() => window.FILM && window.FILM.ready, null, { timeout: 900000 });
 await page.evaluate(() => window.FILM.ready);
 console.log('ready in', Date.now() - t0, 'ms');

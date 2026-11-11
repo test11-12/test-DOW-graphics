@@ -9,7 +9,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { launchBrowser, checkGL } from './gpu.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2), film = args.find(a => !a.startsWith('--'));
@@ -18,7 +18,7 @@ const W = +(opt.w || 1920), H = +(opt.h || 1080), FPS = +(opt.fps || 30), worker
 const ACC = Math.max(1, Math.round(+opt.accum || 1)), SS = Math.max(1, +opt.ss || 1), acc = ACC > 1 || SS > 1 ? { accum: ACC, ss: SS } : null;
 const dir = path.join(root, 'frames', film, `${W}x${H}@${FPS}` + (acc ? `_a${ACC}_ss${SS}` : '')); fs.mkdirSync(dir, { recursive: true });
 const out = path.resolve(root, opt.out || `out/${film}.mp4`); fs.mkdirSync(path.dirname(out), { recursive: true });
-const url = 'file://' + path.join(root, 'dist', `${film}.offline.html`) + '?' + new URLSearchParams({ render: '1', w: W, h: H, ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}) });
+const url = pathToFileURL(path.join(root, 'dist', `${film}.offline.html`)).href + '?' + new URLSearchParams({ render: '1', w: W, h: H, ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}) });
 const fname = i => path.join(dir, `f_${String(i).padStart(6, '0')}.jpg`);
 
 let glShown = false;
