@@ -264,9 +264,9 @@ const def: SceneDef = {
         price.set(PRICE_K * told);
         price.alpha(0.35 + 0.65 * K.tween(t, 3.5, 4));
         length.set(LENGTH_FT * K.tween(t, 2.2, 3.2, 'out'));
-        log.set(0, t >= 1.2, STAMPS[0]);
-        log.set(1, t >= LIGHT, STAMPS[1]);
-        log.set(2, t >= 17.2, STAMPS[2]);
+        log.set(0, K.tween(t, 1.2, 1.6), STAMPS[0]);
+        log.set(1, K.tween(t, LIGHT, LIGHT + 0.4), STAMPS[1]);
+        log.set(2, K.tween(t, 17.2, 17.6), STAMPS[2]);
         ways.set(0, t >= LIGHT ? (t < SEPARATE + 1 ? 5 : 2) : 1);
         for (let i = 1; i < 4; i++) ways.set(i, t >= 4.2 + i * 0.3 ? 1 : 0);
       },

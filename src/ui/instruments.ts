@@ -20,15 +20,19 @@ export class Odometer {
   el: HTMLElement;
   private strips: HTMLElement[] = [];
   private cols: HTMLElement[] = [];
+  /** A comma after the thousands (and millions), present only while the digit before it is. */
+  private seps: Array<HTMLElement | undefined> = [];
   private slots: number;
   private decimals: number;
   private pad: boolean;
   private last = NaN;
 
-  constructor(parent: Element, o: { slots?: number; decimals?: number; pad?: boolean } = {}) {
+  constructor(parent: Element, o: { slots?: number; decimals?: number; pad?: boolean; group?: boolean } = {}) {
     this.slots = o.slots ?? 3;
     this.decimals = o.decimals ?? 0;
     this.pad = !!o.pad;
+    // Five digits and more are grouped in threes. Four are left alone: they are often years.
+    const group = (o.group ?? this.slots >= 5) && !this.decimals;
     this.el = K.h('span', 'odo', parent);
     this.el.setAttribute('role', 'text');
     for (let p = this.slots - 1; p >= 0; p--) {
@@ -38,6 +42,11 @@ export class Odometer {
       strip.setAttribute('aria-hidden', 'true');
       this.cols[p] = col;
       this.strips[p] = strip;
+      if (group && p > 0 && p % 3 === 0) {
+        const sep = K.h('span', 'odo-point odo-sep', this.el, ',');
+        sep.setAttribute('aria-hidden', 'true');
+        this.seps[p] = sep;
+      }
     }
   }
   set(value: number): void {
@@ -57,6 +66,11 @@ export class Odometer {
       const presence = always ? 1 : K.clamp(v - (unit - 1));
       K.style(this.cols[p], 'width', `${(presence * DIGIT).toFixed(3)}em`);
       K.style(this.cols[p], 'opacity', presence.toFixed(3));
+      const sep = this.seps[p];
+      if (sep) {
+        K.style(sep, 'max-width', `${(presence * 0.4).toFixed(3)}em`);
+        K.style(sep, 'opacity', presence.toFixed(3));
+      }
     }
     K.attr(this.el, 'aria-label', (v / Math.pow(10, this.decimals)).toFixed(this.decimals));
   }
@@ -78,12 +92,12 @@ export interface Rail {
   phase(label: string, names: string[]): { set(position: number): void };
   stat(o: { label: string; unit?: string; prefix?: string; tone?: Tone; slots?: number; decimals?: number; bar?: boolean; size?: 'l' | 'm' | 's' }): Stat;
   /** Hours and minutes, as 00:00. */
-  clock(o: { label: string; tone?: Tone; unit?: string }): { el: HTMLElement; set(hours: number): void };
+  clock(o: { label: string; tone?: Tone; unit?: string }): { el: HTMLElement; set(hours: number): void; alpha(a: number): void };
   /** A row of small dots, one per thing. */
   dots(o: { label: string; count: number; legend?: string }): { el: HTMLElement; set(i: number, state: DotState): void; legend(text: string): void };
   chips(o: { label: string; items: string[] }): { el: HTMLElement; set(i: number, state: ChipState): void };
   /** A short record of events: each row lights when it happens and can carry a time stamp. */
-  log(o: { label: string; items: string[] }): { el: HTMLElement; set(i: number, on: boolean, stamp?: string): void };
+  log(o: { label: string; items: string[] }): { el: HTMLElement; set(i: number, on: boolean | number, stamp?: string): void };
   /** A small canvas for a chart drawn by the film, in CSS pixels. */
   chart(o: { label: string; height: number }): { el: HTMLElement; g: CanvasRenderingContext2D; w: number; h: number; clear(): void };
   /** Two columns of stats side by side. */
@@ -154,6 +168,7 @@ function build(el: HTMLElement, width: number): Rail {
           hh.set(Math.floor(total / 60));
           mm.set(total % 60);
         },
+        alpha: (a) => K.set(s, { opacity: a }),
       };
     },
     dots(o) {
@@ -186,10 +201,13 @@ function build(el: HTMLElement, width: number): Rail {
       });
       return {
         el: s,
+        // `on` may be a number from 0 to 1, so a row can ease in with the story.
         set(i, on, stamp) {
           if (!rows[i]) return;
-          K.attr(rows[i].row, 'data-on', on ? '1' : '0');
-          K.text(rows[i].stamp, on && stamp ? stamp : '');
+          const u = typeof on === 'number' ? K.clamp(on) : on ? 1 : 0;
+          K.attr(rows[i].row, 'data-on', u >= 0.5 ? '1' : '0');
+          K.style(rows[i].row, '--u', u.toFixed(3));
+          K.text(rows[i].stamp, u > 0 && stamp ? stamp : '');
         },
       };
     },

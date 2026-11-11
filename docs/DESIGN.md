@@ -60,11 +60,22 @@ fictional":
 
 - Every number on screen comes from a source listed in `src/projects.ts`, or is plain
   arithmetic on two such numbers, and `docs/SOURCES.md` says which.
+- Arithmetic is safe only between two figures the same source ties together. A
+  contract value divided by a quantity is a price only if the source says that money
+  buys exactly those units; an earlier build of Blackbeard divided a first award by a
+  lot size and published a price nobody had given.
+- A plan is not an order. What an agency is seeking, what it has committed to and
+  what it has bought are three different numbers, and the film says which one it is
+  drawing.
 - A counter runs up to a reported figure. It never plays invented telemetry: there is
   no speedometer for a speed nobody released.
 - What was not released is said to be not released, on the plate, in the same voice
   as everything else. An unknown extent is drawn open or hatched, not given an end.
-- A company's own count is called the company's count.
+- A company's own count is called the company's count, and a claim of a first is
+  given to whoever made it.
+- Go to the primary release before repeating a trade report's summary of it. Then have
+  someone who did not make the film check every caption and label against the
+  sources: `docs/SOURCES.md` records what that found.
 - Every plate title says what kind of drawing it is: schematic, not to scale, seen
   from above. Geometry that is exact (the Mach cone, the dot counts) says so too.
 
@@ -129,8 +140,10 @@ export default def;
    arithmetic on them there too.
 5. Look at it: `npm run shoot -- --scene my-film` writes frames and a contact sheet to
    `out/frames/my-film/`.
-6. Run `npm run lint:layout -- --scene my-film`: it finds text that is clipped or sits
-   on other text at any moment of the film.
+6. Run `npm run lint:layout -- --scene my-film`: it finds text that is clipped, sits
+   on other text, crosses the plate's frame or is hidden behind another label's
+   backing, at any moment of the film. Add `--edge 13` to see what comes within 13 px
+   of the frame.
 7. Run `npm test`, then `npm run copy` to refresh `docs/COPY.md`.
 
 The design space is 1280 by 520. The field is usually `x 44..884, y 43..477`; the

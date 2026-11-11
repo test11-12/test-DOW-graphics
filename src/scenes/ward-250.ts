@@ -321,7 +321,7 @@ const def: SceneDef = {
         // An instrument waits, dimmed, until its part of the story begins.
         const flying = K.lerp(0.5, 1, K.tween(t, FLY + 0.6, FLY + 1.3));
         miles.alpha(flying);
-        clock.el.style.opacity = String(flying);
+        clock.alpha(flying);
         days.alpha(K.lerp(0.5, 1, K.tween(t, ON + 0.9, ON + 1.5)));
       },
     };

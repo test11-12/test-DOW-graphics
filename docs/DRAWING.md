@@ -89,13 +89,14 @@ must not overflow (the layout lint checks).
 - `rail.stat({ label, unit?, prefix?, slots = 3, decimals?, bar?, size?: 'l' | 'm' | 's',
   tone? })` → `.set(value)`, `.bar(0..1)`, `.alpha(a)`, `.tone(t)`, `.unit(text)`.
   Digits roll; set it every frame from time.
-- `rail.clock({ label, unit })` → `.set(hours)` shows `HH:MM`.
+- `rail.clock({ label, unit })` → `.set(hours)` shows `HH:MM`; `.alpha(a)` dims it.
 - `rail.pair()` returns a two-column rail for two stats side by side.
 - `rail.dots({ label, count, legend? })` → `.set(i, state)`, `.legend(text)`. States:
   0 empty, 1 mark, 2 old, 3 ink, 4 ring, 5 alert, 6 live.
 - `rail.chips({ label, items })` → `.set(i, state)`: 0 idle, 1 active, 2 done,
   3 old way, 4 failed, 5 needs attention (lime).
-- `rail.log({ label, items })` → `.set(i, on, stamp?)`.
+- `rail.log({ label, items })` → `.set(i, on, stamp?)`; `on` may be 0..1, so pass a
+  `K.tween` and the row eases in.
 - `rail.chart({ label, height })` → `{ g, w, h, clear() }`: a small canvas in CSS
   pixels; use `FONT.tick`, `FONT.word`, `FONT.label` for its text.
 - `rail.note(text)` sits at the bottom.
@@ -130,4 +131,6 @@ run on, `--page` for the whole page, `--width` and `--height` for the window.
 node tools/lint-layout.mjs --scene fury --step 0.25
 ```
 
-finds text that is clipped or sits on other text at any moment.
+finds text that is clipped, sits on other text, crosses the plate's frame (or comes
+within `--edge` px of it, 8 by default) or is hidden behind another label's backing,
+at any moment.

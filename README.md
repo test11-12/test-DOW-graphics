@@ -14,15 +14,16 @@ viewer what to watch for, captions, a takeaway and a source.
 | 05 | **Varda W-5** · a capsule comes home over South Australia | A night sky of dots with the re-entry as a long exposure | |
 | 06 | **LUCAS** · a one-way attack drone leaves a warship | A littoral combat ship on a sea of dots; a rocket-assisted takeoff; the booster falls away | |
 | 07 | **Quarterhorse** · Hermeus goes supersonic, uncrewed | Rings of sound leaving the nose, piling into a wall at Mach 1 and folding into a cone at Mach 1.21 | Set the Mach number |
-| 08 | **Marauder** · Saronic's crewless ship, keel to water in nine months | A hull built frame by frame over a calendar, then the yard's twenty-a-year row | |
+| 08 | **Marauder** · Saronic's crewless ship, keel to water in about nine months | A hull built frame by frame over a calendar, then the yard's twenty-a-year row | |
 | 09 | **Victus Haze** · a launch in 16 h 42 min, then a chase in orbit | A 27-hour dial, then two satellites round the Earth: one hunts, and in the second sortie the other runs | Make the target run again |
-| 10 | **Blackbeard** · Castelion's hypersonic missile, ordered by the thousand | One round under a Super Hornet's wing, then a field of exactly 12,000 dots with 444 lit | |
+| 10 | **Blackbeard** · Castelion's hypersonic missile: 444 ordered, 12,000 sought | A round under each wing of a Super Hornet, then a field of exactly 12,000 dots with 444 lit | |
 
 These are real events. Every number on screen comes from a listed source or is plain
 arithmetic on two such numbers; what was not released is said to be not released; and
-every drawing is labeled for what it is (schematic, not to scale). The ledger is in
-[docs/SOURCES.md](docs/SOURCES.md), and every word the films show is in
-[docs/COPY.md](docs/COPY.md).
+every drawing is labeled for what it is (schematic, not to scale). Every film has
+been checked claim by claim against its sources by a reader who did not make it. The
+ledger, including what that check corrected, is in [docs/SOURCES.md](docs/SOURCES.md),
+and every word the films show is in [docs/COPY.md](docs/COPY.md).
 
 ## Look at it
 
@@ -69,7 +70,7 @@ on it.
 | `npm run test:unit` | test the models, the figures and the copy (Node only) |
 | `npm test` | unit tests, the browser tests and the layout check (needs Playwright) |
 | `npm run verify` | play all ten films and report what each frame costs |
-| `npm run lint:layout` | find clipped or overlapping text in every film, automatically |
+| `npm run lint:layout` | find text that is clipped, overlapping, off its plate or hidden behind a label, in every film |
 | `npm run shoot -- --scene victus-haze` | capture frames and a contact sheet of one film |
 | `npm run copy` | rewrite `docs/COPY.md` from the films |
 | `npm run export` | a ten-page PDF, one page per win |
