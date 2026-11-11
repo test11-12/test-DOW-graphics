@@ -5,9 +5,10 @@
 .wins-motion { display: grid; row-gap: 10px; min-width: 0; padding: 14px 16px 12px; background: var(--bg); }
 .wins-motion #film-title { white-space: normal; }
 .wins-motion .stage-frame { aspect-ratio: 1280 / 520; min-height: 0; }
-.wins-motion .film-foot { min-height: 44px; }
 @media (max-width: 700px) {
   .wins-motion .film-head { display: block; }
   .wins-motion #film-prompt { text-align: left; white-space: normal; margin-top: 4px; }
-  .wins-motion .film-foot { flex-direction: column; align-items: flex-start; gap: 10px; }
+  /* The caption keeps three lines, so the article under the widget does not move while a film plays. */
+  .wins-motion .film-foot { flex-direction: column; align-items: flex-start; gap: 10px; min-height: 0; }
+  .wins-motion #caption { flex: none; min-height: calc(var(--cap) * 3.54); }
 }

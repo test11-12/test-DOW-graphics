@@ -70,7 +70,7 @@
       <button id="replay" class="tool" type="button" data-key="R" aria-label="Replay from the start"><svg class="icon"><use href="#i-replay"/></svg></button>
       <button id="present" class="tool" type="button" data-key="F" aria-label="Enter full screen" aria-pressed="false"><svg class="icon"><use href="#i-expand"/></svg></button>
     </div>
-    <p class="rotate-hint">Turn your phone sideways for a larger picture.</p>
+    <p class="rotate-hint">Turn your phone sideways to see the instruments beside the picture.</p>
     <div class="film-foot">
       <p id="caption" role="status" aria-live="polite"></p>
       <div id="controls"></div>
@@ -78,9 +78,11 @@
   </section>
 
   <footer>
-    <span class="sources"><span>Source</span><a id="source-link" href="#" target="_blank" rel="noopener noreferrer"></a><span id="source-more"></span></span>
+    <p class="caveat"><span class="caveat-label">What this cannot show</span><span id="project-caveat"></span></p>
+    <span class="sources"><span class="sources-label">Source</span><span class="sources-list"><a id="source-link" href="#" target="_blank" rel="noopener noreferrer"></a><span id="source-more"></span></span></span>
+    <span id="source-sizer" class="sources-sizer" aria-hidden="true"></span>
     <span class="keys"><span><kbd>1–0</kbd>Win</span><span><kbd>Space</kbd>Play</span><span><kbd>S</kbd>Speed</span><span><kbd>R</kbd>Replay</span><span><kbd>F</kbd>Full screen</span></span>
-    <span>Real events · schematic drawings</span>
+    <span class="colophon">Real events · schematic drawings</span>
   </footer>
 </main>
 <div id="index" class="index" role="dialog" aria-modal="true" aria-label="All ten wins" hidden></div>

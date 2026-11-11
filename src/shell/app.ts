@@ -21,6 +21,7 @@ const els = {
   meta: $('project-meta'),
   source: $<HTMLAnchorElement>('source-link'),
   sourceMore: $('source-more'),
+  caveat: $('project-caveat'),
   index: $('index'),
   viewAll: $('view-all'),
   present: $('present'),
@@ -101,10 +102,13 @@ function moveIndicator(instant: boolean): void {
     void indicator.offsetWidth;
     indicator.style.transition = '';
   }
-  const pad = 24;
+  // Where the row scrolls (a phone), the open tab rests in the middle with a neighbour on each side.
   const row = els.tabs;
-  if (cur.offsetLeft < row.scrollLeft + pad) row.scrollLeft = cur.offsetLeft - pad;
-  else if (cur.offsetLeft + cur.offsetWidth > row.scrollLeft + row.clientWidth - pad) row.scrollLeft = cur.offsetLeft + cur.offsetWidth - row.clientWidth + pad;
+  if (row.scrollWidth > row.clientWidth) {
+    const left = cur.offsetLeft + cur.offsetWidth / 2 - row.clientWidth / 2;
+    if (instant || still() || !row.scrollTo) row.scrollLeft = left;
+    else row.scrollTo({ left, behavior: 'smooth' });
+  }
 }
 
 /* ---- Navigation ------------------------------------------------------------ */
@@ -118,7 +122,16 @@ function go(i: number, opts: { instant?: boolean; autoplay?: boolean; force?: bo
 
   swap(els.number, `Win ${K.pad(i + 1)}`, dir);
   swap(els.category, p.category, dir);
-  swap(els.meta, `${p.maker} · ${p.place} · ${p.when}`, dir);
+  // Maker, place and date: each stays whole, so a narrow window breaks the line after a
+  // separator and never inside a name or a date. The text itself is unchanged.
+  const meta = [p.maker, p.place, p.when];
+  swap(els.meta, meta.join(' · '), dir, () => {
+    els.meta.replaceChildren();
+    meta.forEach((part, k) => {
+      if (k) els.meta.append(' ');
+      K.h('span', '', els.meta, k < meta.length - 1 ? `${part} ·` : part);
+    });
+  });
   // Long names step down in size so the title always sits on one line.
   swap(els.title, p.name, dir, () => {
     els.title.classList.toggle('is-long', p.name.length > 15 && p.name.length <= 18);
@@ -128,6 +141,9 @@ function go(i: number, opts: { instant?: boolean; autoplay?: boolean; force?: bo
   swap(els.filmTitle, p.title, dir);
   swap(els.prompt, p.prompt, dir);
   swap(els.page, `${K.pad(i + 1)} / ${K.pad(projects.length)}`, dir);
+  // What the film cannot show. On a wide screen the rail's own note says it inside the
+  // picture; on a narrow one the rail is too small to read or not shown, so the page does.
+  els.caveat.textContent = p.caveat;
   // Where the figures come from: the first source is named, the rest follow as links.
   els.source.textContent = p.sources[0].label;
   els.source.href = p.sources[0].url;
@@ -292,6 +308,15 @@ window.addEventListener('hashchange', () => {
 window.addEventListener('resize', () => moveIndicator(true));
 
 /* ---- Start ----------------------------------------------------------------- */
+// Every win's source list is laid out, unseen, in the footer cell the visible one occupies.
+// The footer is then as tall as the longest list at any width, and the stage keeps one size
+// from win to win.
+projects.forEach((p) => {
+  const row = K.h('span', '', $('source-sizer'));
+  K.h('span', 'sources-label', row, 'Source');
+  const list = K.h('span', 'sources-list', row);
+  p.sources.forEach((src) => K.h('span', '', list, src.label));
+});
 player.init(els.stage, $('controls'));
 drawTabs();
 const first = go(active, { force: true });

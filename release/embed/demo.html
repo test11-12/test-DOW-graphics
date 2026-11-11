@@ -4,16 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<meta name="color-scheme" content="dark">
 <title>Drop-in demo: a stand-in for an article</title>
 <style>
   /* This page stands in for an existing article. Nothing here belongs to the widget. */
   body{margin:0;background:#0b0b0b;color:#e9e7e1;font:18px/1.55 Georgia,"Times New Roman",serif}
-  main{max-width:1180px;margin:0 auto;padding:56px 24px 96px}
+  main{max-width:1180px;margin:0 auto;padding:clamp(32px,6vw,56px) clamp(16px,4vw,24px) 96px}
   .kicker{font:600 12px/1 system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#a09c92;margin:0 0 14px}
   h1{margin:0 0 8px;font:700 clamp(34px,5vw,60px)/1.02 Georgia,serif}
   .dek{max-width:680px;color:#b9b5aa;margin:0 0 28px}
   .list{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}
-  .list button,.nav button{background:none;border:1px solid #3a3935;color:#b9b5aa;font:14px system-ui,sans-serif;cursor:pointer;padding:6px 10px}
+  .list button,.nav button{background:none;border:1px solid #3a3935;border-radius:0;color:#b9b5aa;font:14px system-ui,sans-serif;cursor:pointer;padding:6px 10px;transition:color .2s,border-color .2s}
+  .list button:hover,.nav button:hover{color:#e9e7e1;border-color:#8d8a80}
+  .list button:focus-visible,.nav button:focus-visible{outline:1px solid #e9e7e1;outline-offset:2px}
   .list button[aria-current="true"]{color:#0b0b0b;background:#e9e7e1;border-color:#e9e7e1}
   .nav{display:flex;gap:8px;margin:0 0 26px}
   h2{font:700 30px/1.1 Georgia,serif;margin:0 0 14px}
