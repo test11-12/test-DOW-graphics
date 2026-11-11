@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { startFilm, clamp, lerp, smooth, ease, easeOut, curve, wobble, v3 } from '../engine/film.js';
 import { LAYER } from '../engine/pipeline.js';
 import { Terrain } from '../engine/terrain.js';
+import { CloudLayer } from '../engine/clouds.js';
 import { attitude } from '../engine/geo.js';
 import { makePlume, makeHeatHaze, makeShockCone } from '../engine/fx.js';
 import { NM_TERRAIN, FIELD_ALT } from './terrain_nm.js';
@@ -13,7 +14,7 @@ import { buildQuarterhorse, QH } from './quarterhorse_model.js';
 
 const NARRATION = __NARRATION__;
 const D = Math.PI / 180;
-const SUN = { az: 96, el: 27 };
+const SUN = { az: 68, el: 8 };
 const GROUND_Y = FIELD_ALT + 1.95;          // aircraft origin height when sitting on its wheels
 const RWY_START_Z = 1700;                    // brake-release point, south end; take-off run heads north (-z)
 
@@ -131,14 +132,18 @@ async function build(film) {
   pipe.atmo.setSun(SUN.az, SUN.el);
   pipe.atmo.uniforms.uHaze.value = 0.55; pipe.atmo.groundAlbedo.setRGB(0.30, 0.24, 0.18);
   const nearRes = film.quality.lowTerrain ? 1024 : (+film.params.get('nres') || 4096);
-  const terrain = new Terrain(pipe, { ...NM_TERRAIN, near: { ...NM_TERRAIN.near, res: nearRes }, far: { ...NM_TERRAIN.far, res: film.quality.lowTerrain ? 1024 : 2048 } });
+  const clouds = new CloudLayer(pipe, { base: 4300, top: 6100, div: +film.params.get('cdiv') || 3 });
+  const cs = clouds.terrainShadow();
+  const terrain = new Terrain(pipe, { ...NM_TERRAIN, uniforms: { ...(NM_TERRAIN.uniforms || {}), ...cs.uniforms }, defines: (NM_TERRAIN.defines || '') + cs.defines, near: { ...NM_TERRAIN.near, res: nearRes }, far: { ...NM_TERRAIN.far, res: film.quality.lowTerrain ? 1024 : 2048 } });
   const field = buildAirfield(pipe); pipe.scene.add(field.group);
   const ac = buildQuarterhorse(pipe); pipe.scene.add(ac);
   const plume = makePlume(pipe, { length: 11.5, radius: QH.nozzleR, diamonds: 6 }); plume.position.set(QH.nozzleX + 0.05, 0.06, 0); ac.add(plume);
   const haze = makeHeatHaze(pipe, { length: 46, radius: 0.5, spread: 3.4, strength: 0.0042 }); haze.position.set(QH.nozzleX, 0.06, 0); ac.add(haze);
   const shocks = [[QH.noseX + 0.3, 0.03, 1.0], [QH.noseX - 7.6, -0.2, 0.7], [QH.nozzleX + 0.6, 0.3, 0.8]].map(([x, y, k]) => { const s = makeShockCone(pipe, { length: 150, strength: 0.0052 * k }); s.position.set(x, y, 0); s.userData.k = k; ac.add(s); return s; });
   pipe.registerDynamic(ac);
-  W = { terrain, field, ac, plume, haze, shocks };
+  if (film.off.has('cshadow')) CLOUDS.shadow = 0;
+  if (film.off.has('clouds')) { CLOUDS.cover = 0; CLOUDS.shadow = 0; }
+  W = { terrain, field, ac, plume, haze, shocks, clouds };
   return W;
 }
 
@@ -165,8 +170,9 @@ function bodyCam(s, off, out) {
   return out.set(off[0], off[1], off[2]).applyQuaternion(q1).add(s.p);
 }
 
-const GROUND_POST = { exposure: 0.215, contrast: 1.3, sat: 1.2, wb: [1.05, 1.0, 0.94], aerial: 0.9, grain: 0.04, bloom: 0.07, cirrus: { alt: 13300, cover: 0.42, opacity: 0.5, scale: 1.2, wind: [0.004, 0.001] } };
-const AIR_POST = { exposure: 0.2, contrast: 1.32, sat: 1.24, wb: [1.05, 1.0, 0.93], aerial: 0.82, grain: 0.035, bloom: 0.06, cirrus: { alt: 14200, cover: 0.38, opacity: 0.45, scale: 1.4, wind: [0.003, 0.001] } };
+const CLOUDS = { cover: 0.5, scale: 0.6, wind: [0.012, 0.004], density: 0.014, tile: 4200, steps: 56, shadow: 0.8 };
+const GROUND_POST = { clouds: CLOUDS, exposure: 0.215, contrast: 1.3, sat: 1.2, wb: [1.05, 1.0, 0.94], aerial: 0.9, grain: 0.04, bloom: 0.07, cirrus: { alt: 13300, cover: 0.42, opacity: 0.5, scale: 1.2, wind: [0.004, 0.001] } };
+const AIR_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.32, sat: 1.24, wb: [1.05, 1.0, 0.93], aerial: 0.82, grain: 0.035, bloom: 0.06, cirrus: { alt: 14200, cover: 0.38, opacity: 0.45, scale: 1.4, wind: [0.003, 0.001] } };
 
 const shots = [
   { id: 's01', name: 'Threshold', t0: 0, t1: 6.5, terrain: 'ground', note: 'Head-on down the runway through a long lens; heat shimmer off the concrete.',

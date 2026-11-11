@@ -177,12 +177,13 @@ vec3 vpos(vec2 uv){ float d = texture2D(tDepth, uv).x; float z = d >= 0.999999 ?
 void main(){
   vec3 P = vpos(vUv); float zc = -P.z;
   float rpx = uAO.x*uAO.z/zc;
-  if (zc > 9.0e6 || rpx < 1.2){ gl_FragColor = vec4(1.0, zc, 0.0, 1.0); return; }
+  float zs = min(zc, 6.0e4);                 // half-float safe depth for the edge-aware filters (sky = 60 km)
+  if (zc > 9.0e6 || rpx < 1.2){ gl_FragColor = vec4(1.0, zs, 0.0, 1.0); return; }
   vec2 t = 1.0/uRes;
   vec3 Pr = vpos(vUv+vec2(t.x,0.0)), Pl = vpos(vUv-vec2(t.x,0.0)), Pu = vpos(vUv+vec2(0.0,t.y)), Pd = vpos(vUv-vec2(0.0,t.y));
   vec3 dx = abs(Pr.z-P.z) < abs(P.z-Pl.z) ? Pr-P : P-Pl;
   vec3 dy = abs(Pu.z-P.z) < abs(P.z-Pd.z) ? Pu-P : P-Pd;
-  if (max(abs(dx.z), abs(dy.z)) > 0.25*zc){ gl_FragColor = vec4(1.0, zc, 0.0, 1.0); return; }   // isolated sliver: no stable normal
+  if (max(abs(dx.z), abs(dy.z)) > 0.25*zc){ gl_FragColor = vec4(1.0, zs, 0.0, 1.0); return; }   // isolated sliver: no stable normal
   vec3 N = normalize(cross(dx, dy)); if (N.z < 0.0) N = -N;
   rpx = min(rpx, 0.11*uRes.y);
   float r = rpx*zc/uAO.z;                   // effective world radius after the pixel cap
@@ -193,7 +194,7 @@ void main(){
     vec3 v = S-P; float dd = dot(v,v);
     occ += max(dot(v,N)/sqrt(dd+1e-8)-0.12, 0.0)*clamp(1.0-dd/(r*r), 0.0, 1.0);
   }
-  gl_FragColor = vec4(clamp(1.0-occ/12.0*2.4*uAO.y, 0.0, 1.0), zc, 0.0, 1.0);
+  gl_FragColor = vec4(clamp(1.0-occ/12.0*2.4*uAO.y, 0.0, 1.0), zs, 0.0, 1.0);
 }`;
 const AO_BLUR_FRAG = /* glsl */`
 precision highp float;
@@ -236,7 +237,7 @@ vec3 skyLut(vec3 d, float cv){
 }
 // edge-aware upsample of the half-resolution AO buffer
 float aoAt(vec2 uv, float z){
-  vec2 p = uv*uAOk.yz-0.5, b = floor(p), f = p-b; float ws = 0.0, as = 0.0;
+  vec2 p = uv*uAOk.yz-0.5, b = floor(p), f = p-b; float ws = 0.0, as = 0.0; z = min(z, 6.0e4);
   for (int j=0;j<2;j++) for (int i=0;i<2;i++){
     vec2 s = texture2D(tAO, (b+vec2(float(i),float(j))+0.5)/uAOk.yz).rg;
     float w = (i==0 ? 1.0-f.x : f.x)*(j==0 ? 1.0-f.y : f.y)/(0.02+abs(s.g-z)/z);

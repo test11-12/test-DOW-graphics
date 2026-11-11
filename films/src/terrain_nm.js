@@ -135,7 +135,8 @@ vec4 nmRunway(vec2 q, float fp, float n5, float n6, float n7){
   c = mix(c, vec3(0.15,0.14,0.13), joint*0.8);
   float tz = smoothstep(1790.0,1500.0,az)*smoothstep(900.0,1300.0,az);
   float streak = textureLod(tDetail, vec2(q.x*0.35, q.y*0.004), clamp(log2(fp*0.35*512.0), 0.0, 7.0)).r;
-  c = mix(c, vec3(0.06), tz*smoothstep(12.0,3.0,ax)*smoothstep(0.3,0.75,streak)*0.8);
+  float track = exp(-pow((ax-3.1)/1.5, 2.0))+0.35*exp(-pow(ax/1.1, 2.0));   // main-gear and nose-gear wheel tracks
+  c = mix(c, vec3(0.07), tz*track*smoothstep(0.25,0.8,streak)*0.42);
   float paint = rwBox(28.3, 29.2, ax, w);
   paint = max(paint, rwBox(-0.45, 0.45, q.x, w)*rwBox(0.0, 36.6, mod(q.y+1830.0, 61.0), w)*step(az, 1745.0));
   paint = max(paint, rwBox(1760.0, 1805.0, az, w)*rwBox(1.5, 27.0, ax, w)*rwBox(0.0, 0.5, fract(ax/3.4), w/3.4));
