@@ -120,6 +120,13 @@ full-screen pass lights it. In `shadeTerrain`, sample the shared detail texture 
 terrain with alpha below 1 (for example dark shadow streaks under plants) lets that much less terrain
 light through.
 
+**Sea** (`engine/ocean.js`): `new Ocean(pipe, {clouds, sea: {wind, amp, long, chop, spread}})` draws a
+displaced grid depth-only and lights it in one full-screen pass (sea level is world y = 0). Call
+`ocean.update(t, {wake: {x, z, size}, reflect, whitecap, glitter, sparkle, slick, thermal})` once per frame
+after the camera is posed. `ocean.heightAt(x, z, t)` is the same wave sum on the CPU, for hulls riding the
+sea; `ocean.wakes` (track functions) and `ocean.discs` (splash rings) feed the foam map;
+`ocean.setShelter(x, z, r0, r1, k)` calms the water inside a harbour.
+
 **Effects** (`engine/fx.js`): `makePlume` (ray-marched afterburner with shock cells), `makeHeatHaze`,
 `makeShockCone`, `Trail` (stateless particles), `makeGlow`.
 
