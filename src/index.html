@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ten Wins in Motion</title>
+<meta name="robots" content="noindex,nofollow">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#000000">
+<!--HEAD-->
+</head>
+<body>
+<!--BODY-->
+<svg aria-hidden="true" focusable="false" width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-play" viewBox="0 0 16 16"><path d="M4.6 2.8v10.4L13 8z" class="icon-fill"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 16 16"><path d="M4.2 3h2.6v10H4.2zM9.2 3h2.6v10H9.2z" class="icon-fill"/></symbol>
+    <symbol id="i-replay" viewBox="0 0 16 16"><path d="M3 8a5 5 0 1 0 1.6-3.7M3 2.4v2.6h2.6"/></symbol>
+    <symbol id="i-left" viewBox="0 0 16 16"><path d="M9.6 3.4 5 8l4.6 4.6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 16 16"><path d="M6.4 3.4 11 8l-4.6 4.6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 16 16"><path d="M2.8 6V2.8H6M10 2.8h3.2V6M13.2 10v3.2H10M6 13.2H2.8V10"/></symbol>
+  </defs>
+</svg>
+
+<main id="app" class="app">
+  <header class="masthead" aria-label="Ten wins in motion">
+    <div class="nav">
+      <h1 class="brand">Ten wins in motion</h1>
+      <nav class="filters" aria-label="Domain">
+        <button aria-pressed="true" data-filter="All">All</button>
+        <button aria-pressed="false" data-filter="Air">Air</button>
+        <button aria-pressed="false" data-filter="Sea">Sea</button>
+        <button aria-pressed="false" data-filter="Space">Space</button>
+        <button aria-pressed="false" data-filter="Land">Land</button>
+      </nav>
+      <div class="nav-tools">
+        <button id="view-all" type="button" aria-expanded="false" aria-controls="index">Index<span class="plus" aria-hidden="true">+</span></button>
+      </div>
+    </div>
+    <div class="hero">
+      <div class="hero-title">
+        <p class="hero-kind"><span id="project-number">Win 01</span><span id="project-category">Air</span><span id="page-number" class="code">01 / 10</span><span id="project-meta"></span></p>
+        <h2 id="project-title">Fury</h2>
+      </div>
+      <p id="project-description"></p>
+      <div class="pager">
+        <button id="previous" type="button" aria-label="Previous win"><svg class="icon"><use href="#i-left"/></svg></button>
+        <button id="next" type="button" aria-label="Next win"><svg class="icon"><use href="#i-right"/></svg></button>
+      </div>
+    </div>
+    <nav id="project-tabs" class="tabs" aria-label="Choose a win"></nav>
+  </header>
+
+  <section class="film" aria-labelledby="film-title">
+    <div class="film-head">
+      <h3 id="film-title"></h3>
+      <p id="film-prompt"></p>
+    </div>
+    <div class="stage-frame"><div id="stage" class="stage" role="group" aria-label=""></div></div>
+    <div class="transport" aria-label="Playback">
+      <button id="play" class="play" type="button" aria-label="Pause"><svg class="icon"><use href="#i-pause"/></svg></button>
+      <div class="timeline">
+        <div id="acts" class="acts"></div>
+        <div class="track"><div id="track-fill" class="track-fill"></div><div id="track-ticks" class="track-ticks"></div></div>
+        <input id="scrub" class="scrub" type="range" min="0" max="1000" step="1" value="0" aria-label="Scrub through the film">
+      </div>
+      <output id="clock" class="clock">0:00</output>
+      <button id="speed" class="tool" type="button" data-key="S" aria-label="Playback speed: 1 times">1×</button>
+      <button id="replay" class="tool" type="button" data-key="R" aria-label="Replay from the start"><svg class="icon"><use href="#i-replay"/></svg></button>
+      <button id="present" class="tool" type="button" data-key="F" aria-label="Enter full screen" aria-pressed="false"><svg class="icon"><use href="#i-expand"/></svg></button>
+    </div>
+    <p class="rotate-hint">Turn your phone sideways to see the instruments beside the picture.</p>
+    <div class="film-foot">
+      <p id="caption" role="status" aria-live="polite"></p>
+      <div id="controls"></div>
+    </div>
+  </section>
+
+  <footer>
+    <p class="caveat"><span class="caveat-label">What this cannot show</span><span id="project-caveat"></span></p>
+    <span class="sources"><span class="sources-label">Source</span><span class="sources-list"><a id="source-link" href="#" target="_blank" rel="noopener noreferrer"></a><span id="source-more"></span></span></span>
+    <span id="source-sizer" class="sources-sizer" aria-hidden="true"></span>
+    <span class="keys"><span><kbd>1–0</kbd>Win</span><span><kbd>Space</kbd>Play</span><span><kbd>S</kbd>Speed</span><span><kbd>R</kbd>Replay</span><span><kbd>F</kbd>Full screen</span></span>
+    <span class="colophon">Real events · schematic drawings</span>
+  </footer>
+</main>
+<div id="index" class="index" role="dialog" aria-modal="true" aria-label="All ten wins" hidden></div>
+<noscript><p style="padding:24px;font:15px system-ui;color:#d8d8d4">These films are animated and need JavaScript.</p></noscript>
+<!--/BODY-->
+<!--SCRIPT-->
+</body>
+</html>
