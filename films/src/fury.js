@@ -11,7 +11,7 @@ import { CloudLayer } from '../engine/clouds.js';
 import { attitude } from '../engine/geo.js';
 import { makePlume, makeHeatHaze, makeGlow } from '../engine/fx.js';
 import { MOJAVE_TERRAIN, FIELD_ALT, RWY_HDG, SPOT } from './terrain_mojave.js';
-import { buildFury, buildAmraam, FURY } from './fury_model.js';
+import { buildFury, buildAmraam, FURY } from './fury_assets.js';
 import { buildRamp, buildFieldFar, buildScrub, fieldXZ, dressTyres } from './edwards_field.js';
 import { makeMissileTrail } from './fury_fx.js';
 import { loadGroundArray } from './fury_ground.js';
@@ -94,14 +94,14 @@ async function build(film) {
   field.add(far, scrub, ramp); pipe.scene.add(field);
   lap('field');
   // aircraft
-  const ac = buildFury(pipe); pipe.scene.add(ac);
+  const ac = await buildFury(pipe); pipe.scene.add(ac);
   if (!film.off.has('tyres')) await dressTyres(pipe, ac);
   const haze = makeHeatHaze(pipe, { length: 24, radius: FURY.nozzleR, spread: 3.0, strength: 0.0028 }); haze.position.set(FURY.nozzleX, FURY.nozzleY, 0); ac.add(haze);
-  const nav = ac.userData.navPos.map((p, i) => { const g = makeGlow(pipe, { color: i ? [1.0, 0.07, 0.04] : [0.08, 1.0, 0.3], size: 0.3, depthSoft: 0.3 }); g.position.copy(p); ac.add(g); return g; });
+  const nav = ac.userData.navPos.map((p, i) => { const g = makeGlow(pipe, { color: i ? [1.0, 0.07, 0.04] : [0.08, 1.0, 0.3], size: 0.035, depthSoft: 0.3 }); g.position.copy(p); ac.add(g); return g; });
   pipe.registerDynamic(ac);
   lap('aircraft');
   // missile, its motor and its trail
-  const msl = buildAmraam(pipe); pipe.scene.add(msl);
+  const msl = await buildAmraam(pipe); pipe.scene.add(msl);
   const tx = msl.userData.tailX;
   const plume = makePlume(pipe, { length: 9.0, radius: 0.12, diamonds: 8, color: [1.0, 0.45, 0.15], core: [1.0, 0.88, 0.66] }); plume.position.set(tx + 0.02, 0, 0); msl.add(plume);
   const glow = makeGlow(pipe, { color: [1.0, 0.7, 0.4], size: 1.4, depthSoft: 0.5 }); glow.position.set(tx - 0.3, 0, 0); msl.add(glow);
@@ -164,7 +164,9 @@ const FLARE = { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 };
 const GROUND_POST = { clouds: GROUND_CLOUDS, exposure: 0.215, contrast: 1.22, sat: 1.06, wb: [1.0, 1.0, 1.02], aerial: 0.9, grain: 0.04, bloom: 0.08, shutter: 0.5, cirrus: CIRRUS };
 // at altitude: pale sky, a light hazy horizon and restrained colour, after the released photographs of the test;
 // no high cloud (the sky in them is clear)
-const AIR_POST = { clouds: CLOUDS, exposure: 0.25, contrast: 1.12, sat: 0.88, wb: [1.02, 1.0, 0.97], aerial: 0.9, grain: 0.035, bloom: 0.065, cirrus: null };
+// envDeck: the sunlit deck and desert under the jet light its undersides (a third of the floor is cloud, the rest
+// pale desert: about twice the engine's default floor brightness for this cover)
+const AIR_POST = { clouds: CLOUDS, exposure: 0.25, contrast: 1.12, sat: 0.88, wb: [1.02, 1.0, 0.97], aerial: 0.9, grain: 0.035, bloom: 0.065, cirrus: null, envDeck: { alt: 5750, k: 0.6 } };
 const PLOT_POST = { clouds: { ...CLOUDS, cover: 0, shadow: 0, steps: 8 }, exposure: 0.2, contrast: 1.38, sat: 0.22, wb: [0.9, 0.97, 1.06], aerial: 0.35, grain: 0.03, bloom: 0.03, vignette: 0.3, cirrus: null, shutter: 0, ao: false };
 const PLOT_C = v3(24000, 0, -28000);
 const plotCam = (lt) => ({ pos: v3(PLOT_C.x + lt * 30, 78000, PLOT_C.z - lt * 55), look: v3(PLOT_C.x + lt * 30, 0, PLOT_C.z - lt * 55), up: v3(0, 0, -1), fov: 40 });
@@ -203,7 +205,7 @@ const shots = [
     post: () => ({ ...PLOT_POST }) },
   { id: 's07', name: 'On the rail', t0: 44.0, t1: 46.7, terrain: 'air', note: 'Simulated wing-station camera looking forward along the missile, the low sun at the edge of frame.',
     pose: (lt, t, f) => poseAir(f, SIG.s07(t), t),
-    camera: (lt, t) => { const s = acAt(SIG.s07(t)); attitude(s.hdg, s.pitch, s.roll, q1); return { pos: body(s, [-2.62, -0.63, -2.78], true), look: body(s, [4.5, -0.50, -1.72], true), up: v3(0, 1, 0).applyQuaternion(q1), fov: 60, shake: { rot: 0.16, freq: 3.2, seed: 7, jolt: 0.07 }, focus: s.p.clone(), focusRadius: 7 }; },
+    camera: (lt, t) => { const s = acAt(SIG.s07(t)); attitude(s.hdg, s.pitch, s.roll, q1); return { pos: body(s, [-2.62, -0.63, -2.78], true), look: body(s, [4.5, -0.50, -1.72], true), up: v3(0, 1, 0).applyQuaternion(q1), fov: 60, shake: { rot: 0.16, freq: 3.2, seed: 7, jolt: 0.07 }, focus: body(s, [FURY.station.x, FURY.station.y, FURY.station.z], true), focusRadius: 4.2 }; },
     post: { ...AIR_POST, exposure: 0.2, lensK: 0.06, vignette: 0.42, grain: 0.055, sat: 1.05, rays: 0.35, flare: FLARE, sunDisk: SUN_AIR } },
   { id: 's08', name: 'Fox three', t0: 46.7, t1: 52.2, terrain: 'air', note: 'Port-side chase, long lens, slow motion: the motor lights under the wing and floods it orange, the missile slides off the rail and outruns the frame, its smoke rolling up behind it.',
     pose: (lt, t, f) => poseAir(f, SIG.s08(t), t, { blur: V * SLOW / 30 * 0.25, stretch: 1.3 }),
