@@ -38,7 +38,7 @@ export function makeMissileTrail(pipe, noise3, K) {
     // x: extinction (1/m) of smoke at radius 1 m, y: wisps (interior erosion), z: break-up into puffs, w: burst at ignition
     uMass: { value: new THREE.Vector4(1.6, 0.75, 0.85, 1.1) },
     uPlume: { value: new THREE.Vector3(1.0, 0.6, 0.28) }, uPlumeK: { value: 1 },
-    uDeck: { value: new THREE.Vector3(0.45, 0.45, 0.45) }, uLight: { value: new THREE.Vector4(0.16, 0.03, 1.6, 0.8) }, uBlur: { value: 0 }, uStretch: { value: 1 }, uPix: { value: 0.002 }, uAlbedo: { value: new THREE.Vector3(0.9, 0.92, 0.95) },
+    uDeck: { value: new THREE.Vector3(0.45, 0.45, 0.45) }, uLight: { value: new THREE.Vector4(0.16, 0.03, 1.6, 0.8) }, uBlur: { value: 0 }, uStretch: { value: 1 }, uPix: { value: 0.002 }, uAlbedo: { value: new THREE.Vector3(0.87, 0.915, 0.97) },
   };
   const ENV = 1.62;      // the smoke surface never lies outside this many radii
   const mat = new THREE.ShaderMaterial({
