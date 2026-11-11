@@ -14,7 +14,7 @@ import { Trail, makeGlow } from '../engine/fx.js';
 import { buildCorsair, buildPort, buildShip, PORT } from './corsair_model.js';
 
 const NARRATION = __NARRATION__;
-const SUN = { az: 80, el: 16 };                // hazy morning sun, east
+const SUN = { az: 80, el: +new URLSearchParams(typeof location !== 'undefined' ? location.search : '').get('sunel') || 11 };   // low morning sun, east
 const DUR = 81;
 const D2R = Math.PI / 180;
 
@@ -52,8 +52,8 @@ const CLOUDS = { cover: 0.36, scale: 0.8, wind: [0.010, 0.004], density: 0.013, 
 async function build(film) {
   const pipe = film.pipe;
   pipe.atmo.setSun(SUN.az, SUN.el);
-  pipe.atmo.uniforms.uHaze.value = +film.params.get('haze') || 70; pipe.atmo.uniforms.uHazeH.value = 550; pipe.atmo.groundAlbedo.setRGB(0.05, 0.08, 0.09);
-  const clouds = new CloudLayer(pipe, { base: 1500, top: 3100, div: +film.params.get('cdiv') || 4 });
+  pipe.atmo.uniforms.uHaze.value = +film.params.get('haze') || 25; pipe.atmo.uniforms.uHazeH.value = 550; pipe.atmo.groundAlbedo.setRGB(0.05, 0.08, 0.09);
+  const clouds = new CloudLayer(pipe, { base: +film.params.get('cbase') || 900, top: +film.params.get('ctop') || 2300, div: +film.params.get('cdiv') || 4 });
   const P = film.params, sea = { wind: 50, amp: +P.get('seaamp') || 2.4, long: +P.get('sealong') || 0.45, chop: +P.get('seachop') || 0.85, spread: 40 };
   const ocean = new Ocean(pipe, { clouds, sea });
   ocean.setShelter(15, 70, 150, 340, 0.3);      // the basin behind the breakwaters
@@ -150,7 +150,10 @@ function updateBlasts(film, t, show) {
 // ------------------------------------------------------------------ grade
 const FLARE = { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 };
 const SEA_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.24, sat: 1.0, wb: [1.0, 1.0, 1.03], aerial: 1.0, grain: 0.045, bloom: 0.1, shutter: 0.22, vignette: 0.3 };
-const UP_SUN = { ...SEA_POST, rays: 0.12, flare: FLARE, sunDisk: 0.5 };
+const P0 = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
+// up-sun shots: a heavier deck with the sun breaking through it (dev overrides: ?ucov= ?udens= ?urays=)
+const UP_CLOUDS = { ...CLOUDS, cover: +P0.get('ucov') || 0.56, density: +P0.get('udens') || 0.017, steps: 48 };
+const UP_SUN = { ...SEA_POST, clouds: UP_CLOUDS, rays: +P0.get('urays') || 0.6, flare: FLARE, sunDisk: 0.5 };
 const IR_POST = { clouds: null, cirrus: null, mode: 'thermal', thermal: [3.4, 0.15, 0.05, 0], exposure: 0.26, contrast: 1.2, aerial: 0.25, grain: 0.09, bloom: 0.03, shutter: 0.3, vignette: 0.45, ao: false };
 
 // ------------------------------------------------------------------ shots
@@ -158,7 +161,7 @@ const sunDir = (d, y) => v3(Math.sin(SUN.az * D2R) * d, y, -Math.cos(SUN.az * D2
 const shots = [
   { id: 's01', name: 'The strait', t0: 0, t1: 6.5, note: 'High over open water, looking up-sun: the glitter path, haze, a tanker hull-down in it.',
     tracks: [], ship: [2900, 8650, 196],
-    camera: (lt) => { const p = v3(SEA.x - 260 + lt * 2.2, 24 - lt * 0.5, SEA.z + 190), q = sunDir(600, -74 + lt * 3.5); return { pos: p, look: v3(p.x + q.x, p.y + q.y, p.z + q.z), fov: 38, shake: { rot: 0.05, freq: 0.5, seed: 1 } }; },
+    camera: (lt) => { const p = v3(SEA.x - 260 + lt * 2.2, 24 - lt * 0.5, SEA.z + 190), q = sunDir(600, (+P0.get('s1pitch') || 20) + lt * 3.5); return { pos: p, look: v3(p.x + q.x, p.y + q.y, p.z + q.z), fov: 38, shake: { rot: 0.05, freq: 0.5, seed: 1 } }; },
     post: { ...UP_SUN, exposure: 0.21 } },
   { id: 's02', name: 'Corsair', t0: 6.5, t1: 14.5, note: 'Chase off the port quarter, low: the boat at speed against the sun path.',
     tracks: [LEAD],
