@@ -34,6 +34,10 @@ Keys: `1`–`9` and `0` choose a win, `←` `→` move between them, `Space` pla
 pauses, `S` changes speed, `R` replays, `F` is full screen. The timeline can be
 dragged; every film is a pure function of time, so it scrubs in both directions.
 
+On a phone held upright the stage shows the plate alone, so the picture is large
+enough to read, and the page says under it what the film cannot show. Turned
+sideways, the instruments come back beside it.
+
 To put a single film inside an article, use the drop-in script:
 [docs/EMBED.md](docs/EMBED.md).
 
@@ -53,8 +57,8 @@ on it.
 
 | file | what it is |
 | --- | --- |
-| `dist/ten-wins-in-motion.html` | the whole thing in one file (about 200 KB) |
-| `dist/index.html` + `dist/assets/` | the site: about 26 KB compressed to first picture, films fetched on demand |
+| `dist/ten-wins-in-motion.html` | the whole thing in one file (about 225 KB) |
+| `dist/index.html` + `dist/assets/` | the site: about 28 KB compressed to first picture, films fetched on demand |
 | `dist/embed/wins-motion.js` | the drop-in script for an existing page |
 | `dist/ten-wins-page.html` | the page as a body fragment, for hosts that supply their own `<head>` |
 | `dist/build-report.json` | sizes, checked by the tests |
@@ -71,7 +75,7 @@ on it.
 | `npm test` | unit tests, the browser tests and the layout check (needs Playwright) |
 | `npm run verify` | play all ten films and report what each frame costs |
 | `npm run lint:layout` | find text that is clipped, overlapping, off its plate or hidden behind a label, in every film |
-| `npm run shoot -- --scene victus-haze` | capture frames and a contact sheet of one film |
+| `npm run shoot -- --scene victus-haze` | capture frames and a contact sheet of one film (`--gate 2` adds its waiting state) |
 | `npm run copy` | rewrite `docs/COPY.md` from the films |
 | `npm run export` | a ten-page PDF, one page per win |
 
