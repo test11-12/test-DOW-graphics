@@ -47,6 +47,9 @@ export class Film {
     this.quality = quality;
     this.pipe = new Pipeline(this.canvas, { width: W || 1280, height: H || 720, quality });
     if (P.has('prof')) this.pipe.prof = {};
+    // a lost graphics context (tab backgrounded on a phone, driver reset) takes every baked table with it: say so, and start clean when it returns
+    this.canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); this.playing = false; this.setStatus('Graphics were reset by the browser. Reloading…'); });
+    this.canvas.addEventListener('webglcontextrestored', () => location.reload());
     this.off = new Set((P.get('off') || '').split(',').filter(Boolean));   // dev: ?off=shadow,env,... disables features for profiling
     if (this.off.has('shadow')) this.pipe.sun.castShadow = false;
     if (P.get('aniso')) this.pipe.detail.anisotropy = +P.get('aniso');
