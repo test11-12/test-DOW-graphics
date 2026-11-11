@@ -77,14 +77,14 @@ const def: SceneDef = {
   id: 'talon-a2',
   duration: DUR,
   takeaway: 'A hypersonic test bed that lands and flies again turns a rare event into a schedule.',
-  alt: 'A side-on flight profile over the Pacific. A first test vehicle is released, climbs, and comes down in the ocean. Then the Roc carrier aircraft releases Talon-A2, which climbs under rocket power, passes a mark labeled Mach 5, glides down and lands on a runway at Vandenberg. The same vehicle is carried back and flies the profile a second time, slightly higher and faster.',
+  alt: 'A side-on flight profile over the Pacific. A first test vehicle is released, climbs, and comes down in the ocean. Then the Roc carrier aircraft releases Talon-A2, which climbs under rocket power, passes a mark labeled Mach 5, glides down and lands on a runway at Vandenberg. The same vehicle is carried back and flies the profile a second time, faster; the second path is drawn slightly higher.',
   acts: [
     { at: 0, label: 'Single use' },
     { at: ONE, label: 'Flight one' },
     { at: TWO, label: 'Flight two' },
   ],
   captions: [
-    { at: 0, text: 'Stratolaunch’s first Talon-A was built to fly once. Its flight ended in the ocean.' },
+    { at: 0, text: 'Stratolaunch’s first Talon-A was built to fly once. Its powered flight ended in the ocean.' },
     { at: 3.5, text: 'One flight, one airframe.' },
     { at: ONE, text: 'December 2024. Roc, the widest aircraft ever flown, releases Talon-A2 over the Pacific.' },
     { at: 9.4, text: 'The rocket lights. It passes Mach 5, flies itself to Vandenberg and lands on the runway.' },
@@ -103,7 +103,7 @@ const def: SceneDef = {
     const years = pair.stat({ label: 'Years since the X-15', slots: 2 });
     const speed = rail.chart({ label: 'Speed reached', height: 88 });
     const chips = rail.chips({ label: 'What Talon-A2 did', items: ['Air-launched', 'Rocket-powered', 'Past Mach 5', 'Landed itself', 'Flew again'] });
-    rail.note('The profile is schematic: Stratolaunch has released no altitudes, distances or top speeds.');
+    rail.note('The profile is schematic: Stratolaunch gave no exact speeds, and the reports give no altitudes or distances.');
 
     /** The path a flight has drawn by story time `s`. */
     const trace = (legs: Leg[], s: number, color: string, alpha: number, width: number, dash?: readonly number[]): void => {

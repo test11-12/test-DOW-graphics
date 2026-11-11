@@ -20,7 +20,7 @@ const GATE = 10;
 const AWAY = 13.5;
 const FIRE = 14.1;
 const HIT = 18.3;
-/** Days from the start of development to first flight, per the Air Force. */
+/** Days from a clean-sheet design to first flight: Anduril’s own count. */
 export const DAYS = 556;
 
 const AX = 236;
@@ -38,7 +38,7 @@ const PITCH = 12;
 const def: SceneDef = {
   id: 'fury',
   duration: DUR,
-  takeaway: 'First flight in October. A live missile by July. The Air Force plans about a thousand aircraft like it.',
+  takeaway: 'First flight in October. A live missile by July. The Air Force wants about a thousand uncrewed fighters, and this is one of the first two designs.',
   alt: 'A view from above of an uncrewed YFQ-44A jet, held in the middle of the frame while desert passes beneath it, with one missile under its wing. A dashed link runs to a human operator. The jet requests release, the operator authorizes it, and the missile leaves the wing and flies to a digital target marked by brackets. A grid of 556 dots counts the days from the start of development to first flight.',
   acts: [
     { at: 0, label: 'Sortie' },
@@ -47,7 +47,7 @@ const def: SceneDef = {
   ],
   captions: [
     { at: 0, text: 'A YFQ-44A over the Mojave with a live AMRAAM under its wing. Nobody is on board.' },
-    { at: 3.6, text: 'It went from a blank page to first flight in 556 days.' },
+    { at: 3.6, text: 'Anduril says it went from a clean sheet to first flight in 556 days.' },
     { at: CONSENT, text: 'The jet can run the firing sequence itself, inside limits a pilot sets. It cannot say yes.' },
     { at: GATE + 0.05, text: 'A human operator says yes.' },
     { at: AWAY, text: 'Missile away. The target is digital. The missile is not.' },
@@ -64,7 +64,7 @@ const def: SceneDef = {
     const pair = rail.pair();
     const crew = pair.stat({ label: 'Crew on board', slots: 1 });
     const days = pair.stat({ label: 'Days to first flight', slots: 3, bar: true });
-    const calendar = rail.chart({ label: 'One dot a day, from first design to first flight', height: 60 });
+    const calendar = rail.chart({ label: 'One dot a day, clean sheet to first flight', height: 60 });
     const log = rail.log({ label: 'Then', items: ['First flight', 'Missile carried, inert', 'Production contract', 'Live fire announced'] });
     rail.note('A real test, drawn as a diagram. The range of the shot, the altitude and where the operator sat were not released.');
     const STAMPS = ['31 Oct 2025', 'Feb 2026', 'Jun 2026', '15 Jul 2026'];

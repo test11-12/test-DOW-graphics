@@ -19,8 +19,10 @@ export const projects: Project[] = [
     prompt: 'Watch who gives the order. It is not the jet.',
     sources: [
       { label: 'The Aviationist, 15 Jul 2026', url: 'https://theaviationist.com/2026/07/15/yfq-44a-cca-fires-aim-120-amraam/' },
+      { label: 'Air & Space Forces, 15 Jul 2026', url: 'https://www.airandspaceforces.com/anduril-yfq-44-fires-live-missile-landmark-cca-test/' },
+      { label: 'The War Zone, 15 Jul 2026', url: 'https://www.twz.com/air/yfq-44a-fury-fighter-drone-has-fired-its-first-aim-120-amraam-missile' },
     ],
-    caveat: 'The Air Force did not release the test date, the range of the shot, the altitude, where the operator sat or the simulated result.',
+    caveat: 'The Air Force did not release the test date, the range of the shot, the altitude, where the operator sat or the simulated result. The 556 days is Anduril’s count.',
   },
   {
     id: 'leonidas',
@@ -53,7 +55,7 @@ export const projects: Project[] = [
       { label: 'Nuclear Newswire, 22 Jun 2026', url: 'https://www.ans.org/news/2026-06-22/article-8136/valars-ward-250-reaches-criticality-in-utah/' },
       { label: 'New Atlas', url: 'https://newatlas.com/military/us-air-force-airlifts-complete-nuclear-reactor' },
     ],
-    caveat: 'The reactor flew without fuel. Reports of its power rating differ, so none is shown. Criticality here is a zero-power chain reaction, announced by the Energy Department on June 18, 2026.',
+    caveat: 'The reactor flew without fuel; where it was fueled is not reported. Reports of its power rating differ, so none is shown. Criticality here is a zero-power chain reaction, announced by the Energy Department on June 18, 2026. The July 4 deadline was for three reactors; this was the second.',
   },
   {
     id: 'talon-a2',
@@ -69,7 +71,7 @@ export const projects: Project[] = [
       { label: 'Stratolaunch, 5 May 2025', url: 'https://www.stratolaunch.com/news/stratolaunch-successfully-completes-reusable-hypersonic-flight-and-recovery-with-talon-a2-vehicle/' },
       { label: 'The Aviationist, 6 May 2025', url: 'https://theaviationist.com/2025/05/06/stratolaunch-tests-talon-a2-reusable-hypersonic-flight/' },
     ],
-    caveat: 'Stratolaunch has not released top speeds, altitudes or distances. Both flights passed Mach 5 and the second was faster. The profile is schematic.',
+    caveat: 'Stratolaunch did not release exact speeds, and the reports give no altitudes or distances. Both flights passed Mach 5 and the second was faster. The profile is schematic.',
   },
   {
     id: 'varda-w5',
@@ -86,7 +88,7 @@ export const projects: Project[] = [
       { label: 'Southern Launch', url: 'https://www.southernlaunch.space/news-feed/southern-launch-supports-third-orbital-re-entry-in-12-months-to-koonibba-test-range' },
       { label: 'Varda, W-5 mission page', url: 'https://www.varda.com/mission/w-5' },
     ],
-    caveat: 'Speed figures are Varda’s and Southern Launch’s. Varda says only that the payload was for the US Navy. The sky and the track are schematic.',
+    caveat: 'Speed figures are Varda’s and Southern Launch’s. Varda says only that the Navy payload collected data during re-entry. Dates are Australian: in California it was still January 29. The sky and the track are schematic.',
   },
   {
     id: 'lucas',
@@ -95,15 +97,17 @@ export const projects: Project[] = [
     maker: 'SpektreWorks',
     place: 'Arabian Gulf',
     when: 'December 2025',
-    description: 'A Navy warship launched a one-way attack drone from its flight deck for the first time. The drone reportedly costs about $35,000.',
+    description: 'A Navy warship launched a one-way attack drone from its flight deck for the first time. Central Command puts the drone’s cost at about $35,000.',
     title: 'Any flight deck is a launch pad.',
     prompt: 'Watch the booster fall away.',
     sources: [
       { label: 'Ground News roundup', url: 'https://ground.news/article/in-a-first-a-us-navy-warship-in-the-middle-east-just-launched-a-one-way-attack-drone' },
       { label: 'The War Zone, 18 Dec 2025', url: 'https://www.twz.com/air/american-shahed-136-clone-fired-from-navy-littoral-combat-ship' },
+      { label: 'US Navy release, via Naval News, 19 Dec 2025', url: 'https://www.navalnews.com/naval-news/2025/12/u-s-navy-in-middle-east-employs-attack-drone-at-sea-for-first-time/' },
+      { label: 'Central Command, 3 Dec 2025', url: 'https://www.dvidshub.net/news/552756/us-launches-one-way-attack-drone-force-middle-east' },
       { label: 'Defense News, 28 Feb 2026', url: 'https://www.defensenews.com/news/your-military/2026/02/28/us-confirms-first-combat-use-of-lucas-one-way-attack-drone-in-iran-strikes/' },
     ],
-    caveat: 'Central Command did not say how far the drone flew or whether it hit anything. The price is a reported figure, not an official one.',
+    caveat: 'The Navy did not say how far the drone flew or whether it hit anything. The booster’s fall is drawn, not taken from the footage. The cost is Central Command’s figure.',
   },
   {
     id: 'quarterhorse',
@@ -128,7 +132,7 @@ export const projects: Project[] = [
     maker: 'Saronic',
     place: 'Franklin, Louisiana',
     when: 'May 2026',
-    description: 'Saronic says its 180-foot crewless ship went from first design to the water in under a year. The second hull took fewer hours than the first.',
+    description: 'Saronic says its 180-foot crewless ship went from first design to the water in under a year, and that hull two took fewer labor hours.',
     title: 'A ship in nine months. Then another.',
     prompt: 'Watch the calendar under the hull.',
     sources: [
@@ -136,7 +140,7 @@ export const projects: Project[] = [
       { label: 'WorkBoat, 5 Nov 2026', url: 'https://www.workboat.com/saronic-launches-second-marauder-at-louisiana-shipyard' },
       { label: 'Marine Log', url: 'https://www.marinelog.com/?p=109514' },
     ],
-    caveat: 'The timeline and labor figures are Saronic’s. The design grew from 150 feet at keel-laying to 180 feet at launch. The hull form is schematic.',
+    caveat: 'The timeline and labor figures are Saronic’s. The launch is dated by its announcement. The design grew from 150 feet at keel-laying to the 180 feet Saronic now lists. The hull form is schematic.',
   },
   {
     id: 'victus-haze',
@@ -150,6 +154,7 @@ export const projects: Project[] = [
     prompt: 'First the clock. Then the lime one hunts.',
     sources: [
       { label: 'True Anomaly, 29 Jul 2026', url: 'https://www.trueanomaly.space/newsroom/victus-haze-mission-update-jackal-hunts-puma' },
+      { label: 'True Anomaly, 1 Jul 2026', url: 'https://www.trueanomaly.space/newsroom/first-victus-haze-mission-complete' },
       { label: 'Rocket Lab, 22 Jun 2026', url: 'https://investors.rocketlabcorp.com/news-releases/news-release-details/rocket-lab-shatters-responsive-space-record-launches-us-space' },
       { label: 'DefenseScoop, 23 Jun 2026', url: 'https://defensescoop.com/2026/06/23/space-force-victus-haze-launch-rocket-lab/' },
     ],
@@ -162,12 +167,14 @@ export const projects: Project[] = [
     maker: 'Castelion',
     place: 'US Navy flight test',
     when: 'September 2026',
-    description: 'A startup’s hypersonic missile flew under the wing of a Navy Super Hornet. The first production lot is 444 rounds. The plan is 12,000.',
+    description: 'A startup’s hypersonic missile flew under the wings of a Navy Super Hornet. The first production lot is 444 rounds. The Pentagon wants 12,000.',
     title: 'Hypersonic, by the thousand.',
     prompt: 'Every dot is one missile. The lit ones are on order.',
     sources: [
       { label: 'The War Zone, 25 Sep 2026', url: 'https://www.twz.com/air/blackbeard-hypersonic-missile-seen-flying-on-f-a-18-super-hornet-for-the-first-time' },
+      { label: 'Department of War, 13 May 2026', url: 'https://www.war.gov/news/Releases/Release/Article/4485332/department-of-war-enhances-lethal-strike-capacity-through-partnership-with-new/' },
+      { label: 'Naval News, 16 Sep 2026', url: 'https://www.navalnews.com/naval-news/2026/09/castelion-secures-u-s-navy-production-order-for-blackbeard-hypersonic-weapon/' },
     ],
-    caveat: 'The Navy has not said how fast or how far it flies, or whether one has been launched from the jet. Cost per round is the contract divided by the rounds, not an official price.',
+    caveat: 'The Navy has not given a speed or said whether one has been launched from the jet. No price per round has been published. The 12,000 is a goal the Pentagon is seeking money for; its commitment is at least 500 a year once testing is done.',
   },
 ];

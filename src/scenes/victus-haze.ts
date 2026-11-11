@@ -28,18 +28,18 @@ const def: SceneDef<S.Era[]> = {
   id: 'victus-haze',
   duration: DUR,
   takeaway: 'Launch on a day’s notice is the first half. Catching a target that does not want to be caught is the half that matters.',
-  alt: 'A schematic of the Earth seen from above with two satellites in low orbit. A clock runs to 16 hours 42 minutes beside a bar that stops well short of the previous record of 27 hours, and a rocket climbs from New Zealand to release a white satellite, Puma. A lime satellite, Jackal, leaves its lower orbit, closes on Puma and circles it. Jackal returns to its own orbit. In a second sortie it approaches again; Puma burns to a higher orbit and fades from view, and Jackal follows a new path and closes on it once more.',
+  alt: 'A schematic of the Earth seen from above with two satellites in low orbit. A clock runs to 16 hours 42 minutes beside a bar that stops well short of the previous record of 27 hours, and a rocket climbs from New Zealand to release a white satellite, Puma. A lime satellite, Jackal, leaves its lower orbit, closes on Puma and circles it. Jackal returns to its own orbit. In a second sortie it approaches again; Puma burns away, drawn here as a climb to a higher orbit, and fades from view, and Jackal follows a new path and closes on it once more.',
   acts: [
     { at: 0, label: 'The order' },
     { at: HUNT, label: 'The hunt' },
     { at: ROUND_TWO, label: 'Round two' },
   ],
   captions: [
-    { at: 0, text: 'The Space Force sends Rocket Lab a notice to launch, into an orbit it has not been told until now.' },
+    { at: 0, text: 'The Space Force sends Rocket Lab a notice to launch, into an orbit it did not know in advance.' },
     { at: 3.2, text: 'The record, set in 2023, was 27 hours. Electron lifts off from New Zealand at 16 hours 42 minutes.' },
-    { at: HUNT, text: 'The satellite is Puma. True Anomaly’s Jackal, in orbit since May, has 72 hours to find it, close in and photograph it.' },
+    { at: HUNT, text: 'The satellite is Puma. True Anomaly has eyes on it within hours. Its Jackal, in orbit since May, gets 72 hours to close in and photograph it.' },
     { at: 10.7, text: 'Jackal circles its target and images it from several sides. Done in 61.' },
-    { at: ROUND_TWO, text: 'Round two, July 14: a validated plan in under 30 minutes, then 23 minutes of burns to close in.' },
+    { at: ROUND_TWO, text: 'Round two, July 14: a validated plan in under 30 minutes, then a 23-minute ingress and burn sequence to close in.' },
     { at: S.EVADE + 0.2, text: 'This time Puma fires its thrusters and slips out of view.' },
     { at: S.EVADE + S.LAG + 0.6, text: 'The ground replans. Fresh burns put Jackal back on its target.' },
     { at: S.BACK + 1, text: 'True Anomaly calls it the first pursuit of an evading target in orbit by any company.' },
@@ -281,7 +281,7 @@ const def: SceneDef<S.Era[]> = {
           const up = p[1] > CY + 40;
           pen.label(p[0] + (left ? -9 : 9), p[1] + (up ? -7 : 7), p[0] + (left ? -46 : 46), p[1] + (up ? -42 : 44), lines, { color, u, align: left ? 'right' : 'left' });
         };
-        pen.cap('Space Systems Command', ORDER[0], ORDER[1], col.ink, on * (1 - K.tween(t, HUNT, HUNT + 1)));
+        pen.cap('US Space Force', ORDER[0], ORDER[1], col.ink, on * (1 - K.tween(t, HUNT, HUNT + 1)));
         pen.text('notice to launch', ORDER[0], ORDER[1] + 14, { size: 10.5, color: col.muted, alpha: on * (1 - K.tween(t, HUNT, HUNT + 1)) });
         pen.label(S.SITE_POINT[0] - 5, S.SITE_POINT[1] + 4, S.SITE_POINT[0] - 62, S.SITE_POINT[1] + 74, t >= S.LIFTOFF ? ['Liftoff', '16 h 42 min after the order'] : ['Mahia, New Zealand', 'Rocket Lab Launch Complex 1'], { color: t >= S.LIFTOFF ? col.live : col.ink, u: K.pulse(t, 1.4, HUNT + 1.4, 0.5), align: 'right' });
         // The two satellites never hold still, so their names sit in the corner rather than chase them.
@@ -304,7 +304,7 @@ const def: SceneDef<S.Era[]> = {
         /* The second sortie as a short log in the corner: what happened, in the order it is reported. */
         const e0 = e.at;
         const chased: Array<[number, string, string]> = [
-          [e0 + 0.45, 'Puma maneuvers · custody lost', col.alert],
+          [e0 + 0.45, 'Puma maneuvers · out of view', col.ink],
           [e0 + S.LAG - 0.6, 'New plan from the ground', col.live],
           [e0 + S.LAG + S.CHASE * 0.8, 'Back in view', col.live],
         ];

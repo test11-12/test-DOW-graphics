@@ -32,7 +32,7 @@ const BLEND = 0.9;
 const def: SceneDef = {
   id: 'quarterhorse',
   duration: DUR,
-  takeaway: 'Hermeus calls it the first privately built uncrewed jet to go supersonic. The next airframe is already being built.',
+  takeaway: 'Hermeus calls it the first privately developed uncrewed jet to go supersonic. The next airframe is already being built.',
   alt: 'A delta-winged jet seen from above, held near the right of the frame. Rings of sound spread from its nose and drift back as it accelerates. Below Mach 1 the rings reach ahead of the jet. At Mach 1 they stack into a wall at the nose. At Mach 1.21 they trail behind inside a cone whose half-angle is 56 degrees.',
   acts: [
     { at: 0, label: 'Subsonic' },
@@ -40,7 +40,7 @@ const def: SceneDef = {
     { at: TOP, label: 'Mach 1.21' },
   ],
   captions: [
-    { at: 0, text: 'Quarterhorse Mk 2.1: one fighter engine, a delta wing and no cockpit.' },
+    { at: 0, text: 'Quarterhorse Mk 2.1: one fighter engine, a delta wing and nobody on board.' },
     { at: 2.6, text: 'Below the speed of sound, its noise runs out ahead of it.' },
     { at: MACH_1, text: 'At Mach 1 the jet catches its own sound. The waves pile into a wall.' },
     { at: 10.6, text: 'Push through, and the wall folds back into a cone.' },

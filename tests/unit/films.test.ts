@@ -154,8 +154,12 @@ test('the figures the films state are the reported ones, and the arithmetic hold
   assert.equal(Beard.COLS * Beard.ROWS, 12000);
   assert.equal(Beard.LOT_COLS * Beard.LOT_ROWS, 444);
   assert.ok(Number.isInteger(Beard.ROWS) && Number.isInteger(Beard.LOT_ROWS));
-  assert.equal(Beard.PER_ROUND_K, 98);
-  assert.equal(Beard.FRAMEWORK / Beard.YEARS, 2400);
+  assert.equal(Beard.SOUGHT, 12000);
+  assert.equal(Beard.SOUGHT / Beard.YEARS, 2400);
+  assert.equal(Beard.FLOOR_PER_YEAR, 500);
+  // No price per round is published, so the film must not export one.
+  assert.ok(Beard.FIRST_AWARD_USD < Beard.ORDER_MAX_USD);
+  assert.equal('PER_ROUND_K' in Beard, false);
   // The first order and the footage were eleven days apart.
   assert.equal(days('2026-09-14', '2026-09-25'), 11);
 });
