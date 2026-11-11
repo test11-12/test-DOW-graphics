@@ -42,8 +42,9 @@ out/         rendered MP4s
 storyboards/ shot lists with stills
 ```
 
-Nothing is loaded from outside: geometry, textures, sound and score are generated in code. The narration
-voice is synthesized locally (Kokoro, an open neural TTS model); no text leaves the machine.
+Sound, score, sky, terrain, sea and effects are generated in code; hero models and close-range materials are
+built in Blender from CC0 photoscans (see below). The narration voice is synthesized locally (Kokoro, an open
+neural TTS model); no text leaves the machine.
 
 ## Build, preview, render
 
@@ -80,6 +81,33 @@ A film is a list of shots. Each shot gives a time range, a `pose(time)` that pla
 function of film time, live playback, scrubbing and the offline renderer produce the same picture. World
 positions are kept in double precision and re-centred on the camera every frame, so a 14 m aircraft and a
 400 km horizon share one scene.
+
+## Assets made in Blender
+
+Models and textures that need real modelling and photographic material (aircraft, boats, the harbour, rock,
+ground) are built by scripts in `blender/` that run headless Blender 4.5 LTS through its Python API, and are
+exported as glTF into `assets/<film>/`. The engine loads them with `engine/assets.js`; `tools/build.mjs`
+packs every `.glb` and every file under a `tex/` folder of `assets/<film>/`, `assets/shared/` and the folders
+a film's `meta.json` lists under `"assets"` into the page.
+
+```bash
+node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt/blender/blender
+```
+
+- `blender/lib/dowlib.py`: shared helpers: scene reset, bevels and smoothing, UVs and texel density,
+  material node helpers (tri-planar scanned materials, edge-wear and occlusion masks), PBR baking
+  (base colour, ORM, normal, emissive; occlusion denoised), glTF export, a quick Cycles preview, and
+  downloads of CC0 photoscans from Poly Haven and ambientCG.
+- Conventions: metres; vehicles modelled nose along +X, up +Z, starboard along -Y (the engine's +x forward,
+  +y up, +z right after export); per-material maps: base colour (sRGB), ORM (R occlusion, G roughness,
+  B metal), OpenGL normal.
+- Sources are cached in `$DOW_CACHE` (default `/opt/dow-cache`) and never committed; the exported `.glb`
+  files are, so the films build without Blender.
+- `src/lookdev.js` is a turntable for checking any packed asset under the films' sky and grade:
+  `node tools/shot.mjs lookdev <prefix> t` with `?glb=` chosen via `--cam` / URL parameters.
+
+Photoscanned materials and models come from [Poly Haven](https://polyhaven.com) and
+[ambientCG](https://ambientcg.com), both CC0.
 
 ## Engine reference
 
