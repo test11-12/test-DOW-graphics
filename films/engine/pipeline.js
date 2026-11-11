@@ -536,25 +536,26 @@ void main(){ vec4 b = texture2D(tBlur, vUv); vec4 c = texture2D(tColor, vUv); gl
 // Light shafts: sky near the sun, blurred radially away from it (quarter resolution)
 const RAY_MASK_FRAG = /* glsl */`
 precision highp float;
-uniform sampler2D tColor, tDepth; uniform mat4 uInvProj; uniform mat3 uCamRot; uniform vec3 uSunDir;
+uniform sampler2D tColor, tDepth; uniform mat4 uInvProj; uniform mat3 uCamRot; uniform vec3 uSunDir; uniform vec2 uRayM;   // cone sharpness, brightness cap
 varying vec2 vUv;
 void main(){
   vec4 q = uInvProj*vec4(vUv*2.0-1.0, 1.0, 1.0);
   vec3 rd = normalize(uCamRot*normalize(q.xyz/q.w));
-  float m = step(0.999999, texture2D(tDepth, vUv).x)*pow(max(dot(rd,uSunDir), 0.0), 20.0);
+  float m = step(0.999999, texture2D(tDepth, vUv).x)*pow(max(dot(rd,uSunDir), 0.0), uRayM.x);
   vec3 c = texture2D(tColor, vUv).rgb;
-  gl_FragColor = vec4(c*min(1.0, 80.0/max(max(c.r, max(c.g, c.b)), 1e-6))*m, 1.0);   // cap brightness, keep the sun's hue
+  gl_FragColor = vec4(c*min(1.0, uRayM.y/max(max(c.r, max(c.g, c.b)), 1e-6))*m, 1.0);   // cap brightness, keep the sun's hue
 }`;
 const RAY_BLUR_FRAG = /* glsl */`
 precision highp float;
 ${NOISE}
-uniform sampler2D tIn; uniform vec2 uSunUV; uniform float uFrame;
+uniform sampler2D tIn; uniform vec2 uSunUV; uniform float uFrame; uniform vec3 uRayK;   // reach (fraction of the way to the sun), fall-off per frame height, aspect
 varying vec2 vUv;
 void main(){
-  vec2 delta = (vUv-uSunUV)*(0.92/44.0); vec2 uv = vUv-delta*fract(ign(gl_FragCoord.xy)+uFrame*0.618);
+  vec2 delta = (vUv-uSunUV)*(uRayK.x/44.0); vec2 uv = vUv-delta*fract(ign(gl_FragCoord.xy)+uFrame*0.618);
   vec3 acc = vec3(0.0); float illum = 1.0;
   for (int i=0;i<44;i++){ acc += texture2D(tIn, uv).rgb*illum; uv -= delta; illum *= 0.965; }
-  gl_FragColor = vec4(acc/44.0, 1.0);
+  float r = length((vUv-uSunUV)*vec2(uRayK.z, 1.0));
+  gl_FragColor = vec4(acc/44.0*exp(-uRayK.y*r), 1.0);   // shafts die out away from the sun instead of crossing the frame
 }`;
 // Lens artefacts from the brightest parts of the frame: ghosts, halo, horizontal streak (quarter resolution)
 const FLARE_FRAG = /* glsl */`
@@ -621,6 +622,7 @@ ${NOISE}
 uniform sampler2D tColor, tBloom, tDetail, tRays, tFlare;
 uniform vec2 uRes; uniform float uFrame, uExposure, uBloom, uVignette, uGrain, uCA, uLensK, uFade, uSat, uContrast, uSharpen, uRays, uFlare;
 uniform vec3 uWB, uLift, uTint, uBloomTint; uniform int uMode; uniform vec4 uThermal; // gain, level, noise, polarity
+uniform vec4 uTone; uniform vec3 uToneLo, uToneHi;   // post.tone: black point, blue saturation, top / bottom grad (stops); shadow and highlight tints
 varying vec2 vUv;
 vec3 agxCurve(vec3 x){ vec3 x2=x*x, x4=x2*x2; return 15.5*x4*x2-40.14*x4*x+31.96*x4-6.868*x2*x+0.4298*x2+0.1191*x-0.00232; }
 vec3 agx(vec3 v){
@@ -650,6 +652,7 @@ void main(){
   col = max(col, vec3(0.0))*uExposure*uWB;
   float vig = 1.0-uVignette*smoothstep(0.08, 0.95, r2*1.15);
   col *= vig;
+  if (uTone.z+uTone.w > 0.0) col *= exp2(-uTone.z*smoothstep(0.45, 1.0, vUv.y)-uTone.w*smoothstep(0.45, 1.0, 1.0-vUv.y));   // graduated ND, top and bottom
   vec3 o;
   if (uMode == 1){
     // long-wave IR look: scene luminance stands in for apparent temperature
@@ -666,7 +669,13 @@ void main(){
     o = pow(max(o, vec3(0.0)), vec3(uContrast));
     l = dot(o, vec3(0.2126,0.7152,0.0722));
     o = l+uSat*(o-l);
+    if (uTone.y != 1.0){   // saturation of blues only (hue near 225 degrees)
+      float h = atan(1.7320508*(o.g-o.b), 2.0*o.r-o.g-o.b), dh = abs(mod(h+5.4977871, 6.2831853)-3.1415927);
+      o = l+(o-l)*mix(1.0, uTone.y, exp(-dh*dh/0.45));
+    }
     o = agxOut(o);
+    if (uTone.x > 0.0) o = max(o-uTone.x, vec3(0.0))/(1.0-uTone.x);   // black point
+    if (uToneLo != vec3(1.0) || uToneHi != vec3(1.0)) o *= mix(uToneLo, uToneHi, smoothstep(0.0, 0.7, dot(o, vec3(0.2126,0.7152,0.0722))));   // split tone
     o = o*uTint+uLift*(1.0-o);
   }
   // sensor grain, heavier in the mids and shadows
@@ -769,8 +778,8 @@ export class Pipeline {
     this.pDofPre = new Pass(DOF_PRE_FRAG, { tColor: { value: null }, tVelFull: { value: null }, uDof: { value: new THREE.Vector3(10, 1, 20) } });
     this.pDofGather = new Pass(DOF_GATHER_FRAG, { tIn: { value: null }, uTexel: { value: new THREE.Vector2() }, uMaxC: { value: 10 }, uFrame: shared.uFrame });
     this.pDofComp = new Pass(DOF_COMP_FRAG, { tColor: { value: null }, tBlur: { value: null } });
-    this.pRayMask = new Pass(RAY_MASK_FRAG, { tColor: { value: null }, tDepth: shared.tDepth, uInvProj: shared.uInvProj, uCamRot: shared.uCamRot, uSunDir: A.uSunDir });
-    this.pRayBlur = new Pass(RAY_BLUR_FRAG, { tIn: { value: null }, uSunUV: { value: new THREE.Vector2(0.5, 0.5) }, uFrame: shared.uFrame });
+    this.pRayMask = new Pass(RAY_MASK_FRAG, { tColor: { value: null }, tDepth: shared.tDepth, uInvProj: shared.uInvProj, uCamRot: shared.uCamRot, uSunDir: A.uSunDir, uRayM: { value: new THREE.Vector2(20, 80) } });
+    this.pRayBlur = new Pass(RAY_BLUR_FRAG, { tIn: { value: null }, uSunUV: { value: new THREE.Vector2(0.5, 0.5) }, uFrame: shared.uFrame, uRayK: { value: new THREE.Vector3(0.92, 0, 16 / 9) } });
     this.pFlare = new Pass(FLARE_FRAG, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uK: { value: new THREE.Vector4(0, 0, 0, 10) } });
     this.pDown = new Pass(BLOOM_DOWN_FRAG, { tIn: { value: null }, uTexel: { value: new THREE.Vector2() }, uFirst: { value: 1 } });
     this.pUp = new Pass(BLOOM_UP_FRAG, { tIn: { value: null }, tPrev: { value: null }, uTexel: { value: new THREE.Vector2() }, uMix: { value: 0.5 } });
@@ -781,6 +790,7 @@ export class Pipeline {
       uLensK: { value: 0.0 }, uFade: { value: 1 }, uSat: { value: 1.12 }, uContrast: { value: 1.12 }, uSharpen: { value: 0.0 }, uRays: { value: 0 }, uFlare: { value: 0 },
       uWB: { value: new THREE.Vector3(1, 1, 1) }, uLift: { value: new THREE.Vector3(0, 0, 0) }, uTint: { value: new THREE.Vector3(1, 1, 1) }, uBloomTint: { value: new THREE.Vector3(1, 1, 1) },
       uMode: { value: 0 }, uThermal: { value: new THREE.Vector4(2.2, 0.3, 0.06, 0) },
+      uTone: { value: new THREE.Vector4(0, 1, 0, 0) }, uToneLo: { value: new THREE.Vector3(1, 1, 1) }, uToneHi: { value: new THREE.Vector3(1, 1, 1) },
     });
 
     // environment probe (image-based lighting for PBR materials)
@@ -882,7 +892,8 @@ export class Pipeline {
 
   // post: { exposure, bloom, bloomTint, vignette, grain, ca, lensK, fade, sat, contrast, wb, lift, tint, shutter, shimmer:[amp,scale,far],
   //         sunDisk, aerial, mode, thermal, sharpen, envKey, cirrus:{alt,cover,opacity,scale,wind}, clouds:{...},
-  //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, flare:{ghost,halo,streak,thr} }
+  //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, rayShape:{reach,fall,cone,cap}, flare:{ghost,halo,streak,thr},
+  //         tone:{black (display black point, 0), blueSat (1), grad:[top, bottom] (stops, 0), shadows:[r,g,b], highlights:[r,g,b] (split tone, 1)} }
   render(time, frameIndex, post = {}) {
     const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene;
     if (this.prof) { this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }
@@ -1031,7 +1042,10 @@ export class Pipeline {
         const off = Math.max(Math.abs(sx - 0.5), Math.abs(sy - 0.5));
         rays *= Math.min(1, Math.max(0, (1.6 - off) / 0.6)) * Math.min(1, -sv.z / 0.25);
         if (rays > 0.001) {
+          const rs = post.rayShape || {};   // optional: { reach (0.92), fall (0: none), cone (20), cap (80) }
+          this.pRayMask.u.uRayM.value.set(rs.cone ?? 20, rs.cap ?? 80);
           this.pRayMask.u.tColor.value = cur.texture; this.pRayMask.render(r, this.rtRayA);
+          this.pRayBlur.u.uRayK.value.set(rs.reach ?? 0.92, rs.fall ?? 0, this.w / this.h);
           this.pRayBlur.u.tIn.value = this.rtRayA.texture; this.pRayBlur.u.uSunUV.value.set(sx, sy); this.pRayBlur.render(r, this.rtRayB);
         }
       } else rays = 0;
@@ -1073,6 +1087,7 @@ export class Pipeline {
     uf.uSharpen.value = post.sharpen ?? 0;
     uf.uWB.value.fromArray(post.wb || [1, 1, 1]); uf.uLift.value.fromArray(post.lift || [0, 0, 0]); uf.uTint.value.fromArray(post.tint || [1, 1, 1]);
     uf.uBloomTint.value.fromArray(post.bloomTint || [1, 1, 1]);
+    { const tn = post.tone || {}; uf.uTone.value.set(tn.black ?? 0, tn.blueSat ?? 1, tn.grad?.[0] ?? 0, tn.grad?.[1] ?? 0); uf.uToneLo.value.fromArray(tn.shadows || [1, 1, 1]); uf.uToneHi.value.fromArray(tn.highlights || [1, 1, 1]); }
     uf.uMode.value = post.mode === 'thermal' ? 1 : 0;
     if (post.thermal) uf.uThermal.value.fromArray(post.thermal);
     if (post.debug === 'scene') uf.tColor.value = sceneTex;
