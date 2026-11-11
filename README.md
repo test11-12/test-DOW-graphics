@@ -97,7 +97,8 @@ frame, and why they look the same on every machine. Three films have a small mod
 behind them that runs without a browser: the schedule of 61 drones
 (`leonidas.sim.ts`), the geometry of sound round a moving aircraft
 (`quarterhorse.sim.ts`) and two satellites in orbit (`victus-haze.sim.ts`).
-[docs/DESIGN.md](docs/DESIGN.md) explains the visual rules and how to add a film.
+[docs/DESIGN.md](docs/DESIGN.md) explains the visual rules and how to add a film, and
+[docs/DRAWING.md](docs/DRAWING.md) lists everything a film can call.
 
 ## Where the look comes from
 

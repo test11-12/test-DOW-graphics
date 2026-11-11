@@ -86,6 +86,8 @@ by time. `prepare()` may run before the film is opened, while another one plays.
 
 ## Adding a film
 
+Everything a film can call is listed on one page in [DRAWING.md](DRAWING.md).
+
 1. Add the event to `src/projects.ts`: name, maker, place, date, the line under the
    name, the headline, what to watch for, its sources and what it cannot show.
 2. Write `src/scenes/<id>.ts` that exports a definition:
