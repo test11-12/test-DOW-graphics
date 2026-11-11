@@ -49,13 +49,13 @@ export function makePlume(pipe, { length = 9, radius = 0.47, diamonds = 7, color
         float n2 = texture2D(tDetail, vec2(a*6.1-uTime*6.3, ang*0.32+0.4)).g;
         float body = smoothstep(Rj*(1.02+0.16*(n-0.5)), Rj*0.30, r);
         float hot = smoothstep(0.62*Rj, 0.0, r);
-        float dia = exp(-pow((cell-0.16)/0.15, 2.0))*smoothstep(Rj*(0.95-0.9*abs(cell-0.16)*2.2), 0.0, r);   // lozenge after each neck
+        float cd = (cell-0.16)/0.15; float dia = exp(-cd*cd)*smoothstep(Rj*(0.95-0.9*abs(cell-0.16)*2.2), 0.0, r);   // lozenge after each neck
         float tail = (1.0-a)*(1.0-a);
         vec3 e = uColor*body*(0.45+0.75*n)*exp(-a*2.4)*0.9
                + mix(uColor, uCore, 0.75)*hot*exp(-a*4.2)*1.5
                + mix(uCore, vec3(1.0,0.93,0.82), 0.6)*dia*exp(-a*2.6)*(0.8+0.4*n2)*3.4
                + uCore*hot*exp(-a*22.0)*3.0;
-        float sheath = exp(-pow((r-Rj)/0.11, 2.0));
+        float sh = (r-Rj)/0.11; float sheath = exp(-sh*sh);
         e += vec3(0.30,0.36,1.0)*sheath*exp(-a*7.5)*0.55;
         return e*tail;
       }
@@ -152,7 +152,7 @@ export function makeShockCone(pipe, { length = 60, strength = 0.006 } = {}) {
         if (vZ > sceneDist()) discard;
         vec3 n = normalize(vN), ax = normalize(vAxis), V = normalize(vV);
         vec3 vp = V-dot(V,ax)*ax; float side = length(vp);    // 0 when looking straight down the axis
-        float e = 1.0-abs(dot(n, vp/max(side,1e-4)));
+        float e = clamp(1.0-abs(dot(n, vp/max(side,1e-4))), 0.0, 1.0);
         float k = pow(e, 7.0)*side*(1.0-vAx)*smoothstep(0.0, 0.03, vAx);
         gl_FragColor = vec4(normalize(n.xy+1e-5)*uStrength*k, 0.0, 1.0);
       }`,
@@ -173,7 +173,7 @@ export function makeShockCone(pipe, { length = 60, strength = 0.006 } = {}) {
         if (vZ > sceneDist()) discard;
         vec3 n = normalize(vN), ax = normalize(vAxis), V = normalize(vV);
         vec3 vp = V-dot(V,ax)*ax; float side = length(vp);
-        float e = 1.0-abs(dot(n, vp/max(side,1e-4)));
+        float e = clamp(1.0-abs(dot(n, vp/max(side,1e-4))), 0.0, 1.0);
         float a = clamp(pow(e, 34.0)*side*(1.0-vAx)*smoothstep(0.0, 0.02, vAx)*uLine*1.3, 0.0, 1.0);
         gl_FragColor = vec4(uTone*a, a*0.5);
       }`,

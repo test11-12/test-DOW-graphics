@@ -12,6 +12,14 @@ fsGeo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -
 fsGeo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 2, 0, 0, 2], 2));
 const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
+// three r160 declares precision for float and int only, so under GLSL ES 3.00 every sampler defaults to lowp.
+// GPUs that honour that (Mali, some Adreno) hand back 16-bit depth, heights and HDR colour: banded occlusion,
+// stepped water and terrain. Every program, built-in or custom, gets full-precision samplers in both stages.
+const SAMPLER_PRECISION = 'precision highp sampler2D;\nprecision highp samplerCube;\nprecision highp sampler3D;\n';
+THREE.Material.prototype.onBeforeCompile = function (shader) {
+  shader.vertexShader = SAMPLER_PRECISION + shader.vertexShader; shader.fragmentShader = SAMPLER_PRECISION + shader.fragmentShader;
+};
+
 export class Pass {
   constructor(fragmentShader, uniforms = {}, opts = {}) {
     this.material = new THREE.ShaderMaterial({
@@ -482,7 +490,13 @@ void main(){
     n += (vec2(texture2D(tDetail, p*0.011+vec2(uTime*0.23, -uTime*0.61)).g, texture2D(tDetail, p*0.011+vec2(0.3-uTime*0.19, -uTime*0.53)).r)-0.5)*0.6;
     off += n*uShimmer.x*k/uRes;
   }
-  gl_FragColor = texture2D(tColor, vUv+off);
+  // firewall for everything downstream (blurs spread one bad pixel into a block): no Inf or NaN leaves this pass.
+  // Tested on the bit pattern, because fast-math compilers may fold isnan() away.
+  uvec2 eo = floatBitsToUint(off)&0x7f800000u; if (eo.x == 0x7f800000u || eo.y == 0x7f800000u) off = vec2(0.0);
+  vec4 o = texture2D(tColor, vUv+off);
+  uvec3 e = floatBitsToUint(o.rgb)&0x7f800000u;
+  if (e.r == 0x7f800000u || e.g == 0x7f800000u || e.b == 0x7f800000u) o.rgb = vec3(0.0);
+  gl_FragColor = vec4(clamp(o.rgb, 0.0, 6.0e4), o.a);
 }`;
 // Depth of field: half-resolution gather (after Gustafsson), blended back by blur amount
 const DOF_PRE_FRAG = /* glsl */`
@@ -681,8 +695,9 @@ export class Pipeline {
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFShadowMap; r.shadowMap.autoUpdate = false;
     r.setPixelRatio(1);
     this.maxAniso = r.capabilities.getMaxAnisotropy();
+    if (!r.capabilities.isWebGL2) throw new Error('WebGL 2 is not available in this browser.');
     this.floatLinear = !!r.extensions.get('OES_texture_float_linear');
-    r.extensions.get('EXT_color_buffer_float');
+    if (!r.extensions.get('EXT_color_buffer_float') && !r.extensions.get('EXT_color_buffer_half_float')) throw new Error('This device cannot render to floating-point textures.');
 
     this.atmo = new Atmosphere();
     this.scene = new THREE.Scene();
@@ -719,7 +734,7 @@ export class Pipeline {
 
     const fopt = { type: THREE.FloatType, format: THREE.RGBAFormat, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
     const hopt = { ...fopt, type: THREE.HalfFloatType };
-    this.rtSky = new THREE.WebGLRenderTarget(256, 384, fopt);
+    this.rtSky = new THREE.WebGLRenderTarget(256, 384, this.floatLinear ? fopt : hopt);   // 32-bit float is not filterable without OES_texture_float_linear (iOS, many phones)
     this.rtSky.texture.wrapS = THREE.RepeatWrapping;
     this.rtAmbient = new THREE.WebGLRenderTarget(1, 1, { ...fopt, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
     this.rtApI = new THREE.WebGLRenderTarget(512, 144, hopt); this.rtApT = new THREE.WebGLRenderTarget(512, 144, hopt);
