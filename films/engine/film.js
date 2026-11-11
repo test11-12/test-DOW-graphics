@@ -46,6 +46,10 @@ export class Film {
     }
     this.quality = quality;
     this.pipe = new Pipeline(this.canvas, { width: W || 1280, height: H || 720, quality });
+    if (P.has('prof')) this.pipe.prof = {};
+    this.off = new Set((P.get('off') || '').split(',').filter(Boolean));   // dev: ?off=shadow,env,... disables features for profiling
+    if (this.off.has('shadow')) this.pipe.sun.castShadow = false;
+    if (P.get('aniso')) this.pipe.detail.anisotropy = +P.get('aniso');
     if (this.renderMode) { this.frame.style.width = (W || 1280) + 'px'; this.frame.style.height = (H || 720) + 'px'; document.body.classList.add('render'); }
     this.setStatus('Loading typefaces');
     try { await Promise.all(['700 64px "Saira Condensed"', '500 32px "Saira Condensed"', '400 20px "B612"', '700 20px "B612"', '400 20px "B612 Mono"', '700 20px "B612 Mono"'].map(f => document.fonts.load(f))); } catch (e) { /* fall back to system faces */ }
@@ -60,6 +64,7 @@ export class Film {
     this.renderFrame(this.renderMode ? 0 : (def.poster ?? 0));
     this.setStatus('');
     document.body.classList.add('ready');
+    if (!this.renderMode) document.body.classList.add('prestart');
     this.soundtrack = null;
     this.soundReady = renderSoundtrack(this.duration, def.score || (() => {}), this.narration).then(b => { this.soundtrack = b; return b; }).catch(e => { console.warn('soundtrack failed', e); return null; });
     return true;
@@ -70,10 +75,17 @@ export class Film {
 
   place(obj, w) { obj.position.set(w.x - this.origin.x, w.y - this.origin.y, w.z - this.origin.z); }
 
+  // the shot's camera; ?cam=x,y,z,lookx,looky,lookz,fov replaces it (look development only)
+  cameraOf(shot, lt, t) {
+    const c = shot.camera(lt, t, this), o = this.params.get('cam');
+    if (!o) return c;
+    const v = o.split(',').map(Number);
+    return { ...c, pos: v3(v[0], v[1], v[2]), look: v3(v[3], v[4], v[5]), fov: v[6] || c.fov, up: undefined, shake: null };
+  }
   applyShot(shot, lt, t) {
     const cam = this.pipe.camera, O = this.origin;
     shot.pose && shot.pose(lt, t, this);
-    const c = shot.camera(lt, t, this);
+    const c = this.cameraOf(shot, lt, t);
     cam.position.set(c.pos.x - O.x, c.pos.y - O.y, c.pos.z - O.z);
     cam.up.set(0, 1, 0);
     if (c.up) cam.up.copy(c.up);
@@ -94,7 +106,7 @@ export class Film {
     const pipe = this.pipe, shot = this.shotAt(t), lt = t - shot.t0, dt = 1 / this.fps;
     if (shot !== this._shot) { this._shot = shot; this.def.onShot && this.def.onShot(shot, this); shot.enter && shot.enter(this); }
     // floating origin = camera position at this instant
-    const c0 = shot.camera(lt, t, this); this.origin.copy(c0.pos);
+    const c0 = this.cameraOf(shot, lt, t); this.origin.copy(c0.pos);
     this.applyShot(shot, lt - dt, t - dt); pipe.snapshotPrev();
     const c = this.applyShot(shot, lt, t);
     pipe.origin.copy(this.origin); pipe.camAlt = this.origin.y;
@@ -106,6 +118,7 @@ export class Film {
     if (shot.fadeOut) fade *= 1 - smooth(shot.t1 - shot.fadeOut, shot.t1, t);
     fade *= smooth(0, this.def.fadeIn ?? 0.6, t) * (1 - smooth(this.duration - (this.def.fadeOut ?? 1.0), this.duration - 0.05, t));
     post.fade = fade; post.envKey = post.envKey ?? shot.id;
+    if (this.off.size) { if (this.off.has('ao')) post.ao = false; if (this.off.has('cirrus')) post.cirrus = null; if (this.off.has('blur')) post.shutter = 0; if (this.off.has('dof')) post.dof = null; if (this.params.get('debug')) post.debug = this.params.get('debug'); }
     pipe.render(t, Math.floor(t * this.fps + 1e-6), post);
     this.updateOverlays(t, shot, lt);
   }
@@ -154,16 +167,18 @@ export class Film {
     this.seekEl.max = String(Math.round(this.duration * 100)); this.seekEl.value = '0';
     const ticks = document.getElementById('ticks');
     if (ticks) ticks.innerHTML = this.shots.slice(1).map(s => `<i style="left:${(s.t0 / this.duration * 100).toFixed(3)}%"></i>`).join('');
-    this.btnStart.addEventListener('click', () => { this.startEl.hidden = true; this.seek(0); this.play(); });
+    const begin = () => { this.startEl.hidden = true; document.body.classList.remove('prestart'); };
+    this.begin = begin;
+    this.btnStart.addEventListener('click', () => { begin(); this.seek(0); this.play(); });
     this.btnPlay.addEventListener('click', () => this.toggle());
     this.canvas.addEventListener('click', () => { if (this.startEl.hidden) this.toggle(); });
-    this.seekEl.addEventListener('input', () => { this.startEl.hidden = true; this.seek(+this.seekEl.value / 100); });
+    this.seekEl.addEventListener('input', () => { begin(); this.seek(+this.seekEl.value / 100); });
     this.btnCC.addEventListener('click', () => { this.captionsOn = !this.captionsOn; this.btnCC.setAttribute('aria-pressed', this.captionsOn); if (!this.playing) this.renderFrame(this.t); });
     this.btnMute.addEventListener('click', () => { this.muted = !this.muted; this.btnMute.setAttribute('aria-pressed', this.muted); if (this.gainNode) this.gainNode.gain.value = this.muted ? 0 : 1; });
     this.btnFs.addEventListener('click', () => { const s = document.getElementById('stage'); try { (document.fullscreenElement ? document.exitFullscreen() : s.requestFullscreen()).catch(() => {}); } catch (e) { /* optional */ } });
     window.addEventListener('keydown', e => {
       if (e.target && /INPUT|BUTTON/.test(e.target.tagName) && e.key === ' ') return;
-      if (e.key === ' ' || e.key === 'k') { e.preventDefault(); if (!this.startEl.hidden) { this.startEl.hidden = true; this.seek(0); this.play(); } else this.toggle(); }
+      if (e.key === ' ' || e.key === 'k') { e.preventDefault(); if (!this.startEl.hidden) { begin(); this.seek(0); this.play(); } else this.toggle(); }
       else if (e.key === 'ArrowRight') this.seek(this.t + 2); else if (e.key === 'ArrowLeft') this.seek(this.t - 2);
       else if (e.key === 'c') this.btnCC.click(); else if (e.key === 'm') this.btnMute.click(); else if (e.key === 'f') this.btnFs.click();
     });

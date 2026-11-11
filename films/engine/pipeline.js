@@ -1,4 +1,5 @@
-// HDR render pipeline: scene (MSAA, log depth) -> atmosphere/sky -> FX -> distortion -> motion blur -> bloom -> grade.
+// HDR render pipeline: scene (MSAA, log depth) -> deferred terrain -> ambient occlusion -> sky / aerial perspective /
+// clouds -> FX -> refraction -> depth of field -> motion blur -> light shafts, bloom, flare -> lens, tone map, grade.
 import * as THREE from 'three';
 import { NOISE, ATMOSPHERE, DEPTH, FSQ_VERT } from './glsl.js';
 
@@ -115,18 +116,24 @@ void main(){
 const ENV_FRAG = /* glsl */`
 precision highp float;
 ${ATMOSPHERE}
-uniform float uCamAlt; uniform vec3 uGroundAlb;
+uniform float uCamAlt; uniform vec3 uGroundAlb; uniform vec2 uDeck;   // cloud deck below the camera: top altitude (m), brightness (0 = none)
 varying vec3 vDir;
 void main(){
   vec3 rd = normalize(vDir);
   vec3 ro = vec3(0.0, RG+uCamAlt, 0.0);
   float b = dot(ro,rd), c = dot(ro,ro)-RG*RG, disc = b*b-c;
   float tG = (disc>0.0 && b<0.0) ? (-b-sqrt(disc)) : -1.0;
+  float tD = -1.0;
+  if (uDeck.y > 0.0 && uCamAlt > uDeck.x && b < 0.0){ float Rd = RG+uDeck.x, dd = b*b-(dot(ro,ro)-Rd*Rd); if (dd > 0.0) tD = -b-sqrt(dd); }
   vec3 LR, LM, LMS, T;
-  atmoIntegrate(ro, rd, tG>0.0 ? tG : 1.0e9, 0.5, 14, LR, LM, LMS, T);
+  atmoIntegrate(ro, rd, tD>0.0 ? tD : (tG>0.0 ? tG : 1.0e9), 0.5, 14, LR, LM, LMS, T);
   float cv = dot(rd,uSunDir);
   vec3 col = LR*phaseR(cv)+LM*min(phaseM(cv),1.5)+LMS;
-  if (tG>0.0){
+  if (tD>0.0){        // a bright, softly lit cloud floor
+    vec3 p = ro+rd*tD; float mu = dot(normalize(p), uSunDir);
+    vec3 E = uSunE*exp(-sunTau(RG+uDeck.x, max(mu, 0.02)))*(0.2+0.8*max(mu, 0.0)) + uSunE*0.07*smoothstep(-0.1,0.2,uSunDir.y);
+    col += T*mix(uGroundAlb*0.6, vec3(1.0), 0.75)*uDeck.y*E*0.3183;
+  } else if (tG>0.0){
     vec3 p = ro+rd*tG; float mu = max(dot(normalize(p), uSunDir), 0.0);
     vec3 E = uSunE*exp(-sunTau(RG, mu))*mu + uSunE*0.06*smoothstep(-0.1,0.2,uSunDir.y);
     col += T*uGroundAlb*E*0.3183;
@@ -134,17 +141,98 @@ void main(){
   gl_FragColor = vec4(col, 1.0);
 }`;
 
+// Aerial-perspective froxel LUT: 32 depth slices (8x4 tiles of 64x36) of in-scatter and transmittance along the
+// view frustum, so per-pixel fog is two texture taps instead of an integral.
+const AP_FRAG = /* glsl */`
+precision highp float;
+${ATMOSPHERE}
+uniform mat4 uInvProj; uniform mat3 uCamRot; uniform float uCamAlt; uniform int uWhich;
+varying vec2 vUv;
+void main(){
+  vec2 g = vUv*vec2(8.0,4.0); vec2 tile = floor(g), f = fract(g);
+  float k = tile.x+tile.y*8.0;
+  vec2 suv = (f*vec2(64.0,36.0)-0.5)/vec2(63.0,35.0);
+  float w = (k+1.0)/32.0; float dist = 480000.0*w*w;
+  vec4 q = uInvProj*vec4(suv*2.0-1.0, 1.0, 1.0);
+  vec3 rd = normalize(uCamRot*normalize(q.xyz/q.w));
+  vec3 LR, LM, LMS, T;
+  atmoIntegrate(vec3(0.0, RG+uCamAlt, 0.0), rd, dist, 0.5, 10, LR, LM, LMS, T);
+  gl_FragColor = uWhich == 0 ? vec4(atmoCombine(LR, LM, LMS, dot(rd,uSunDir)), 1.0) : vec4(T, 1.0);
+}`;
+const AP_LOOKUP = /* glsl */`
+uniform sampler2D tApI, tApT;
+void aerialLUT(vec2 uv, float dist, out vec3 I, out vec3 T){
+  float w = sqrt(clamp(dist/480000.0, 0.0, 1.0))*32.0-1.0;
+  float k0 = floor(w), f = w-k0;
+  vec2 tuv = (clamp(uv,0.0,1.0)*vec2(63.0,35.0)+0.5)/vec2(64.0,36.0);
+  vec3 I0 = vec3(0.0), T0 = vec3(1.0);
+  if (k0 >= 0.0){ vec2 a = (vec2(mod(k0,8.0), floor(k0/8.0))+tuv)/vec2(8.0,4.0); I0 = texture2D(tApI,a).rgb; T0 = texture2D(tApT,a).rgb; }
+  float k1 = min(k0+1.0, 31.0);
+  vec2 b = (vec2(mod(k1,8.0), floor(k1/8.0))+tuv)/vec2(8.0,4.0);
+  I = mix(I0, texture2D(tApI,b).rgb, f); T = mix(T0, texture2D(tApT,b).rgb, f);
+}`;
+
+// Screen-space ambient occlusion at half resolution (r = occlusion, g = view depth for edge-aware filtering)
+const AO_FRAG = /* glsl */`
+precision highp float;
+${NOISE}
+${DEPTH}
+uniform sampler2D tDepth; uniform mat4 uInvProj; uniform vec2 uRes; uniform vec3 uAO; // radius (m), strength, px per unit at z=1
+varying vec2 vUv;
+vec3 vpos(vec2 uv){ float d = texture2D(tDepth, uv).x; float z = d >= 0.999999 ? 1.0e7 : viewZ(d); vec4 q = uInvProj*vec4(uv*2.0-1.0, 1.0, 1.0); vec3 dir = q.xyz/q.w; return dir/(-dir.z)*z; }
+void main(){
+  vec3 P = vpos(vUv); float zc = -P.z;
+  float rpx = uAO.x*uAO.z/zc;
+  float zs = min(zc, 6.0e4);                 // half-float safe depth for the edge-aware filters (sky = 60 km)
+  if (zc > 9.0e6 || rpx < 1.2){ gl_FragColor = vec4(1.0, zs, 0.0, 1.0); return; }
+  vec2 t = 1.0/uRes;
+  vec3 Pr = vpos(vUv+vec2(t.x,0.0)), Pl = vpos(vUv-vec2(t.x,0.0)), Pu = vpos(vUv+vec2(0.0,t.y)), Pd = vpos(vUv-vec2(0.0,t.y));
+  vec3 dx = abs(Pr.z-P.z) < abs(P.z-Pl.z) ? Pr-P : P-Pl;
+  vec3 dy = abs(Pu.z-P.z) < abs(P.z-Pd.z) ? Pu-P : P-Pd;
+  if (max(abs(dx.z), abs(dy.z)) > 0.25*zc){ gl_FragColor = vec4(1.0, zs, 0.0, 1.0); return; }   // isolated sliver: no stable normal
+  vec3 N = normalize(cross(dx, dy)); if (N.z < 0.0) N = -N;
+  rpx = min(rpx, 0.11*uRes.y);
+  float r = rpx*zc/uAO.z;                   // effective world radius after the pixel cap
+  float ang = ign(gl_FragCoord.xy)*6.2831853, occ = 0.0;
+  for (int i=0;i<12;i++){
+    float tt = (float(i)+0.5)/12.0; ang += 2.39996;
+    vec3 S = vpos(vUv+vec2(cos(ang), sin(ang))*rpx*sqrt(tt)*t);
+    vec3 v = S-P; float dd = dot(v,v);
+    occ += max(dot(v,N)/sqrt(dd+1e-8)-0.12, 0.0)*clamp(1.0-dd/(r*r), 0.0, 1.0);
+  }
+  gl_FragColor = vec4(clamp(1.0-occ/12.0*2.4*uAO.y, 0.0, 1.0), zs, 0.0, 1.0);
+}`;
+const AO_BLUR_FRAG = /* glsl */`
+precision highp float;
+uniform sampler2D tIn; uniform vec2 uDir;
+varying vec2 vUv;
+void main(){
+  vec2 c = texture2D(tIn, vUv).rg; float acc = c.r*0.28, ws = 0.28;
+  for (int i=1;i<=4;i++){
+    float g = i==1 ? 0.22 : (i==2 ? 0.15 : (i==3 ? 0.09 : 0.04));
+    for (int s=0;s<2;s++){
+      vec2 q = texture2D(tIn, vUv+uDir*float(i)*(s==0 ? 1.0 : -1.0)).rg;
+      float w = g/(1.0+abs(q.g-c.g)/(0.02*c.g+0.01)*4.0);
+      acc += q.r*w; ws += w;
+    }
+  }
+  gl_FragColor = vec4(acc/ws, c.g, 0.0, 1.0);
+}`;
+
 const ATMO_FRAG = /* glsl */`
 precision highp float;
 ${NOISE}
 ${ATMOSPHERE}
 ${DEPTH}
-uniform sampler2D tScene, tDepth, tSky, tDetail, tAmbient;
+${AP_LOOKUP}
+uniform sampler2D tScene, tDepth, tSky, tDetail, tAmbient, tAO, tCloud;
 uniform mat4 uInvProj; uniform mat3 uCamRot;
 uniform float uCamAlt, uFrame, uSunDisk, uAerial;
 uniform vec3 uOrigin;
 uniform vec4 uCirrus;   // altitude (m), coverage 0..1, opacity, scale (km)
 uniform vec2 uCirrusWind;
+uniform vec4 uCloud;    // x: enabled, y: layer base, z: layer top (m MSL)
+uniform vec3 uAOk;      // x: strength (0 = off), yz: AO buffer size
 varying vec2 vUv;
 
 vec3 skyLut(vec3 d, float cv){
@@ -152,6 +240,23 @@ vec3 skyLut(vec3 d, float cv){
   return texture2D(tSky, vec2(uv.x,(v+0.0)/3.0)).rgb*phaseR(cv)
        + texture2D(tSky, vec2(uv.x,(v+1.0)/3.0)).rgb*phaseM(cv)
        + texture2D(tSky, vec2(uv.x,(v+2.0)/3.0)).rgb;
+}
+// edge-aware upsample of the half-resolution AO buffer
+float aoAt(vec2 uv, float z){
+  vec2 p = uv*uAOk.yz-0.5, b = floor(p), f = p-b; float ws = 0.0, as = 0.0; z = min(z, 6.0e4);
+  for (int j=0;j<2;j++) for (int i=0;i<2;i++){
+    vec2 s = texture2D(tAO, (b+vec2(float(i),float(j))+0.5)/uAOk.yz).rg;
+    float w = (i==0 ? 1.0-f.x : f.x)*(j==0 ? 1.0-f.y : f.y)/(0.02+abs(s.g-z)/z);
+    ws += w; as += s.r*w;
+  }
+  return ws > 0.05 ? as/ws : 1.0;     // no AO sample at a comparable depth (silhouette against sky): leave unoccluded
+}
+// distance along the ray to the near face of the spherical layer [base, top] (m MSL); -1 if never entered
+float shellEnter(vec3 ro, vec3 rd, float base, float top){
+  float Rb = RG+base, Rt = RG+top, b = dot(ro,rd), r2 = dot(ro,ro);
+  if (r2 > Rt*Rt){ float disc = b*b-(r2-Rt*Rt); return (disc <= 0.0 || b >= 0.0) ? -1.0 : -b-sqrt(disc); }
+  if (r2 < Rb*Rb){ return -b+sqrt(max(b*b-(r2-Rb*Rb), 0.0)); }
+  return 0.0;
 }
 // thin high cloud sheet on a spherical shell
 vec4 cirrus(vec3 ro, vec3 rd, float cv, out float tHit){
@@ -193,11 +298,11 @@ void main(){
   vec3 rd = normalize(uCamRot*vd);
   vec3 ro = vec3(0.0, RG+uCamAlt, 0.0);
   float cv = dot(rd, uSunDir);
-  float dither = fract(ign(gl_FragCoord.xy)+uFrame*0.61803);
-  vec3 col; vec3 T = vec3(0.0); vec3 I; float dist = 1.0e9;
-  if (d >= 0.999999){
-    I = skyLut(rd, cv);
-    col = I;
+  bool sky = d >= 0.999999;
+  float ak = sky ? 1.0 : uAerial;
+  vec3 col; float dist = 1.0e9;
+  if (sky){
+    col = skyLut(rd, cv);
     float cs = 0.9999892; // cos(0.00465)
     float disk = smoothstep(cs-0.0000035, cs+0.0000015, cv);
     if (disk > 0.0){
@@ -205,23 +310,28 @@ void main(){
       float limb = 1.0-0.55*(1.0-sqrt(clamp((cv-cs)/(1.0-cs),0.0,1.0)));
       col += uSunE*14700.0*uSunDisk*Tv*disk*limb;
     }
-    T = vec3(0.0);
   } else {
-    dist = viewZ(d)/max(-vd.z, 1e-4);
-    vec3 LR, LM, LMS;
-    atmoIntegrate(ro, rd, dist, dither, 6, LR, LM, LMS, T);
-    I = atmoCombine(LR, LM, LMS, cv)*uAerial;
-    T = mix(vec3(1.0), T, uAerial);
-    col = sc.rgb*T+I;
+    float vz = viewZ(d);
+    dist = vz/max(-vd.z, 1e-4);
+    vec3 I, T; aerialLUT(vUv, dist, I, T);
+    vec3 s = sc.rgb;
+    if (uAOk.x > 0.0) s *= mix(1.0, aoAt(vUv, vz), uAOk.x);
+    col = s*mix(vec3(1.0), T, ak)+I*ak;
   }
   float tc; vec4 ci = cirrus(ro, rd, cv, tc);
   if (ci.a > 0.0 && tc < dist){
-    // split the path at the cloud: f = share of the path's extinction in front of it
-    float f = (dist > 9.0e8) ? clamp(1.0-exp(-tc/90000.0), 0.0, 1.0) : clamp(tc/dist, 0.0, 1.0);
-    vec3 Tc = (dist > 9.0e8) ? exp(-(BETA_R*H_R*0.0+vec3(tc*2.0e-6))) : pow(max(T,vec3(1e-6)), vec3(f));
-    vec3 Ic = I*f;
-    vec3 behind = (col-Ic)/max(Tc, vec3(1e-4));
-    col = mix(behind, ci.rgb, ci.a)*Tc+Ic;
+    vec3 Ic, Tc; aerialLUT(vUv, tc, Ic, Tc); Ic *= ak; Tc = mix(vec3(1.0), Tc, ak);
+    col = max(col-Ic, vec3(0.0))*(1.0-ci.a)+Ic+ci.rgb*ci.a*Tc;
+  }
+  if (uCloud.x > 0.5){
+    vec4 cl = texture2D(tCloud, vUv);
+    if (cl.a < 0.997){
+      float tcl = shellEnter(ro, rd, uCloud.y, uCloud.z);
+      if (tcl >= 0.0 && tcl < dist){
+        vec3 Ic, Tc; aerialLUT(vUv, tcl+500.0, Ic, Tc); Ic *= ak; Tc = mix(vec3(1.0), Tc, ak);
+        col = max(col-Ic, vec3(0.0))*cl.a+Ic+cl.rgb*Tc;
+      }
+    }
   }
   gl_FragColor = vec4(max(col, vec3(0.0)), sc.a);
 }`;
@@ -259,7 +369,14 @@ void main(){
   vec4 q = uInvProj*vec4(vUv*2.0-1.0, 1.0, 1.0);
   vec3 vd = normalize(q.xyz/q.w);
   float dist = d >= 0.999999 ? 4.0e6 : viewZ(d)/max(-vd.z,1e-4);
+  float zs = min(dist, 6.0e4);          // the stored depth must stay inside half-float range
   vec4 dv = texture2D(tVel, vUv);
+  if (dv.a <= 0.5 && dist < 3000.0){
+    // The multisampled depth and the single-sample velocity buffer disagree by up to a pixel along silhouettes.
+    // A moving object's edge pixel read as static would get the camera's full speed, so borrow a neighbour's motion.
+    vec2 tx = 1.0/vec2(textureSize(tVel, 0));
+    for (int j=-1;j<=1;j++) for (int i=-1;i<=1;i++){ vec4 n = texture2D(tVel, vUv+vec2(float(i),float(j))*tx); if (n.a > 0.5) dv = n; }
+  }
   vec2 v;
   if (dv.a > 0.5) v = dv.xy;
   else {
@@ -268,7 +385,7 @@ void main(){
     v = vUv-(pc.xy/pc.w*0.5+0.5);
     if (pc.w <= 0.0) v = vec2(0.0);
   }
-  gl_FragColor = vec4(v, dist, dv.a);
+  gl_FragColor = vec4(v, zs, dv.a);
 }`;
 const TILEMAX_FRAG = /* glsl */`
 precision highp float;
@@ -330,6 +447,98 @@ void main(){
   }
   gl_FragColor = texture2D(tColor, vUv+off);
 }`;
+// Depth of field: half-resolution gather (after Gustafsson), blended back by blur amount
+const DOF_PRE_FRAG = /* glsl */`
+precision highp float;
+uniform sampler2D tColor, tVelFull; uniform vec3 uDof;  // focus distance (m), px of blur per unit (z-S)/z, max blur (px)
+varying vec2 vUv;
+void main(){
+  vec3 c = min(texture2D(tColor, vUv).rgb, vec3(4.0e3));
+  float z = texture2D(tVelFull, vUv).z;
+  gl_FragColor = vec4(c, clamp((z-uDof.x)/z*uDof.y, -uDof.z, uDof.z)*0.5);
+}`;
+const DOF_GATHER_FRAG = /* glsl */`
+precision highp float;
+${NOISE}
+uniform sampler2D tIn; uniform vec2 uTexel; uniform float uMaxC, uFrame;
+varying vec2 vUv;
+void main(){
+  vec4 c0 = texture2D(tIn, vUv); float cs0 = abs(c0.a);
+  vec3 acc = c0.rgb; float tot = 1.0, fg = 0.0;
+  float ang = fract(ign(gl_FragCoord.xy)+uFrame*0.618)*6.2831853;
+  for (int i=0;i<40;i++){
+    float rad = uMaxC*sqrt((float(i)+0.5)/40.0); ang += 2.39996;
+    vec4 s = texture2D(tIn, vUv+vec2(cos(ang), sin(ang))*rad*uTexel); float ss = abs(s.a);
+    if (s.a > c0.a) ss = clamp(ss, 0.0, cs0*2.0);   // a background sample cannot smear over a sharper, nearer centre
+    float m = smoothstep(rad-0.5, rad+0.5, ss);
+    acc += mix(acc/tot, s.rgb, m); tot += 1.0;
+    fg += m*step(s.a, -0.6);
+  }
+  gl_FragColor = vec4(acc/tot, max(smoothstep(0.35, 1.5, cs0), clamp(fg/40.0*3.0, 0.0, 1.0)));
+}`;
+const DOF_COMP_FRAG = /* glsl */`
+precision highp float;
+uniform sampler2D tColor, tBlur;
+varying vec2 vUv;
+void main(){ vec4 b = texture2D(tBlur, vUv); vec4 c = texture2D(tColor, vUv); gl_FragColor = vec4(mix(c.rgb, b.rgb, b.a), c.a); }`;
+
+// Light shafts: sky near the sun, blurred radially away from it (quarter resolution)
+const RAY_MASK_FRAG = /* glsl */`
+precision highp float;
+uniform sampler2D tColor, tDepth; uniform mat4 uInvProj; uniform mat3 uCamRot; uniform vec3 uSunDir;
+varying vec2 vUv;
+void main(){
+  vec4 q = uInvProj*vec4(vUv*2.0-1.0, 1.0, 1.0);
+  vec3 rd = normalize(uCamRot*normalize(q.xyz/q.w));
+  float m = step(0.999999, texture2D(tDepth, vUv).x)*pow(max(dot(rd,uSunDir), 0.0), 20.0);
+  gl_FragColor = vec4(min(texture2D(tColor, vUv).rgb, vec3(80.0))*m, 1.0);
+}`;
+const RAY_BLUR_FRAG = /* glsl */`
+precision highp float;
+${NOISE}
+uniform sampler2D tIn; uniform vec2 uSunUV; uniform float uFrame;
+varying vec2 vUv;
+void main(){
+  vec2 delta = (vUv-uSunUV)*(0.92/44.0); vec2 uv = vUv-delta*fract(ign(gl_FragCoord.xy)+uFrame*0.618);
+  vec3 acc = vec3(0.0); float illum = 1.0;
+  for (int i=0;i<44;i++){ acc += texture2D(tIn, uv).rgb*illum; uv -= delta; illum *= 0.965; }
+  gl_FragColor = vec4(acc/44.0, 1.0);
+}`;
+// Lens artefacts from the brightest parts of the frame: ghosts, halo, horizontal streak (quarter resolution)
+const FLARE_FRAG = /* glsl */`
+precision highp float;
+uniform sampler2D tSrc; uniform vec2 uTexel; uniform vec4 uK; // ghost, halo, streak strength, threshold
+varying vec2 vUv;
+// bright parts of the frame only, with their intensity capped so a sun in shot gives a flare, not a white-out
+vec3 thr(vec2 uv){
+  vec3 c = texture2D(tSrc, uv).rgb; float l = max(c.r, max(c.g, c.b));
+  return c/max(l, 1e-4)*min(l, uK.w*3.0)*smoothstep(uK.w, uK.w*2.5, l);
+}
+void main(){
+  vec3 res = vec3(0.0);
+  vec2 uv = vec2(1.0)-vUv, gv = (vec2(0.5)-uv);
+  if (uK.x > 0.0){
+    // a few small ghosts strung along the axis through the frame centre, each slightly colour-fringed
+    for (int i=0;i<4;i++){
+      float sc = i==0 ? 0.22 : (i==1 ? 0.46 : (i==2 ? 0.74 : 1.18));
+      vec2 o = uv+gv*sc; float w = pow(clamp(1.0-length(vec2(0.5)-o)/0.7071, 0.0, 1.0), 6.0);
+      vec3 tint = i==0 ? vec3(1.0,0.72,0.45) : (i==1 ? vec3(0.45,0.75,1.0) : (i==2 ? vec3(0.7,1.0,0.75) : vec3(0.85,0.65,1.0)));
+      vec2 ca = gv*0.012;
+      res += vec3(thr(o+ca).r, thr(o).g, thr(o-ca).b)*w*tint*uK.x*(i==3 ? 0.5 : 1.0);
+    }
+  }
+  if (uK.y > 0.0){
+    vec2 hv = normalize(gv+1e-6)*0.43, ho = uv+hv; float hw = pow(clamp(1.0-length(vec2(0.5)-ho)/0.7071, 0.0, 1.0), 5.0);
+    res += vec3(thr(ho+hv*0.012).r, thr(ho).g, thr(ho-hv*0.012).b)*hw*uK.y;
+  }
+  if (uK.z > 0.0){
+    // anamorphic streak: long, thin, fading smoothly
+    vec3 st = vec3(0.0); float ws = 0.0;
+    for (int i=-32;i<=32;i++){ float w = exp(-abs(float(i))/7.0); st += thr(vUv+vec2(float(i)*uTexel.x*2.2, 0.0))*w; ws += w; }
+    res += st/ws*vec3(0.5,0.7,1.0)*uK.z;
+  }
+  gl_FragColor = vec4(res, 1.0);
+}`;
 const BLOOM_DOWN_FRAG = /* glsl */`
 precision highp float;
 uniform sampler2D tIn; uniform vec2 uTexel; uniform float uFirst;
@@ -357,9 +566,9 @@ void main(){
 const FINAL_FRAG = /* glsl */`
 precision highp float;
 ${NOISE}
-uniform sampler2D tColor, tBloom, tDetail;
-uniform vec2 uRes; uniform float uFrame, uExposure, uBloom, uVignette, uGrain, uCA, uLensK, uFade, uSat, uContrast, uSharpen;
-uniform vec3 uWB, uLift, uTint; uniform int uMode; uniform vec4 uThermal; // gain, level, noise, polarity
+uniform sampler2D tColor, tBloom, tDetail, tRays, tFlare;
+uniform vec2 uRes; uniform float uFrame, uExposure, uBloom, uVignette, uGrain, uCA, uLensK, uFade, uSat, uContrast, uSharpen, uRays, uFlare;
+uniform vec3 uWB, uLift, uTint, uBloomTint; uniform int uMode; uniform vec4 uThermal; // gain, level, noise, polarity
 varying vec2 vUv;
 vec3 agxCurve(vec3 x){ vec3 x2=x*x, x4=x2*x2; return 15.5*x4*x2-40.14*x4*x+31.96*x4-6.868*x2*x+0.4298*x2+0.1191*x-0.00232; }
 vec3 agx(vec3 v){
@@ -371,7 +580,7 @@ vec3 agxOut(vec3 v){
   const mat3 mi = mat3(1.19687900512017,-0.0528968517574562,-0.0529716355144438, -0.0980208811401368,1.15190312990417,-0.0980434501171241, -0.0990297440797205,-0.0989611768448433,1.15107367264116);
   return mi*v;
 }
-vec3 fetch(vec2 uv){ return texture2D(tColor, uv).rgb + texture2D(tBloom, uv).rgb*uBloom; }
+vec3 fetch(vec2 uv){ return texture2D(tColor, uv).rgb + texture2D(tBloom, uv).rgb*uBloom*uBloomTint + texture2D(tRays, uv).rgb*uRays + texture2D(tFlare, uv).rgb*uFlare; }
 void main(){
   vec2 c = vUv-0.5; vec2 asp = vec2(uRes.x/uRes.y, 1.0);
   float r2 = dot(c*asp, c*asp);
@@ -431,7 +640,7 @@ export class Pipeline {
     r.outputColorSpace = THREE.LinearSRGBColorSpace;
     r.toneMapping = THREE.NoToneMapping;
     r.autoClear = false;
-    r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap; r.shadowMap.autoUpdate = false;
+    r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFShadowMap; r.shadowMap.autoUpdate = false;
     r.setPixelRatio(1);
     this.maxAniso = r.capabilities.getMaxAnisotropy();
     this.floatLinear = !!r.extensions.get('OES_texture_float_linear');
@@ -444,16 +653,21 @@ export class Pipeline {
     this.sun = new THREE.DirectionalLight(0xffffff, 1);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(q.shadow, q.shadow);
-    this.sun.shadow.bias = -0.0004; this.sun.shadow.normalBias = 0.03;
+    this.sun.shadow.bias = -0.0005; this.sun.shadow.normalBias = 0.035;
     this.scene.add(this.sun, this.sun.target);
     this.shadowFocus = new THREE.Vector3(); this.shadowRadius = 14;
 
     this.prevVP = new THREE.Matrix4();
     this.dynamic = [];
+    this.deferred = [];      // objects with shade(renderer, sceneTexture, target) -> true if they drew
+    this.clouds = null;      // optional volumetric cloud layer: { render(pipe, opts) -> texture, base, top }
     this.frame = 0;
     this.camAlt = 0; this.origin = new THREE.Vector3();
+    this._v = new THREE.Vector3();
 
-    this.detail = makeDetailTexture(this.maxAniso);
+    this.detail = makeDetailTexture(Math.min(2, this.maxAniso));
+    this.black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); this.black.needsUpdate = true;
+    this.white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); this.white.needsUpdate = true;
     const A = this.atmo.uniforms;
     const shared = this.shared = {
       tDepth: { value: null }, tDetail: { value: this.detail }, tSky: { value: null }, tAmbient: { value: null },
@@ -461,22 +675,31 @@ export class Pipeline {
       uOrigin: { value: new THREE.Vector3() }, uTime: { value: 0 }, uFrame: { value: 0 },
       uSunColor: { value: new THREE.Color() }, uGroundAlb: { value: this.atmo.groundAlbedo },
       uInvProj: { value: new THREE.Matrix4() }, uCamRot: { value: new THREE.Matrix3() },
+      tApI: { value: null }, tApT: { value: null },
       ...A,
     };
 
     const fopt = { type: THREE.FloatType, format: THREE.RGBAFormat, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
+    const hopt = { ...fopt, type: THREE.HalfFloatType };
     this.rtSky = new THREE.WebGLRenderTarget(256, 384, fopt);
     this.rtSky.texture.wrapS = THREE.RepeatWrapping;
     this.rtAmbient = new THREE.WebGLRenderTarget(1, 1, { ...fopt, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    this.rtApI = new THREE.WebGLRenderTarget(512, 144, hopt); this.rtApT = new THREE.WebGLRenderTarget(512, 144, hopt);
     shared.tSky.value = this.rtSky.texture; shared.tAmbient.value = this.rtAmbient.texture;
+    shared.tApI.value = this.rtApI.texture; shared.tApT.value = this.rtApT.texture;
 
     this.pSky = new Pass(SKY_LUT_FRAG, { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb });
     this.pAmbient = new Pass(AMBIENT_FRAG, { ...A, tSky: shared.tSky });
+    this.pAp = new Pass(AP_FRAG, { ...A, uInvProj: shared.uInvProj, uCamRot: shared.uCamRot, uCamAlt: shared.uCamAlt, uWhich: { value: 0 } });
+    this.pAO = new Pass(AO_FRAG, { tDepth: shared.tDepth, uLogFar: shared.uLogFar, uInvProj: shared.uInvProj, uRes: shared.uRes, uAO: { value: new THREE.Vector3(0.9, 0.7, 1) } });
+    this.pAOBlur = new Pass(AO_BLUR_FRAG, { tIn: { value: null }, uDir: { value: new THREE.Vector2() } });
     this.pAtmo = new Pass(ATMO_FRAG, {
       ...A, tScene: { value: null }, tDepth: shared.tDepth, tSky: shared.tSky, tDetail: shared.tDetail, tAmbient: shared.tAmbient,
+      tApI: shared.tApI, tApT: shared.tApT, tAO: { value: this.white }, tCloud: { value: this.black },
       uInvProj: shared.uInvProj, uCamRot: shared.uCamRot, uCamAlt: shared.uCamAlt, uFrame: shared.uFrame,
       uLogFar: shared.uLogFar, uSunDisk: { value: 0.05 }, uAerial: { value: 1 }, uOrigin: shared.uOrigin,
       uCirrus: { value: new THREE.Vector4(10500, 0, 0, 1) }, uCirrusWind: { value: new THREE.Vector2() },
+      uCloud: { value: new THREE.Vector4(0, 3000, 5000, 0) }, uAOk: { value: new THREE.Vector3(0, 1, 1) },
     });
     this.velMat = new THREE.ShaderMaterial({ vertexShader: VEL_VERT, fragmentShader: VEL_FRAG, uniforms: { uPrevMVP: { value: new THREE.Matrix4() } }, side: THREE.DoubleSide });
     this.velMat.isVelocityMaterial = true;
@@ -484,13 +707,20 @@ export class Pipeline {
     this.pTile = new Pass(TILEMAX_FRAG, { tIn: { value: null }, uStep: { value: new THREE.Vector2() }, uCount: { value: 1 } });
     this.pBlur = new Pass(MBLUR_FRAG, { tColor: { value: null }, tVelFull: { value: null }, tTile: { value: null }, uRes: shared.uRes, uShutter: { value: 0.5 }, uMaxPx: { value: 48 }, uFrame: shared.uFrame });
     this.pDistort = new Pass(DISTORT_FRAG, { tColor: { value: null }, tDist: { value: null }, tDetail: shared.tDetail, tVelFull: { value: null }, uRes: shared.uRes, uTime: shared.uTime, uShimmer: { value: new THREE.Vector3(0, 1, 2000) } });
+    this.pDofPre = new Pass(DOF_PRE_FRAG, { tColor: { value: null }, tVelFull: { value: null }, uDof: { value: new THREE.Vector3(10, 1, 20) } });
+    this.pDofGather = new Pass(DOF_GATHER_FRAG, { tIn: { value: null }, uTexel: { value: new THREE.Vector2() }, uMaxC: { value: 10 }, uFrame: shared.uFrame });
+    this.pDofComp = new Pass(DOF_COMP_FRAG, { tColor: { value: null }, tBlur: { value: null } });
+    this.pRayMask = new Pass(RAY_MASK_FRAG, { tColor: { value: null }, tDepth: shared.tDepth, uInvProj: shared.uInvProj, uCamRot: shared.uCamRot, uSunDir: A.uSunDir });
+    this.pRayBlur = new Pass(RAY_BLUR_FRAG, { tIn: { value: null }, uSunUV: { value: new THREE.Vector2(0.5, 0.5) }, uFrame: shared.uFrame });
+    this.pFlare = new Pass(FLARE_FRAG, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uK: { value: new THREE.Vector4(0, 0, 0, 10) } });
     this.pDown = new Pass(BLOOM_DOWN_FRAG, { tIn: { value: null }, uTexel: { value: new THREE.Vector2() }, uFirst: { value: 1 } });
     this.pUp = new Pass(BLOOM_UP_FRAG, { tIn: { value: null }, tPrev: { value: null }, uTexel: { value: new THREE.Vector2() }, uMix: { value: 0.5 } });
     this.pFinal = new Pass(FINAL_FRAG, {
-      tColor: { value: null }, tBloom: { value: null }, tDetail: shared.tDetail, uRes: shared.uRes, uFrame: shared.uFrame,
+      tColor: { value: null }, tBloom: { value: null }, tDetail: shared.tDetail, tRays: { value: this.black }, tFlare: { value: this.black },
+      uRes: shared.uRes, uFrame: shared.uFrame,
       uExposure: { value: 0.25 }, uBloom: { value: 0.06 }, uVignette: { value: 0.25 }, uGrain: { value: 0.035 }, uCA: { value: 0.0012 },
-      uLensK: { value: 0.0 }, uFade: { value: 1 }, uSat: { value: 1.12 }, uContrast: { value: 1.12 }, uSharpen: { value: 0.0 },
-      uWB: { value: new THREE.Vector3(1, 1, 1) }, uLift: { value: new THREE.Vector3(0, 0, 0) }, uTint: { value: new THREE.Vector3(1, 1, 1) },
+      uLensK: { value: 0.0 }, uFade: { value: 1 }, uSat: { value: 1.12 }, uContrast: { value: 1.12 }, uSharpen: { value: 0.0 }, uRays: { value: 0 }, uFlare: { value: 0 },
+      uWB: { value: new THREE.Vector3(1, 1, 1) }, uLift: { value: new THREE.Vector3(0, 0, 0) }, uTint: { value: new THREE.Vector3(1, 1, 1) }, uBloomTint: { value: new THREE.Vector3(1, 1, 1) },
       uMode: { value: 0 }, uThermal: { value: new THREE.Vector4(2.2, 0.3, 0.06, 0) },
     });
 
@@ -499,11 +729,11 @@ export class Pipeline {
     this.envScene = new THREE.Scene();
     const envMat = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthTest: false, depthWrite: false,
-      uniforms: { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb },
+      uniforms: { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb, uDeck: { value: new THREE.Vector2(0, 0) } },
       vertexShader: `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
       fragmentShader: ENV_FRAG,
     });
-    this.envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat));
+    this.envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat)); this.envDeck = envMat.uniforms.uDeck.value;
     this.envRT = null; this.envKey = '';
     this.setSize(opts.width || 1280, opts.height || 720);
   }
@@ -515,9 +745,10 @@ export class Pipeline {
     const r = this.renderer, q = this.quality;
     r.setSize(w, h, false);
     this.shared.uRes.value.set(w, h);
-    for (const k of ['rtScene', 'rtVel', 'rtA', 'rtB', 'rtVelFull', 'rtTileH', 'rtTile', 'rtDist']) this[k]?.dispose();
-    (this.bloom || []).forEach(t => t.dispose());
+    for (const k of ['rtScene', 'rtVel', 'rtA', 'rtB', 'rtC', 'rtVelFull', 'rtTileH', 'rtTile', 'rtTileN', 'rtDist', 'rtAO', 'rtAO2', 'rtDofA', 'rtDofB', 'rtRayA', 'rtRayB', 'rtFlare']) this[k]?.dispose();
+    (this.bloom || []).forEach(t => t.dispose()); (this.bloomUp || []).forEach(t => t.dispose());
     const hf = { type: THREE.HalfFloatType, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
+    const near = { ...hf, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter };
     const depth = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
     depth.minFilter = depth.magFilter = THREE.NearestFilter;
     this.rtScene = new THREE.WebGLRenderTarget(w, h, { ...hf, samples: q.msaa, depthBuffer: true, depthTexture: depth });
@@ -525,14 +756,19 @@ export class Pipeline {
     this.rtVel = new THREE.WebGLRenderTarget(w, h, { ...hf, depthBuffer: true, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
     this.rtA = new THREE.WebGLRenderTarget(w, h, { ...hf, depthBuffer: false });
     this.rtB = new THREE.WebGLRenderTarget(w, h, { ...hf, depthBuffer: false });
-    this.rtVelFull = new THREE.WebGLRenderTarget(w, h, { ...hf, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    this.rtC = new THREE.WebGLRenderTarget(w, h, { ...hf, depthBuffer: false });
+    this.rtVelFull = new THREE.WebGLRenderTarget(w, h, near);
     this.tile = Math.max(8, Math.round(h / 34));
     const tw = Math.ceil(w / this.tile), th = Math.ceil(h / this.tile);
-    const near = { ...hf, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter };
     this.rtTileH = new THREE.WebGLRenderTarget(tw, h, near);
     this.rtTile = new THREE.WebGLRenderTarget(tw, th, near);
     this.rtTileN = new THREE.WebGLRenderTarget(tw, th, near);
-    this.rtDist = new THREE.WebGLRenderTarget(Math.ceil(w / 2), Math.ceil(h / 2), { ...hf, depthBuffer: false });
+    const w2 = Math.ceil(w / 2), h2 = Math.ceil(h / 2), w4 = Math.ceil(w / 4), h4 = Math.ceil(h / 4);
+    this.rtDist = new THREE.WebGLRenderTarget(w2, h2, { ...hf, depthBuffer: false });
+    this.rtAO = new THREE.WebGLRenderTarget(w2, h2, near); this.rtAO2 = new THREE.WebGLRenderTarget(w2, h2, near);
+    this.rtDofA = new THREE.WebGLRenderTarget(w2, h2, { ...hf, depthBuffer: false }); this.rtDofB = new THREE.WebGLRenderTarget(w2, h2, { ...hf, depthBuffer: false });
+    this.rtRayA = new THREE.WebGLRenderTarget(w4, h4, { ...hf, depthBuffer: false }); this.rtRayB = new THREE.WebGLRenderTarget(w4, h4, { ...hf, depthBuffer: false });
+    this.rtFlare = new THREE.WebGLRenderTarget(w4, h4, { ...hf, depthBuffer: false });
     this.bloom = []; this.bloomUp = [];
     let bw = w, bh = h;
     for (let i = 0; i < q.bloomLevels; i++) {
@@ -541,6 +777,7 @@ export class Pipeline {
       this.bloomUp.push(new THREE.WebGLRenderTarget(bw, bh, { ...hf, depthBuffer: false }));
     }
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+    this.clouds && this.clouds.setSize && this.clouds.setSize(w, h);
   }
 
   // mark an object tree as moving geometry (own motion vectors, casts the hero shadow)
@@ -574,9 +811,22 @@ export class Pipeline {
     if (old) old.dispose();
   }
 
-  // post: { exposure, bloom, vignette, grain, ca, lensK, fade, sat, contrast, wb:[r,g,b], lift:[..], tint:[..], shutter, shimmer:[amp,scale,far], sunDisk, mode, thermal:[..], cirrus:{alt,cover,opacity,scale}, sharpen }
+  // forces the GPU to finish and records elapsed ms under `name` (only when this.prof is set)
+  mark(name) {
+    if (!this.prof) return;
+    const gl = this.renderer.getContext(); gl.finish();
+    const fmt = gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_FORMAT), type = gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_TYPE);
+    const px = type === gl.FLOAT ? new Float32Array(4) : (type === gl.HALF_FLOAT ? new Uint16Array(4) : new Uint8Array(4));
+    gl.readPixels(0, 0, 1, 1, fmt, type, px);
+    const now = performance.now(); this.prof[name] = (this.prof[name] || 0) + now - this._pt; this._pt = now;
+  }
+
+  // post: { exposure, bloom, bloomTint, vignette, grain, ca, lensK, fade, sat, contrast, wb, lift, tint, shutter, shimmer:[amp,scale,far],
+  //         sunDisk, aerial, mode, thermal, sharpen, envKey, cirrus:{alt,cover,opacity,scale,wind}, clouds:{...},
+  //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, flare:{ghost,halo,streak,thr} }
   render(time, frameIndex, post = {}) {
     const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene;
+    if (this.prof) { this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }
     this.frame = frameIndex;
     S.uTime.value = time; S.uFrame.value = frameIndex % 1024;
     S.uCamAlt.value = this.camAlt; S.uOrigin.value.copy(this.origin);
@@ -595,16 +845,26 @@ export class Pipeline {
     sh.left = -sr; sh.right = sr; sh.top = sr; sh.bottom = -sr; sh.near = 0.5; sh.far = sr * 8; sh.updateProjectionMatrix();
     this.sun.updateMatrixWorld(); this.sun.target.updateMatrixWorld();
 
-    // sky LUT every frame (cheap); IBL only when the key changes
+    // sky LUT + hemisphere irradiance only when sun / altitude / haze change; IBL when the key changes
     const A = this.atmo.uniforms, sk = `${A.uSunDir.value.x.toFixed(4)},${A.uSunDir.value.y.toFixed(4)},${A.uSunDir.value.z.toFixed(4)},${Math.round(this.camAlt / 25)},${A.uHaze.value},${A.uHazeH.value},${A.uMieG.value},${A.uMS.value}`;
     if (sk !== this.skyKey) { this.skyKey = sk; this.pSky.render(r, this.rtSky); this.pAmbient.render(r, this.rtAmbient); }
+    { // reflections: a cloud deck under the camera brightens the lower half of what metal sees
+      const dk = post.envDeck ?? (this.clouds && post.clouds ? { alt: this.clouds.top - 350, k: 0.6 * Math.min(1, (post.clouds.cover ?? 0.35) * 1.5) } : null);
+      this.envDeck.set(dk ? dk.alt : 0, dk ? dk.k : 0);
+    }
     this.updateEnvironment(post.envKey ?? 'default');
+    // aerial-perspective froxels follow the camera every frame
+    this.pAp.u.uWhich.value = 0; this.pAp.render(r, this.rtApI);
+    this.pAp.u.uWhich.value = 1; this.pAp.render(r, this.rtApT);
+    this.mark('sky+env');
 
     // 1. opaque scene
     cam.layers.set(LAYER.STATIC); cam.layers.enable(LAYER.DYNAMIC);
     r.shadowMap.needsUpdate = true;
     r.setRenderTarget(this.rtScene); r.setClearColor(0x000000, 1); r.clear();
     r.render(sc, cam);
+    if (this.prof) r.setRenderTarget(this.rtVel);
+    this.mark('scene');
 
     // 2. motion vectors of moving geometry
     sc.overrideMaterial = this.velMat;
@@ -612,28 +872,50 @@ export class Pipeline {
     r.setRenderTarget(this.rtVel); r.setClearColor(0x000000, 0); r.clear();
     r.render(sc, cam);
     sc.overrideMaterial = null;
+    this.mark('velocity');
 
-    // 3. sky + aerial perspective
-    const ua = this.pAtmo.u;
-    ua.tScene.value = this.rtScene.texture;
+    // 3. deferred lighting of depth-only geometry (terrain): one evaluation per pixel
+    let sceneTex = this.rtScene.texture, dT = this.rtB;
+    for (const d of this.deferred) if (d.shade(r, sceneTex, dT)) { sceneTex = dT.texture; dT = dT === this.rtB ? this.rtC : this.rtB; }
+    this.mark('deferred');
+
+    // 4. ambient occlusion (half resolution, edge-aware blur)
+    const ua = this.pAtmo.u, ao = post.ao === false ? null : (post.ao || {});
+    if (ao && (ao.strength ?? 0.7) > 0) {
+      const u = this.pAO.u; u.uAO.value.set(ao.radius ?? 0.9, 1, 0.5 * this.h / Math.tan(cam.fov * Math.PI / 360));
+      this.pAO.render(r, this.rtAO);
+      const b = this.pAOBlur.u;
+      b.tIn.value = this.rtAO.texture; b.uDir.value.set(1 / this.rtAO.width, 0); this.pAOBlur.render(r, this.rtAO2);
+      b.tIn.value = this.rtAO2.texture; b.uDir.value.set(0, 1 / this.rtAO.height); this.pAOBlur.render(r, this.rtAO);
+      ua.tAO.value = this.rtAO.texture; ua.uAOk.value.set(ao.strength ?? 0.7, this.rtAO.width, this.rtAO.height);
+    } else { ua.tAO.value = this.white; ua.uAOk.value.set(0, 1, 1); }
+    this.mark('ao');
+
+    // 5. volumetric clouds (own module), then sky + aerial perspective + composite
+    if (this.clouds && post.clouds) {
+      const tex = this.clouds.render(this, post.clouds, time);
+      ua.tCloud.value = tex; ua.uCloud.value.set(1, this.clouds.base, this.clouds.top, 0);
+    } else { ua.tCloud.value = this.black; ua.uCloud.value.x = 0; }
+    this.mark('clouds');
+    ua.tScene.value = sceneTex;
     ua.uSunDisk.value = post.sunDisk ?? 0.05; ua.uAerial.value = post.aerial ?? 1;
     const ci = post.cirrus;
     if (ci) { ua.uCirrus.value.set(ci.alt ?? 10500, ci.cover ?? 0.4, ci.opacity ?? 0.5, ci.scale ?? 1); ua.uCirrusWind.value.set((ci.wind?.[0] ?? 0) * time, (ci.wind?.[1] ?? 0) * time); }
     else ua.uCirrus.value.z = 0;
     this.pAtmo.render(r, this.rtA);
+    this.mark('atmosphere');
 
-    // 4. transparent FX over the lit, fogged scene
+    // 6. transparent FX over the lit, fogged scene; refraction sources (heat haze, shock fronts)
     cam.layers.set(LAYER.FX);
     r.setRenderTarget(this.rtA);
     r.render(sc, cam);
-
-    // 5. refraction sources (heat haze, shock fronts)
     cam.layers.set(LAYER.DISTORT);
     r.setRenderTarget(this.rtDist); r.setClearColor(0x000000, 0); r.clear();
     r.render(sc, cam);
     cam.layers.set(LAYER.STATIC); cam.layers.enable(LAYER.DYNAMIC);
+    this.mark('fx');
 
-    // 6. velocity field
+    // 7. velocity field + refraction
     this.pVelFull.u.tVel.value = this.rtVel.texture;
     this.pVelFull.render(r, this.rtVelFull);
     const sh2 = post.shimmer || [0, 1, 2000];
@@ -642,11 +924,28 @@ export class Pipeline {
     ud.uShimmer.value.set(sh2[0] * this.h / 1080, sh2[1] * this.h / 1080, sh2[2]);
     this.pDistort.render(r, this.rtB);
     let cur = this.rtB, other = this.rtA;
+    this.mark('refraction');
 
+    // 8. depth of field
+    const dof = post.dof;
+    if (dof && dof.fstop && dof.focus > 0) {
+      const f = 0.012 / Math.tan(cam.fov * Math.PI / 360);                       // focal length (m) on a 24 mm-high sensor
+      const K = f * f / (dof.fstop * Math.max(dof.focus - f, 1e-3)) * (this.h / 0.024), maxC = Math.min(dof.max ?? 0.022 * this.h, 0.03 * this.h);
+      const u = this.pDofPre.u; u.tColor.value = cur.texture; u.tVelFull.value = this.rtVelFull.texture; u.uDof.value.set(dof.focus, K, maxC);
+      this.pDofPre.render(r, this.rtDofA);
+      const g = this.pDofGather.u; g.tIn.value = this.rtDofA.texture; g.uTexel.value.set(1 / this.rtDofA.width, 1 / this.rtDofA.height); g.uMaxC.value = maxC * 0.5;
+      this.pDofGather.render(r, this.rtDofB);
+      const c = this.pDofComp.u; c.tColor.value = cur.texture; c.tBlur.value = this.rtDofB.texture;
+      this.pDofComp.render(r, other);
+      [cur, other] = [other, cur];
+    }
+    this.mark('dof');
+
+    // 9. motion blur
     const shutter = post.shutter ?? 0.5;
     if (shutter > 0) {
       const ut = this.pTile.u;
-      ut.tIn.value = this.rtVelFull.texture; ut.uStep.value.set(0, 0); ut.uCount.value = this.tile; ut.uStep.value.set(1 / this.w, 0);
+      ut.tIn.value = this.rtVelFull.texture; ut.uCount.value = this.tile; ut.uStep.value.set(1 / this.w, 0);
       this.pTile.render(r, this.rtTileH);
       ut.tIn.value = this.rtTileH.texture; ut.uStep.value.set(0, 1 / this.h);
       this.pTile.render(r, this.rtTile);
@@ -660,8 +959,28 @@ export class Pipeline {
       this.pBlur.render(r, other);
       [cur, other] = [other, cur];
     }
+    this.mark('motionblur');
 
-    // 7. bloom
+    // 10. light shafts from the sun when it is in or near the frame
+    const uf = this.pFinal.u;
+    let rays = post.rays ?? 0;
+    if (rays > 0) {
+      const sv = this._v.copy(this.atmo.sunDir).transformDirection(cam.matrixWorldInverse);
+      const P = cam.projectionMatrix.elements;
+      if (sv.z < -0.02) {
+        const sx = sv.x / -sv.z * P[0] * 0.5 + 0.5, sy = sv.y / -sv.z * P[5] * 0.5 + 0.5;
+        const off = Math.max(Math.abs(sx - 0.5), Math.abs(sy - 0.5));
+        rays *= Math.min(1, Math.max(0, (1.6 - off) / 0.6)) * Math.min(1, -sv.z / 0.25);
+        if (rays > 0.001) {
+          this.pRayMask.u.tColor.value = cur.texture; this.pRayMask.render(r, this.rtRayA);
+          this.pRayBlur.u.tIn.value = this.rtRayA.texture; this.pRayBlur.u.uSunUV.value.set(sx, sy); this.pRayBlur.render(r, this.rtRayB);
+        }
+      } else rays = 0;
+    }
+    uf.tRays.value = rays > 0.001 ? this.rtRayB.texture : this.black; uf.uRays.value = rays > 0.001 ? rays : 0;
+    this.mark('rays');
+
+    // 11. bloom
     const B = this.bloom, U = this.bloomUp;
     let src = cur.texture, sw = this.w, shh = this.h;
     for (let i = 0; i < B.length; i++) {
@@ -677,19 +996,32 @@ export class Pipeline {
       this.pUp.render(r, U[i]);
       up = U[i].texture;
     }
+    // lens ghosts / halo / streak from the brightest pixels
+    const fl = post.flare, exposure = post.exposure ?? 0.25;
+    if (fl && ((fl.ghost ?? 0) > 0 || (fl.halo ?? 0) > 0 || (fl.streak ?? 0) > 0)) {
+      const u = this.pFlare.u; u.tSrc.value = B[1].texture; u.uTexel.value.set(1 / B[1].width, 1 / B[1].height);
+      u.uK.value.set(fl.ghost ?? 0, fl.halo ?? 0, fl.streak ?? 0, (fl.thr ?? 3.2) / exposure);
+      this.pFlare.render(r, this.rtFlare);
+      uf.tFlare.value = this.rtFlare.texture; uf.uFlare.value = 1;
+    } else { uf.tFlare.value = this.black; uf.uFlare.value = 0; }
+    this.mark('bloom');
 
-    // 8. lens, tone map, grade
-    const uf = this.pFinal.u;
+    // 12. lens, tone map, grade
     uf.tColor.value = cur.texture; uf.tBloom.value = up;
-    uf.uExposure.value = post.exposure ?? 0.25; uf.uBloom.value = post.bloom ?? 0.06;
+    uf.uExposure.value = exposure; uf.uBloom.value = post.bloom ?? 0.06;
     uf.uVignette.value = post.vignette ?? 0.25; uf.uGrain.value = post.grain ?? 0.035; uf.uCA.value = post.ca ?? 0.0012;
     uf.uLensK.value = post.lensK ?? 0; uf.uFade.value = post.fade ?? 1; uf.uSat.value = post.sat ?? 1.12; uf.uContrast.value = post.contrast ?? 1.12;
     uf.uSharpen.value = post.sharpen ?? 0;
     uf.uWB.value.fromArray(post.wb || [1, 1, 1]); uf.uLift.value.fromArray(post.lift || [0, 0, 0]); uf.uTint.value.fromArray(post.tint || [1, 1, 1]);
+    uf.uBloomTint.value.fromArray(post.bloomTint || [1, 1, 1]);
     uf.uMode.value = post.mode === 'thermal' ? 1 : 0;
     if (post.thermal) uf.uThermal.value.fromArray(post.thermal);
-    if (post.debug === 'scene') uf.tColor.value = this.rtScene.texture;
+    if (post.debug === 'scene') uf.tColor.value = sceneTex;
+    else if (post.debug === 'ao') uf.tColor.value = this.rtAO.texture;
+    else if (post.debug === 'vel') uf.tColor.value = this.rtVelFull.texture;
+    else if (post.debug === 'tile') uf.tColor.value = this.rtTileN.texture;
     this.pFinal.render(r, null);
+    this.mark('final');
   }
 }
 

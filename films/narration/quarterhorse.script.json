@@ -8,7 +8,7 @@
     { "id": "n05", "t": 29.2, "text": "Over White Sands Missile Range, the throttle goes forward.", "say": "Over White Sands Missile Range, the throttle goes forward." },
     { "id": "n06", "t": 38.5, "text": "Mach one.", "say": "Mach one." },
     { "id": "n07", "t": 45.3, "text": "The airplane is now outrunning its own sound.", "say": "The airplane is now outrunning its own sound." },
-    { "id": "n08", "t": 48.0, "text": "Top speed: Mach 1.21.", "say": "Top speed: Mach one point two one." },
+    { "id": "n08", "t": 48.5, "text": "Top speed: Mach 1.21.", "say": "Top speed: Mach one point two one." },
     { "id": "n09", "t": 52.6, "text": "That came less than three months after its first flight, and 364 days after the first airplane this company ever flew.", "say": "That came less than three months after its first flight, and three hundred sixty-four days after the first airplane this company ever flew." },
     { "id": "n10", "t": 63.6, "text": "Hermeus called it a pace of execution “extremely rare in modern aviation.”", "say": "Hermeus called it a pace of execution, extremely rare in modern aviation." },
     { "id": "n11", "t": 70.0, "text": "The next airplane, Mark 2.2, is already being built.", "say": "The next airplane, Mark two point two, is already being built." },

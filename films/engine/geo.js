@@ -76,14 +76,15 @@ export function loft(stations, opt = {}) {
 // Conforming patch of a loft surface over [u0,u1]x[v0,v1], lifted `lift` m along the normal. Texture reads
 // upright from outside with its left edge towards (flipU ? tail : nose).
 export function loftDecal(lf, u0, u1, v0, v1, opt = {}) {
-  const { nu = 24, nv = 10, lift = 0.0025 } = opt;
+  const { nu = 24, nv = 10, lift = 0.0025, flipV = false } = opt;
   const starboard = ((v0 + v1) / 2) % 1 < 0.5;
   const pos = [], nor = [], uv = [], idx = [];
   for (let i = 0; i <= nu; i++) for (let j = 0; j <= nv; j++) {
     const u = u0 + (u1 - u0) * i / nu, v = v0 + (v1 - v0) * j / nv, { p, n } = lf.surf(u, v);
     pos.push(p.x + n.x * lift, p.y + n.y * lift, p.z + n.z * lift); nor.push(n.x, n.y, n.z);
     // starboard: +u runs towards the viewer's left and +v downward; port: +u to the right and +v upward
-    uv.push(starboard ? 1 - i / nu : i / nu, starboard ? j / nv : 1 - j / nv);
+    const tv = starboard ? j / nv : 1 - j / nv;
+    uv.push(starboard ? 1 - i / nu : i / nu, flipV ? 1 - tv : tv);
   }
   for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) {
     const A = i * (nv + 1) + j, B = A + nv + 1, C = A + 1, D = B + 1; idx.push(A, B, C, B, D, C);

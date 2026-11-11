@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { startFilm, clamp, lerp, smooth, ease, easeOut, curve, wobble, v3 } from '../engine/film.js';
 import { LAYER } from '../engine/pipeline.js';
 import { Terrain } from '../engine/terrain.js';
+import { CloudLayer } from '../engine/clouds.js';
 import { attitude } from '../engine/geo.js';
 import { makePlume, makeHeatHaze, makeShockCone } from '../engine/fx.js';
 import { NM_TERRAIN, FIELD_ALT } from './terrain_nm.js';
@@ -13,85 +14,117 @@ import { buildQuarterhorse, QH } from './quarterhorse_model.js';
 
 const NARRATION = __NARRATION__;
 const D = Math.PI / 180;
-const SUN = { az: 96, el: 27 };
+const SUN = { az: 68, el: 8 };
 const GROUND_Y = FIELD_ALT + 1.95;          // aircraft origin height when sitting on its wheels
 const RWY_START_Z = 1700;                    // brake-release point, south end; take-off run heads north (-z)
 
 // ------------------------------------------------------------------ airfield
-const RUNWAY_FN = /* glsl */`
-float box(float a, float b, float x){ float w = fwidth(x)*0.75+1e-5; return smoothstep(a-w, a+w, x)-smoothstep(b-w, b+w, x); }
-vec4 runwayColor(vec2 p){
-  vec2 s = p/7.62, f = abs(fract(s)-0.5), id = floor(s);
-  float jw = max(fwidth(s.x), fwidth(s.y));
-  float joint = smoothstep(0.5-0.004-jw, 0.5-jw*0.3, max(f.x,f.y))*clamp(0.012/max(jw,1e-4), 0.0, 1.0);
-  float tone = 0.9+0.2*fract(sin(dot(id, vec2(12.9898,78.233)))*43758.5453);
-  float n1 = texture2D(tDetail, p*0.011).r, n2 = texture2D(tDetail, p*0.09).g, n3 = texture2D(tDetail, p*0.9).r;
-  vec3 c = vec3(0.47,0.46,0.43)*tone*(0.8+0.25*n1)*(0.9+0.2*n2)*(0.92+0.16*n3);
-  c = mix(c, vec3(0.15,0.14,0.13), joint*0.8);
-  float az = abs(p.y);
-  float tz = smoothstep(1790.0,1500.0,az)*smoothstep(900.0,1300.0,az);
-  float streak = texture2D(tDetail, vec2(p.x*0.35, p.y*0.004)).r;
-  c = mix(c, vec3(0.06), tz*smoothstep(12.0,3.0,abs(p.x))*smoothstep(0.3,0.75,streak)*0.8);
-  float ax = abs(p.x), paint = box(28.3, 29.2, ax);
-  paint = max(paint, box(-0.45, 0.45, p.x)*box(0.0, 36.6, mod(p.y+1830.0, 61.0))*step(az, 1745.0));
-  paint = max(paint, box(1760.0, 1805.0, az)*box(1.5, 27.0, ax)*box(0.0, 0.5, fract(ax/3.4)));
-  paint = max(paint, box(1480.0, 1525.0, az)*box(8.0, 17.0, ax));
-  paint = max(paint, box(0.0, 22.5, mod(az-1180.0, 150.0))*step(1150.0, az)*step(az, 1470.0)*box(9.0, 16.5, ax)*box(0.0, 0.62, fract((ax-9.0)/2.5)));
-  float wear = 0.5+0.5*texture2D(tDetail, p*0.21).g;
-  c = mix(c, vec3(0.84,0.83,0.78)*wear, paint*0.92);
-  return vec4(c, mix(0.93, 0.78, paint)-0.12*tz);
-}`;
-
 function buildAirfield(pipe) {
   const g = new THREE.Group(); g.name = 'airfield';
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
-  mat.onBeforeCompile = sh => {
-    sh.uniforms.tDetail = pipe.shared.tDetail;
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vRw;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvRw = position.xz;');
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>\nvarying vec2 vRw; uniform sampler2D tDetail;\n${RUNWAY_FN}`)
-      .replace('#include <map_fragment>', '#include <map_fragment>\nvec4 rw = runwayColor(vRw); diffuseColor.rgb = rw.rgb;')
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = rw.a;');
-  };
-  const rw = new THREE.PlaneGeometry(61, 3660, 1, 120); rw.rotateX(-Math.PI / 2);
-  const runway = new THREE.Mesh(rw, mat); runway.receiveShadow = true; runway.position.y = 0.02; g.add(runway);
-  // paved shoulders / apron: darker asphalt
-  const asph = new THREE.MeshStandardMaterial({ color: 0x2c2b2a, roughness: 0.95 });
-  for (const sx of [-1, 1]) { const sh = new THREE.PlaneGeometry(8, 3660); sh.rotateX(-Math.PI / 2); const m = new THREE.Mesh(sh, asph); m.position.set(sx * 34.5, 0.0, 0); m.receiveShadow = true; g.add(m); }
-  { const ap = new THREE.PlaneGeometry(300, 180); ap.rotateX(-Math.PI / 2); const m = new THREE.Mesh(ap, new THREE.MeshStandardMaterial({ color: 0x565552, roughness: 0.92 })); m.position.set(-190, 0.0, -1600); g.add(m); }
-
   // scrub: creosote and dry grass across the levelled basin floor
   const rnd = (() => { let s = 20260526; return () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
   const lumpy = (detail, amt) => { const b = new THREE.IcosahedronGeometry(1, detail); const p = b.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), k = 1 + amt * Math.sin(x * 7.1 + y * 3.3) * Math.cos(z * 5.7 + x * 2.1); p.setXYZ(i, x * k, Math.max(y, -0.25) * k, z * k); } b.computeVertexNormals(); return b; };
   const N = pipe.quality.lowTerrain ? 30000 : 130000;
-  const bush = new THREE.InstancedMesh(lumpy(1, 0.22), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }), N);
+  // scrub is lit per vertex with a tiny shader: there are ~100k of them and each covers only a few pixels
+  const bushMat = new THREE.ShaderMaterial({
+    uniforms: { uSunDir: pipe.shared.uSunDir, uSunColor: pipe.shared.uSunColor, tAmbient: pipe.shared.tAmbient },
+    vertexShader: `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      uniform vec3 uSunDir, uSunColor; uniform sampler2D tAmbient; varying vec3 vSun, vAmb, vP; varying float vRim;
+      void main(){
+        vec4 wp = modelMatrix*instanceMatrix*vec4(position,1.0);
+        vec3 n = normalize(mat3(modelMatrix)*mat3(instanceMatrix)*normalize(position));
+        float up = clamp(position.y*0.7+0.5, 0.0, 1.0);                 // darker towards the base (self-shadowing)
+        float nl = max(dot(n, uSunDir), 0.0)*0.8+0.2*max(dot(n, uSunDir)*0.5+0.5, 0.0);
+        vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb;
+        vSun = instanceColor*0.3183*uSunColor*nl*(0.3+0.7*up); vAmb = instanceColor*0.3183*amb*(0.3+0.7*up);
+        vP = position*(4.0+3.0*fract(instanceColor.r*91.7));
+        vec4 mv = viewMatrix*wp;
+        vRim = abs(dot(normalize(mat3(viewMatrix)*n), normalize(-mv.xyz)));
+        gl_Position = projectionMatrix*mv;
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: `
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      varying vec3 vSun, vAmb, vP; varying float vRim;
+      float h3(vec3 p){ p = fract(p*0.3183099+0.1); p *= 17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
+      void main(){
+        vec3 c = floor(vP*2.6); float a = h3(c), b = h3(c+7.3);
+        if (vRim < 0.5 && a > vRim*1.7+0.12) discard;               // ragged, twiggy silhouette
+        #include <logdepthbuf_fragment>
+        float gap = step(0.3, b);                                    // gaps between leaf clumps fall into shade
+        gl_FragColor = vec4(vSun*(0.25+0.95*gap)*(0.7+0.6*a)+vAmb*(0.55+0.45*gap), 1.0);
+      }`,
+  });
+  const bushGeo = lumpy(1, 0.34), cells = new Map();
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
   const patch = (x, z) => 0.5 + 0.5 * Math.sin(x * 0.011 + Math.sin(z * 0.004) * 2.1) * Math.cos(z * 0.0075 + Math.sin(x * 0.006) * 1.7);
   let n = 0, guard = 0;
   while (n < N && guard++ < N * 30) {
     const near = rnd() < 0.72, x = (rnd() * 2 - 1) * (near ? 420 : 860), z = (rnd() * 2 - 1) * 2280;
-    if (Math.abs(x) < 42 || (x < -30 && x > -350 && z > -1700 && z < -1500)) continue;
+    if (Math.abs(x) < 42 || (x < -30 && x > -350 && z > -1700 && z < -1500) || Math.abs(x + 58) < 9 || (x > -62 && x < -38 && z > RWY_START_Z + 8 && z < RWY_START_Z + 36)) continue;
     if (rnd() > 0.25 + 0.75 * patch(x, z)) continue;
     const grass = rnd() < 0.3, w = grass ? 0.16 + rnd() * 0.2 : 0.28 + rnd() * 0.5, h = grass ? 0.2 + rnd() * 0.22 : w * (0.6 + rnd() * 0.6);
-    ps.set(x, -0.12 + h * 0.2, z); q.setFromAxisAngle(up, rnd() * 6.28); sc.set(w, h, w * (0.8 + rnd() * 0.4));
-    m4.compose(ps, q, sc); bush.setMatrixAt(n, m4);
+    ps.set(x, h * 0.2, z); q.setFromAxisAngle(up, rnd() * 6.28); sc.set(w, h, w * (0.8 + rnd() * 0.4));
+    m4.compose(ps, q, sc);
     if (grass) col.setRGB(0.36 + rnd() * 0.12, 0.31 + rnd() * 0.1, 0.18 + rnd() * 0.06); else { const k = rnd(); col.setRGB(0.05 + k * 0.035, 0.06 + k * 0.035, 0.034 + k * 0.02); }
-    bush.setColorAt(n, col); n++;
+    const key = Math.floor((x + 900) / 180) + 64 * Math.floor((z + 2300) / 180);
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push({ m: m4.clone(), c: col.clone(), w, h, x, z }); n++;
   }
-  bush.count = n; bush.instanceMatrix.needsUpdate = true; bush.instanceColor.needsUpdate = true; bush.frustumCulled = false; g.add(bush);
+  // one instanced mesh per 180 m cell, so the renderer can skip cells outside the view
+  const bush = new THREE.Group(); bush.name = 'scrub';
+  // long low-sun shadows: one soft dark streak per plant, laid on the ground away from the sun. They darken the
+  // terrain placeholder (alpha = shadow strength), so the deferred terrain pass lights that much less of it.
+  const sd = pipe.atmo.sunDir, sh = Math.hypot(sd.x, sd.z), tanEl = Math.max(sd.y / sh, 0.05), ax = -sd.x / sh, az = -sd.z / sh;
+  const shGeo = new THREE.PlaneGeometry(1, 1); shGeo.rotateX(-Math.PI / 2); shGeo.translate(0.5, 0, 0);
+  const shMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.ZeroFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+    vertexShader: `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      varying vec2 vUv;
+      void main(){
+        vUv = uv;
+        gl_Position = projectionMatrix*viewMatrix*modelMatrix*instanceMatrix*vec4(position,1.0);
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: `
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      varying vec2 vUv;
+      void main(){
+        #include <logdepthbuf_fragment>
+        float across = 1.0-smoothstep(0.12, 0.5, abs(vUv.y-0.5)*(1.0+vUv.x*0.5));
+        float along = smoothstep(0.0, 0.06, vUv.x)*(1.0-smoothstep(0.45, 1.0, vUv.x));
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 0.62*across*along);
+      }`,
+  });
+  const bx = new THREE.Vector3(), by = new THREE.Vector3(0, 1, 0), bz = new THREE.Vector3();
+  for (const [key, list] of cells) {
+    const im = new THREE.InstancedMesh(bushGeo, bushMat, list.length), sm = new THREE.InstancedMesh(shGeo, shMat, list.length);
+    let cx = 0, cz = 0;
+    list.forEach((it, k) => {
+      im.setMatrixAt(k, it.m); im.setColorAt(k, it.c); cx += it.x; cz += it.z;
+      const L = Math.min(1.25 * it.h / tanEl, 16), wd = it.w * 1.9;
+      bx.set(ax * L, 0, az * L); bz.set(-az * wd, 0, ax * wd); m4.makeBasis(bx, by, bz); m4.setPosition(it.x - ax * it.w * 0.4, 0.03, it.z - az * it.w * 0.4);
+      sm.setMatrixAt(k, m4);
+    });
+    im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; im.computeBoundingSphere(); im.frustumCulled = true;
+    sm.instanceMatrix.needsUpdate = true; sm.computeBoundingSphere(); sm.frustumCulled = true; sm.renderOrder = 2;
+    im.userData = sm.userData = { cx: cx / list.length, cz: cz / list.length, n: list.length };
+    bush.add(im, sm);
+  }
+  g.add(bush);
 
-  // power line west of the field (H-frame poles), buildings on the west apron
-  const wood = new THREE.MeshStandardMaterial({ color: 0x3a2d22, roughness: 0.95 });
-  const posts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.17, 0.22, 17, 6), wood, 96), arms = new THREE.InstancedMesh(new THREE.BoxGeometry(9.4, 0.3, 0.3), wood, 48);
-  for (let i = 0; i < 48; i++) {
-    const z = -4300 + i * 183, x = -905 + Math.sin(i * 0.4) * 3;
-    for (const s of [-1, 1]) { m4.makeTranslation(x + s * 3.1, 8.3, z); posts.setMatrixAt(i * 2 + (s > 0 ? 1 : 0), m4); }
-    m4.makeTranslation(x, 15.6, z); arms.setMatrixAt(i, m4);
-  }
-  posts.frustumCulled = arms.frustumCulled = false; g.add(posts, arms);
+  // buildings on the west apron
   const bld = (x, z, w, d, h, c) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, metalness: 0.1 })); m.position.set(x, h / 2 - 0.1, z); g.add(m); return m; };
   bld(-640, -1650, 70, 110, 13, 0x8a8478); bld(-600, -1790, 24, 30, 7, 0x9a958c); bld(-720, -1560, 40, 28, 9, 0x6f6a62); bld(-560, -1500, 10, 10, 20, 0xa7a39b);
   g.traverse(o => { if (o.isMesh) { o.layers.set(LAYER.STATIC); o.castShadow = false; } });
-  return { group: g, bush };
+  return { group: g, bush, cells };
 }
 
 // ------------------------------------------------------------------ flight profile (illustrative; peak as reported)
@@ -99,7 +132,7 @@ const T_AIR = 22.5, T_END = 80;
 const MACH_PTS = [[22.5, 0.90], [28.5, 0.915], [33, 0.955], [36.4, 0.985], [38.2, 1.0], [41, 1.06], [44, 1.13], [47, 1.185], [49.2, 1.21], [80, 1.21]];
 const A_SOUND = 297;                                   // m/s near the tropopause
 const machAt = t => curve(MACH_PTS, t);
-const TRACK = { x: 79500, alt: 11900, z0: 33500 };      // northbound over the Tularosa Basin
+const TRACK = { x: 44000, alt: 11900, z0: 33500 };      // northbound along the San Andres range
 const ROLL_PTS = [[22.5, 0], [70.6, 0], [72.6, 58], [80, 62]];
 const STATE = (() => {
   const dt = 1 / 120, n = Math.ceil((T_END + 2 - T_AIR) / dt) + 1, A = new Float64Array(n * 6);
@@ -134,14 +167,18 @@ async function build(film) {
   pipe.atmo.setSun(SUN.az, SUN.el);
   pipe.atmo.uniforms.uHaze.value = 0.55; pipe.atmo.groundAlbedo.setRGB(0.30, 0.24, 0.18);
   const nearRes = film.quality.lowTerrain ? 1024 : (+film.params.get('nres') || 4096);
-  const terrain = new Terrain(pipe, { ...NM_TERRAIN, near: { ...NM_TERRAIN.near, res: nearRes }, far: { ...NM_TERRAIN.far, res: film.quality.lowTerrain ? 1024 : 2048 } });
+  const clouds = new CloudLayer(pipe, { base: 4300, top: 6100, div: +film.params.get('cdiv') || 3 });
+  const cs = clouds.terrainShadow();
+  const terrain = new Terrain(pipe, { ...NM_TERRAIN, uniforms: { ...(NM_TERRAIN.uniforms || {}), ...cs.uniforms }, defines: (NM_TERRAIN.defines || '') + cs.defines, near: { ...NM_TERRAIN.near, res: nearRes }, far: { ...NM_TERRAIN.far, res: film.quality.lowTerrain ? 1024 : 2048 } });
   const field = buildAirfield(pipe); pipe.scene.add(field.group);
   const ac = buildQuarterhorse(pipe); pipe.scene.add(ac);
   const plume = makePlume(pipe, { length: 11.5, radius: QH.nozzleR, diamonds: 6 }); plume.position.set(QH.nozzleX + 0.05, 0.06, 0); ac.add(plume);
   const haze = makeHeatHaze(pipe, { length: 46, radius: 0.5, spread: 3.4, strength: 0.0042 }); haze.position.set(QH.nozzleX, 0.06, 0); ac.add(haze);
   const shocks = [[QH.noseX + 0.3, 0.03, 1.0], [QH.noseX - 7.6, -0.2, 0.7], [QH.nozzleX + 0.6, 0.3, 0.8]].map(([x, y, k]) => { const s = makeShockCone(pipe, { length: 150, strength: 0.0052 * k }); s.position.set(x, y, 0); s.userData.k = k; ac.add(s); return s; });
   pipe.registerDynamic(ac);
-  W = { terrain, field, ac, plume, haze, shocks };
+  if (film.off.has('cshadow')) CLOUDS.shadow = GROUND_CLOUDS.shadow = 0;
+  if (film.off.has('clouds')) { CLOUDS.cover = GROUND_CLOUDS.cover = 0; CLOUDS.shadow = GROUND_CLOUDS.shadow = 0; }
+  W = { terrain, field, ac, plume, haze, shocks, clouds };
   return W;
 }
 
@@ -156,9 +193,9 @@ function poseAir(t, film, o = {}) {
   W.field.group.visible = false;
   return s;
 }
-function poseGround(film, z, y, pitch, ab, haze = 1) {
+function poseGround(film, z, y, pitch, ab, haze = 1, abGain = 15) {
   tmp.set(0, y, z); film.place(W.ac, tmp); attitude(0, pitch, 0, W.ac.quaternion);
-  W.ac.userData.setGear(true); W.ac.userData.setAfterburner(ab); W.plume.userData.set(ab, 8); W.haze.userData.set(haze);
+  W.ac.userData.setGear(true); W.ac.userData.setAfterburner(ab); W.plume.userData.set(ab, abGain); W.haze.userData.set(haze);
   for (const sh of W.shocks) sh.userData.set(0, 0, 0);
   W.field.group.visible = true; tmp.set(0, FIELD_ALT, 0); film.place(W.field.group, tmp);
 }
@@ -168,22 +205,26 @@ function bodyCam(s, off, out) {
   return out.set(off[0], off[1], off[2]).applyQuaternion(q1).add(s.p);
 }
 
-const GROUND_POST = { exposure: 0.215, contrast: 1.3, sat: 1.2, wb: [1.05, 1.0, 0.94], aerial: 0.9, grain: 0.04, bloom: 0.07, cirrus: { alt: 13300, cover: 0.42, opacity: 0.5, scale: 1.2, wind: [0.004, 0.001] } };
-const AIR_POST = { exposure: 0.2, contrast: 1.32, sat: 1.24, wb: [1.05, 1.0, 0.93], aerial: 0.82, grain: 0.035, bloom: 0.06, cirrus: { alt: 14200, cover: 0.38, opacity: 0.45, scale: 1.4, wind: [0.003, 0.001] } };
+const CLOUDS = { cover: 0.5, scale: 0.6, wind: [0.012, 0.004], density: 0.014, tile: 4200, steps: 56, shadow: 0.8 };
+// seen from the field, the cloud thins out along the line of sight to the low sun
+const SUN_GAP = (() => { const az = SUN.az * Math.PI / 180, d = (5200 - FIELD_ALT) / Math.tan(SUN.el * Math.PI / 180); return [Math.sin(az) * d, RWY_START_Z - Math.cos(az) * d, 9500, 0.8]; })();
+const GROUND_CLOUDS = { ...CLOUDS, hole: SUN_GAP };
+const GROUND_POST = { clouds: GROUND_CLOUDS, exposure: 0.22, contrast: 1.22, sat: 1.04, wb: [0.985, 1.0, 1.05], aerial: 0.9, grain: 0.04, bloom: 0.08, cirrus: { alt: 13300, cover: 0.42, opacity: 0.5, scale: 1.2, wind: [0.004, 0.001] } };
+const AIR_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.32, sat: 1.24, wb: [1.05, 1.0, 0.93], aerial: 0.82, grain: 0.035, bloom: 0.06, cirrus: { alt: 14200, cover: 0.38, opacity: 0.45, scale: 1.4, wind: [0.003, 0.001] } };
 
 const shots = [
-  { id: 's01', name: 'Threshold', t0: 0, t1: 6.5, terrain: 'ground', note: 'Head-on down the runway through a long lens; heat shimmer off the concrete.',
+  { id: 's01', name: 'First light', t0: 0, t1: 6.5, terrain: 'ground', note: 'Wide and low from the scrub beside the runway, pushing in: the jet against the sunrise, light shafts through the cloud.',
     pose: (lt, t, f) => poseGround(f, RWY_START_Z, GROUND_Y, 0, 0, 1.2),
-    camera: (lt) => ({ pos: v3(-1.2, FIELD_ALT + 1.3, 1175 - lt * 1.0), look: v3(0, FIELD_ALT + 2.0, RWY_START_Z), fov: 2.3 - lt * 0.02, shake: { rot: 0.006, freq: 0.5, seed: 1 }, focus: v3(0, GROUND_Y, RWY_START_Z), focusRadius: 11 }),
-    post: { ...GROUND_POST, shimmer: [3.0, 24, 500], shutter: 0.5, vignette: 0.34 } },
+    camera: (lt) => { const k = ease(lt / 6.5); return { pos: v3(-58.5 + k * 6, FIELD_ALT + 0.85 + k * 0.3, RWY_START_Z + 27 - k * 3), look: v3(-2, FIELD_ALT + 4.6 - k * 1.0, RWY_START_Z - 1), fov: 32, shake: { rot: 0.02, freq: 0.35, seed: 1 }, focus: v3(0, GROUND_Y, RWY_START_Z), focusRadius: 22 }; },
+    post: { ...GROUND_POST, exposure: GROUND_POST.exposure * 0.85, shutter: 0.5, vignette: 0.34, rays: 0.5, flare: { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 }, sunDisk: 0.5, bloom: 0.1, dof: { focus: 60, fstop: 2.0, max: 10 } } },
   { id: 's02', name: 'Walkaround', t0: 6.5, t1: 12.5, terrain: 'ground', note: 'Slow lateral move along the bare-metal fuselage in raking morning light.',
     pose: (lt, t, f) => poseGround(f, RWY_START_Z, GROUND_Y, 0, 0, 1.2),
     camera: (lt) => { const k = ease(lt / 6.2); return { pos: v3(10.2 - k * 0.8, FIELD_ALT + 1.55 + k * 0.25, RWY_START_Z + 4.2 - k * 9.6), look: v3(0.6, GROUND_Y + 0.12, RWY_START_Z + 3.0 - k * 9.0), fov: 21, shake: { rot: 0.03, freq: 0.35, seed: 2 }, focus: v3(0, GROUND_Y, RWY_START_Z), focusRadius: 11 }; },
     post: { ...GROUND_POST, exposure: 0.2, shutter: 0.5 } },
-  { id: 's03', name: 'Light-off', t0: 12.5, t1: 16.6, terrain: 'ground', note: 'Low behind the nozzle as the afterburner lights and the jet starts to roll.',
+  { id: 's03', name: 'Light-off', t0: 12.5, t1: 16.6, terrain: 'ground', note: 'Low off the tail, looking into the sunrise, as the afterburner lights and the jet starts to roll.',
     pose: (lt, t, f) => { const r = Math.max(0, lt - 1.75); poseGround(f, RWY_START_Z - 0.5 * 5.2 * r * r, GROUND_Y, 0, smooth(0.7, 1.25, lt), 1.6); },
-    camera: (lt) => { const r = Math.max(0, lt - 1.75), z = RWY_START_Z - 0.5 * 5.2 * r * r; return { pos: v3(-4.6, FIELD_ALT + 0.95, RWY_START_Z + 21.5), look: v3(-0.4, GROUND_Y + 0.2, lerp(RWY_START_Z + 6, z + 6, 0.55)), fov: 27, shake: { rot: 0.02 + 0.16 * smooth(0.7, 1.4, lt), freq: 2.6, seed: 3, jolt: 0.05 * smooth(0.7, 1.4, lt) }, focus: v3(0, GROUND_Y, z), focusRadius: 12 }; },
-    post: (lt) => ({ ...GROUND_POST, exposure: 0.2 - 0.03 * smooth(0.8, 1.6, lt), bloom: 0.1, shutter: 0.5 }) },
+    camera: (lt) => { const r = Math.max(0, lt - 1.75), z = RWY_START_Z - 0.5 * 5.2 * r * r; return { pos: v3(-19.5 + lt * 0.35, FIELD_ALT + 0.72, RWY_START_Z + 12.5), look: v3(-0.6, GROUND_Y + 0.55, lerp(RWY_START_Z + 2.5, z + 2.5, 0.5)), fov: 30, shake: { rot: 0.02 + 0.16 * smooth(0.7, 1.4, lt), freq: 2.6, seed: 3, jolt: 0.05 * smooth(0.7, 1.4, lt) }, focus: v3(0, GROUND_Y, z), focusRadius: 16 }; },
+    post: (lt) => ({ ...GROUND_POST, exposure: GROUND_POST.exposure * (0.8 - 0.1 * smooth(0.8, 1.6, lt)), bloom: 0.12, shutter: 0.5, rays: 0.6, flare: { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 }, sunDisk: 0.5 }) },
   { id: 's04', name: 'Rotation', t0: 16.6, t1: 22.5, terrain: 'ground', note: 'Tracking camera east of the runway: nose up, wheels off, climbing out.',
     pose: (lt, t, f) => { const r = roll(lt); poseGround(f, r.z, r.y, r.pitch, 1, 1.4); },
     camera: (lt, t) => { const r = roll(lt), l = roll(lt - 0.12); return { pos: v3(330, FIELD_ALT + 7.5, -46), look: v3(0, lerp(l.y, FIELD_ALT + 6, 0.12) + 0.4, l.z - 4), fov: 4.3 - 0.4 * smooth(2, 6, lt), shake: { rot: 0.022, freq: 1.3, seed: 4 }, focus: v3(0, r.y, r.z), focusRadius: 12 }; },
@@ -196,10 +237,10 @@ const shots = [
     pose: (lt, t, f) => poseAir(t, f, { ab: smooth(0.5, 1.5, lt), haze: 0.9 }),
     camera: (lt, t) => { const s = air(t); const k = lt / 7.7; return { pos: bodyCam(s, [-17 - 26 * k * k, 2.4 + 1.5 * k, -8.5 - 2 * k], v3()), look: bodyCam(s, [2, 0, 0], v3()), fov: 30 - 6 * k, shake: { rot: 0.07 + 0.05 * k, freq: 0.8, seed: 6 }, focus: s.p.clone(), focusRadius: 11 }; },
     post: { ...AIR_POST, exposure: 0.17, bloom: 0.085 } },
-  { id: 's07', name: 'Mach one', t0: 36.2, t1: 41.2, terrain: 'top', note: 'Straight down over the gypsum dunes: shock fronts appear as the jet passes Mach 1 (visualization aid).',
+  { id: 's07', name: 'Mach one', t0: 36.2, t1: 41.2, terrain: 'top', note: 'Straight down over the San Andres ridges in long morning shadow: shock fronts appear as the jet passes Mach 1 (visualization aid).',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.5, shock: 2.4, line: 0.9 }),
     camera: (lt, t) => { const s = air(t); return { pos: bodyCam(s, [-3 + lt * 0.5, 46 - lt * 1.2, 0.01], v3()), look: bodyCam(s, [-3 + lt * 0.5, 0, 0], v3()), up: v3(0, 0, -1).applyAxisAngle(v3(0, 1, 0), -0.5 + lt * 0.03), fov: 31, shake: { rot: 0.03, freq: 0.6, seed: 7 }, focus: s.p.clone(), focusRadius: 11 }; },
-    post: { ...AIR_POST, exposure: 0.15, sat: 0.9, contrast: 1.42, aerial: 0.6, cirrus: null } },
+    post: (lt, t) => { const s = air(t); return { ...AIR_POST, exposure: 0.24, sat: 0.95, contrast: 1.36, aerial: 0.6, cirrus: null, clouds: { ...CLOUDS, hole: [s.p.x, s.p.z, 9000, 0.8] } }; } },
   { id: 's08', name: 'Pass', t0: 41.2, t1: 47, terrain: 'air', note: 'Fixed camera in the sky. The jet arrives before its sound; the double boom follows.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.8, shock: 1.6, line: 0.12 }),
     camera: (lt, t) => { const sp = air(PASS_T); const cam = v3(sp.p.x + 62, sp.p.y + 9, sp.p.z); const s = air(t - 0.05); const jolt = Math.exp(-Math.max(0, t - BOOM_T) * 2.6) * (t > BOOM_T ? 1 : 0); return { pos: cam, look: s.p.clone(), fov: 36, shake: { rot: 0.05 + 0.5 * jolt, freq: 1.2 + 6 * jolt, seed: 8, jolt: 0.25 * jolt }, focus: air(t).p.clone(), focusRadius: 11 }; },
@@ -208,10 +249,10 @@ const shots = [
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.7, shock: 1.0, line: 0.05 }),
     camera: (lt, t) => { const s = air(t); return { pos: bodyCam(s, [7 - lt * 1.1, 11, 73], v3()), look: bodyCam(s, [-0.5, 0.1, 0], v3()), fov: 8.6, shake: { rot: 0.035, freq: 1.5, seed: 9 }, focus: s.p.clone(), focusRadius: 11 }; },
     post: { ...AIR_POST, exposure: 0.2 } },
-  { id: 's10', name: 'The pace', t0: 52, t1: 63, terrain: 'air', note: 'High and wide: a small silver airplane over White Sands.',
+  { id: 's10', name: 'The pace', t0: 52, t1: 63, terrain: 'air', note: 'High and wide: a small silver airplane over the range, cloud shadows on the desert below.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.5, shock: 0.6 }),
     camera: (lt, t) => { const s = air(t); const k = lt / 11; return { pos: bodyCam(s, [-50 + 80 * k, 88 - 10 * k, 84 - 8 * k], v3()), look: bodyCam(s, [5, -6, -8], v3()), fov: 21 - 3 * k, shake: { rot: 0.04, freq: 0.4, seed: 10 }, focus: s.p.clone(), focusRadius: 11 }; },
-    post: { ...AIR_POST, exposure: 0.235 } },
+    post: (lt, t) => { const s = air(t); return { ...AIR_POST, exposure: 0.25, clouds: { ...CLOUDS, hole: [s.p.x - 2500, s.p.z, 8000, 0.7] } }; } },
   { id: 's11', name: 'Bare metal', t0: 63, t1: 69.6, terrain: 'air', note: 'Close along the fuselage: rivets, panel seams, the name.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 0.85, haze: 0.4, shock: 0.5 }),
     camera: (lt, t) => { const s = air(t); const k = ease(lt / 6.6); return { pos: bodyCam(s, [8.6 - 7.6 * k, 2.3, 9.8], v3()), look: bodyCam(s, [6.9 - 6.8 * k, 1.25, 0.6], v3()), fov: 24, shake: { rot: 0.05, freq: 0.9, seed: 11 }, focus: s.p.clone(), focusRadius: 11 }; },
@@ -219,7 +260,7 @@ const shots = [
   { id: 's12', name: 'Break', t0: 69.6, t1: 75.2, terrain: 'air', note: 'The jet rolls toward the sun and peels away.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.7, shock: 0.6 }),
     camera: (lt, t) => { const s0 = air(69.6), s = air(t); const cam = bodyCam({ p: tmp.copy(s0.p).add(v3(0, 0, -(t - 69.6) * machAt(69.6) * A_SOUND)), hdg: 0 }, [-24, 2.6, -7.5], v3()); return { pos: cam, look: s.p.clone().lerp(cam, 0.02), fov: 31 - 7 * smooth(1, 5.6, lt), shake: { rot: 0.06, freq: 0.8, seed: 12 }, focus: s.p.clone(), focusRadius: 11 }; },
-    post: (lt) => ({ ...AIR_POST, exposure: 0.185, sunDisk: 0.06, bloom: 0.08 }) },
+    post: (lt) => ({ ...AIR_POST, exposure: 0.25, sunDisk: 0.06, bloom: 0.08 }) },
   { id: 's13', name: 'End card', t0: 75.2, t1: 80, terrain: 'air', note: 'Empty sky over the basin; title, date, sources.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.3, shock: 0 }),
     camera: (lt, t) => { const s = air(75.2); return { pos: v3(s.p.x - 400, s.p.y - 300, s.p.z + 6000 - lt * 30), look: v3(s.p.x - 3000 + lt * 40, s.p.y - 900, s.p.z - 30000), fov: 34, shake: { rot: 0.03, freq: 0.3, seed: 13 } }; },
@@ -237,7 +278,7 @@ const cues = [
   { type: 'stat', side: 'left', t0: 52.6, t1: 57.2, value: '&lt; 3 MONTHS', label: 'After Mk 2.1 first flew' },
   { type: 'stat', side: 'left', t0: 57.5, t1: 62.6, value: '364 DAYS', label: 'After the first flight of the company’s first aircraft, Mk 1' },
   { type: 'quote', t0: 63.4, t1: 69.2, text: '“A pace of execution that is extremely rare in modern aviation.”', cite: 'AJ Piplica, CEO and co-founder, Hermeus · May 26, 2026' },
-  { type: 'card', t0: 75.5, t1: 80, fadeOut: 0.9, html: `<div class="k">Hermeus · Quarterhorse Mk 2.1</div><div class="t">Mach 1.21</div><div class="row"><span>Flight 3</span><span>May 26, 2026</span><span>Spaceport America, N.M.</span></div><div class="src">Sources: Hermeus press releases (Mk 2.1 first flight; “Hermeus Achieves Its First Unmanned Supersonic Flight,” May 26, 2026); New Atlas; Army Recognition.</div><div class="dis">Simulated visualization. Not actual footage. Time of day, altitude, flight path and the Mach trace are illustrative; top speed, date, location and flight number are as reported.</div>` },
+  { type: 'card', t0: 75.5, t1: 80, fadeOut: 0.9, html: `<div class="k">Hermeus · Quarterhorse Mk 2.1</div><div class="t">Mach 1.21</div><div class="row"><span>Flight 3</span><span>May 26, 2026</span><span>Spaceport America, N.M.</span></div><div class="src">Sources: Hermeus press releases (Mk 2.1 first flight; “Hermeus Achieves Its First Unmanned Supersonic Flight,” May 26, 2026); New Atlas; Army Recognition.</div><div class="dis">Simulated visualization. Not actual footage. Time of day, weather, altitude, flight path and the Mach trace are illustrative; top speed, date, location and flight number are as reported.</div>` },
 ];
 const HUD_CSS = `
 .hud-mach{right:2.6cqw;top:2.3cqw;text-align:right;font-family:var(--f-data);color:var(--ink);text-shadow:0 0 .6cqw rgba(0,0,0,.75)}
@@ -298,5 +339,21 @@ function score(m) {
 startFilm({
   id: 'quarterhorse', title: 'Mach 1.21', duration: T_END, fps: 30, poster: 49.6, narration: NARRATION,
   build, shots, cues, buildHud, updateHud, score,
-  frame(t, shot) { W.terrain.update(shot.terrain); W.field.bush.visible = shot.terrain === 'ground'; },
+  frame(t, shot, lt, film, c) {
+    W.terrain.update(shot.terrain); W.field.bush.visible = shot.terrain === 'ground' && !film.off.has('scrub');
+    if (W.field.bush.visible) { // thin the scrub out with distance: plants under about a pixel are skipped
+      const pxPerM = film.pipe.h / (2 * Math.tan(c.fov * Math.PI / 360));
+      for (const im of W.field.bush.children) {
+        const u = im.userData, d = Math.hypot(u.cx - c.pos.x, u.cz - c.pos.z, FIELD_ALT - c.pos.y);
+        const f = clamp((0.55 * pxPerM / Math.max(d - 130, 30) - 0.8) / 1.7, 0, 1);
+        im.count = Math.round(u.n * f); im.visible = im.count > 0;
+      }
+    }
+    if (film.off.size) { // dev profiling switches
+      if (film.off.has('env')) film.pipe.scene.environment = null;
+      if (film.off.has('ac')) W.ac.visible = false;
+      if (film.off.has('field')) W.field.group.visible = false;
+      if (film.off.has('terrain')) W.terrain.mesh.visible = false;
+    }
+  },
 });
