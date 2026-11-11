@@ -168,3 +168,18 @@ anything else, because the browser would quietly draw it in another typeface.
   when the story is scrubbed back, and call `ctx.player.refresh()` after changing it.
   *Quarterhorse* lets the viewer set the Mach number; *Victus Haze* lets them make the
   target run again.
+  Controls offered after the story ends animate on idle time; the player starts that
+  clock when one is used, so they answer even if the viewer scrubbed to the end.
+
+## The page around a film
+
+- **The stage keeps one size.** The footer and the caption band are fixed in height by
+  design: a hidden copy of every win's source list sits in the footer's grid cell and
+  sizes it for the longest. It looks like dead markup and is not. A browser test fails
+  if the stage's height differs between films.
+- **A narrow frame shows the plate alone.** Under 520 px the player crops the stage to
+  the plate and the rail is not shown; a phone turned sideways gets the whole stage
+  back. So nothing essential may live only in the rail.
+- **What a film cannot show is said twice.** Once in the rail's note, inside the
+  picture, and once from `caveat` in `src/projects.ts`: under the sources where the
+  page scrolls, and under the caption in the embed. Keep the two in step.

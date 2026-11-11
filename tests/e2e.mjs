@@ -245,6 +245,24 @@ await check('phone width: nothing overflows sideways', async () => {
   ok(gutter >= 16, `side gutter is ${gutter}px`);
 });
 
+await check('the stage keeps one size from win to win', async () => {
+  // The footer and the caption band are fixed in height by design (a hidden copy of every
+  // source list sizes the footer), so the picture does not jump when the film changes.
+  for (const [width, height] of [[1280, 720], [1440, 900]]) {
+    const desk = await context.newPage();
+    await desk.setViewportSize({ width, height });
+    await desk.goto('file://' + single);
+    await desk.waitForFunction(() => window.WINS && window.WINS.ready);
+    const sizes = [];
+    for (const id of PROJECT_IDS) {
+      await desk.evaluate((pid) => window.WINS.debug.show(pid, 12), id);
+      sizes.push(await desk.evaluate(() => Math.round(document.querySelector('.stage-frame').getBoundingClientRect().height * 2) / 2));
+    }
+    await desk.close();
+    ok(new Set(sizes).size === 1, `at ${width} x ${height} the stage is ${[...new Set(sizes)].join(', ')} px tall`);
+  }
+});
+
 /* ---- The other builds -------------------------------------------------------- */
 await check('the split site loads films on demand', async () => {
   const { createServer } = await import('node:http');

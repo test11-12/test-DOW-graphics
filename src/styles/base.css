@@ -144,7 +144,13 @@ button { background: none; border: 0; border-radius: 0; padding: 0; cursor: poin
 .tab-indicator { position: absolute; left: 0; bottom: 0; height: 1px; width: 1px; background: var(--ink); transform-origin: 0 50%; transition: transform .5s var(--ease); pointer-events: none; will-change: transform; }
 
 /* ---- Film ---- */
-.film { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; row-gap: clamp(7px, 1.2vh, 12px); min-height: 0; min-width: 0; }
+/* A column in which only the stage gives way. It is never taller than the film's own
+   proportions allow, so a tall window (a tablet held upright) gets the picture at its
+   natural size with the timeline right under it, not a film adrift in a black box; and
+   on a short window it shrinks until the whole page fits. */
+.film { display: flex; flex-direction: column; justify-content: flex-start; row-gap: clamp(7px, 1.2vh, 12px); min-height: 0; min-width: 0; }
+.film > * { flex: none; }
+.film > .stage-frame { flex: 0 1 auto; aspect-ratio: 1280 / 520; }
 .film-head { display: flex; align-items: baseline; justify-content: space-between; gap: clamp(16px, 3vw, 48px); min-width: 0; }
 #film-title { font: 400 clamp(19px, 1.75vw, 27px)/1.1 var(--sans); letter-spacing: -0.022em; color: var(--ink); white-space: nowrap; }
 #film-prompt { min-width: 0; font-size: 14px; line-height: 1.2; color: var(--muted); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -253,7 +259,7 @@ footer kbd { margin-right: 5px; color: var(--muted); }
 /* ---- Full screen: the stage fills the window ---- */
 .app.is-presenting { grid-template-rows: minmax(0, 1fr); max-width: none; height: 100%; padding-top: max(12px, env(safe-area-inset-top, 0px)); }
 .app.is-presenting .masthead, .app.is-presenting .film-head, .app.is-presenting footer { display: none; }
-.app.is-presenting .film { grid-template-rows: minmax(0, 1fr) auto auto; }
+.app.is-presenting .film > .stage-frame { flex: 1 1 auto; aspect-ratio: auto; }
 
 /* ---- Short and narrow windows ---- */
 @media (max-height: 800px) and (min-width: 900px) {
@@ -271,7 +277,7 @@ footer kbd { margin-right: 5px; color: var(--muted); }
 @media (max-width: 899px) {
   .app { grid-template-rows: auto auto auto; align-content: start; row-gap: 18px; padding-bottom: max(24px, env(safe-area-inset-bottom, 0px)); }
   .masthead { row-gap: 12px; }
-  .film { grid-template-rows: auto auto auto auto; row-gap: 12px; }
+  .film { row-gap: 12px; }
   .nav { grid-template-columns: 1fr auto; row-gap: 2px; height: auto; padding-top: 12px; }
   .filters { grid-column: 1 / -1; grid-row: 2; overflow-x: auto; scrollbar-width: none; }
   .hero { grid-template-columns: minmax(0, 1fr); row-gap: 9px; }

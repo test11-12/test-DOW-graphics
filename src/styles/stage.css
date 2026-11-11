@@ -13,7 +13,7 @@
 @media (max-width: 899px) { .stage-frame { aspect-ratio: 1280 / 520; min-height: 0; } }
 /* A narrow frame shows the plate alone: the player sets this class from the frame's own
    width, so it holds for an embed in a narrow column as well as for a phone. */
-.stage-frame.is-plate, .wins-motion .stage-frame.is-plate { aspect-ratio: 872 / 478; min-height: 0; }
+.stage-frame.is-plate, .film > .stage-frame.is-plate, .wins-motion .stage-frame.is-plate { aspect-ratio: 872 / 478; min-height: 0; }
 .is-plate .rail { visibility: hidden; }
 
 /* Under a film: what it cannot show, and where its figures come from. Real text at a
