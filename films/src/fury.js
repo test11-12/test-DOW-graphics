@@ -20,7 +20,7 @@ const NARRATION = __NARRATION__;
 // look development only: tools may set window.__DEV = { post: {...}, trail: {...}, haze, hazeH, ... } before a frame
 const DEV = () => (typeof window !== 'undefined' && window.__DEV) || {};
 const D = Math.PI / 180;
-const SUN = { az: 289, el: 10 };                        // low evening sun (illustrative)
+const SUN = { az: 305, el: 7 };                         // low evening sun (illustrative): ahead and left of the launch heading, so most shots look into it
 const GROUND_Y = FIELD_ALT - FURY.groundY;              // aircraft origin height when standing on its wheels
 const DUR = 79;
 const fieldW = (u, v, y = FIELD_ALT) => { const [x, z] = fieldXZ(u, v); return v3(x, y, z); };
@@ -145,7 +145,9 @@ function poseAir(film, sig, t, o = {}) {
   return s;
 }
 // o.blur: metres the smoke streams past the (formation) camera while its shutter is open
-function setTrail(film, sig, o = {}) { tB.copy(IGNITION).sub(film.origin); W.trail.userData.set(sig, tB, HDG, W.sunDir, { density: o.density ?? 1, plume: o.trailGlow ?? 1, blur: o.blur ?? 0, stretch: o.stretch ?? 1, ...DEV().trail }); }
+// smoke this white photographs near-neutral even against a low sun: the sun's colour fully paled, more sky light
+const TRAIL_LIGHT = [0.16, 0.03, 2.0, 1.0], TRAIL_ALBEDO = [0.9, 0.93, 0.97];
+function setTrail(film, sig, o = {}) { tB.copy(IGNITION).sub(film.origin); W.trail.userData.set(sig, tB, HDG, W.sunDir, { density: o.density ?? 1, plume: o.trailGlow ?? 1, blur: o.blur ?? 0, stretch: o.stretch ?? 1, light: o.light ?? TRAIL_LIGHT, deck: o.deck, albedo: o.albedo ?? TRAIL_ALBEDO, ...DEV().trail }); }
 // point given in a heading-aligned frame around state s: [forward, up, right]; full attitude if `rigid`
 function body(s, off, rigid = false, out = v3()) {
   attitude(s.hdg, rigid ? s.pitch : 0, rigid ? s.roll : 0, q2);
@@ -155,17 +157,21 @@ function body(s, off, rigid = false, out = v3()) {
 const park = (x, h, z) => body({ p: tA.set(PARK.p.x, FIELD_ALT, PARK.p.z), hdg: PARK.hdg }, [x, h, z], false, v3());
 
 // ------------------------------------------------------------------ light and grade
-const CLOUDS = { cover: 0.34, scale: 0.62, wind: [0.010, 0.004], density: 0.013, tile: 4300, steps: 56, shadow: 0.8 };
+// One low sun for the whole film, and one grade: deep blacks with a cool cast, warm highlights, modest saturation,
+// grain and vignette. Most shots look into the sun (backlight, rim, silhouette); light shafts stay near it.
+const CLOUDS = { cover: 0.34, scale: 0.62, wind: [0.010, 0.004], density: 0.013, tile: 4300, steps: 56, shadow: 0.8, base: 4300, top: 6100 };
+const AIR_CLOUDS = { ...CLOUDS, base: 6800, top: 8800 };      // at altitude the deck sits closer under the jet, for depth
 // seen from the field, the cloud thins out along the line of sight to the low sun
 const SUN_GAP = (() => { const az = SUN.az * D, d = (5200 - FIELD_ALT) / Math.tan(SUN.el * D); return [PARK.p.x + Math.sin(az) * d, PARK.p.z - Math.cos(az) * d, 11000, 0.85]; })();
 const GROUND_CLOUDS = { ...CLOUDS, cover: 0.4, hole: SUN_GAP };
-const CIRRUS = { alt: 12800, cover: 0.36, opacity: 0.45, scale: 1.3, wind: [0.003, 0.001] };
-const FLARE = { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 };
-const GROUND_POST = { clouds: GROUND_CLOUDS, exposure: 0.215, contrast: 1.22, sat: 1.06, wb: [1.0, 1.0, 1.02], aerial: 0.9, grain: 0.04, bloom: 0.08, shutter: 0.5, cirrus: CIRRUS };
-// at altitude: pale sky, a light hazy horizon and restrained colour, after the released photographs of the test;
-// no high cloud (the sky in them is clear)
-const AIR_POST = { clouds: CLOUDS, exposure: 0.25, contrast: 1.12, sat: 0.88, wb: [1.02, 1.0, 0.97], aerial: 0.9, grain: 0.035, bloom: 0.065, cirrus: null };
-const PLOT_POST = { clouds: { ...CLOUDS, cover: 0, shadow: 0, steps: 8 }, exposure: 0.2, contrast: 1.38, sat: 0.22, wb: [0.9, 0.97, 1.06], aerial: 0.35, grain: 0.03, bloom: 0.03, vignette: 0.3, cirrus: null, shutter: 0, ao: false };
+const FLARE = { ghost: 0.03, halo: 0.02, streak: 0.14, thr: 8 };
+const RAYS = { reach: 0.5, fall: 2.0, cone: 40 };              // shafts reach half way out from the sun and die away
+const BACKLIT = { rays: 0.5, rayShape: RAYS, flare: FLARE, sunDisk: 0.5 };   // for shots with the sun in or at the edge of frame
+const GRADE = { contrast: 1.3, sat: 0.97, wb: [1.04, 1.0, 0.95], lift: [0, 0.006, 0.014], grain: 0.05, vignette: 0.43, aerial: 0.9 };
+const GROUND_POST = { ...GRADE, clouds: GROUND_CLOUDS, exposure: 0.15, bloom: 0.1, shutter: 0.5, cirrus: null };
+const AIR_POST = { ...GRADE, clouds: AIR_CLOUDS, exposure: 0.19, bloom: 0.12, cirrus: null };
+// the plot: the relief from straight above in the same low sun, cool and dark under the amber graphics
+const PLOT_POST = { clouds: { ...CLOUDS, cover: 0, shadow: 0, steps: 8 }, exposure: 0.2, contrast: 1.5, sat: 0.35, wb: [0.92, 1.0, 1.04], lift: [0, 0.006, 0.014], aerial: 0.35, grain: 0.04, bloom: 0.03, vignette: 0.3, cirrus: null, shutter: 0, ao: false };
 const PLOT_C = v3(24000, 0, -28000);
 const plotCam = (lt) => ({ pos: v3(PLOT_C.x + lt * 30, 78000, PLOT_C.z - lt * 55), look: v3(PLOT_C.x + lt * 30, 0, PLOT_C.z - lt * 55), up: v3(0, 0, -1), fov: 40 });
 
@@ -174,65 +180,72 @@ const SIG = {   // film time -> seconds from ignition, per airborne shot
   s09: t => SLOW * (52.2 - T_IGN) + (t - 52.2), s11: t => 40 + (t - 65.3), s12: t => T_BRK - 0.6 + (t - 72.3),
 };
 const AIR_HAZE = [1.4, 3000];   // aerosol amount and scale height (m) for the shots at altitude
-const SUN_AIR = 0.15;      // sun-disk gain at altitude (higher overflows the half-float scene buffer)
 
 const shots = [
-  { id: 's01', name: 'Edwards, evening', t0: 0, t1: 6.4, terrain: 'ground', note: 'Low on the apron, looking into the setting sun: the jet in silhouette, its shadow reaching the lens, light breaking through cloud.',
+  { id: 's01', name: 'Edwards, evening', t0: 0, t1: 6.4, terrain: 'ground', cdiv: 2, note: 'Low on the apron, looking into the setting sun: the jet a near-silhouette against broken cloud, the sun beside its nose, the glare on the pavement reaching the lens.',
     pose: (lt, t, f) => poseGround(f, PARK.p, PARK.hdg, 0),
-    camera: (lt) => { const k = ease(lt / 6.4); return { pos: park(-17.6 + 2.4 * k, 0.42 + 0.22 * k, 15.4 - 1.4 * k), look: park(0.6, 2.35 - 0.25 * k, 0.4), fov: 32, shake: { rot: 0.02, freq: 0.3, seed: 1 }, focus: park(-3, 1, 3), focusRadius: 24 }; },
-    post: { ...GROUND_POST, exposure: GROUND_POST.exposure * 0.82, vignette: 0.34, rays: 0.5, flare: FLARE, sunDisk: 0.5, bloom: 0.1, dof: { focus: 23, fstop: 2.4, max: 10 } } },
-  { id: 's02', name: 'No cockpit', t0: 6.4, t1: 14.3, terrain: 'ground', note: 'Slider down the sunlit port side: chined nose, no canopy, splinter paint, the designation.',
+    camera: (lt) => { const k = ease(lt / 6.4); return { pos: park(-12 + 1.4 * k, 0.25 + 0.1 * k, 7 - 1.6 * k), look: park(-1 + 0.3 * k, 1.5 + 0.1 * k, -1 + 0.2 * k), fov: 30 - 2.5 * k, shake: { rot: 0.02, freq: 0.3, seed: 1 }, focus: park(-1, 1, 0), focusRadius: 24 }; },
+    post: { ...GROUND_POST, ...BACKLIT, exposure: 0.13, dof: { focus: 13.5, fstop: 2.8, max: 10 } } },
+  { id: 's02', name: 'No cockpit', t0: 6.4, t1: 14.3, terrain: 'ground', note: 'Slider down the port side in low raking light: chined nose, no canopy, splinter paint, the designation; the evening sky cool behind.',
     pose: (lt, t, f) => poseGround(f, PARK.p, PARK.hdg, 0),
-    camera: (lt) => { const k = ease(lt / 8.2); return { pos: park(6.2 - 6.6 * k, 1.5, -7.6), look: park(4.4 - 5.0 * k, 1.08, 0), fov: 24, shake: { rot: 0.025, freq: 0.35, seed: 2 }, focus: park(-2, 1, 3), focusRadius: 20 }; },
-    post: { ...GROUND_POST, exposure: 0.2, dof: { focus: 7.6, fstop: 4, max: 9 } } },
-  { id: 's03', name: 'The weapon', t0: 14.3, t1: 23.0, terrain: 'ground', note: 'Under the left wing: an AIM-120 on its rail launcher, radome to fins, in low raking light.',
+    camera: (lt) => { const k = ease(lt / 7.9), c = DEV().s02 || [4, 1.0, -7.5, 0.5, 1.2, 0, 24, -4, 0, -4]; return { pos: park(c[0] + c[7] * k, c[1], c[2] + c[8] * k), look: park(c[3] + c[9] * k, c[4], c[5]), fov: c[6], shake: { rot: 0.025, freq: 0.35, seed: 2 }, focus: park(-2, 1, 3), focusRadius: 20 }; },
+    post: { ...GROUND_POST, exposure: 0.17, dof: { focus: 7.6, fstop: 4, max: 9 } } },
+  { id: 's03', name: 'The weapon', t0: 14.3, t1: 23.0, terrain: 'ground', note: 'Under the left wing, low, looking forward along the AIM-120 into the sun: the missile rim-lit on its rail launcher, radome to fins, the wing a dark roof overhead.',
     pose: (lt, t, f) => poseGround(f, PARK.p, PARK.hdg, 0),
-    camera: (lt) => { const k = ease(lt / 8.7); return { pos: park(4.6 - 3.6 * k, 0.42 + 0.14 * k, -5.1 + 0.5 * k), look: park(2.0 - 2.3 * k, 0.66, -1.85), fov: 22, shake: { rot: 0.02, freq: 0.3, seed: 3 }, focus: park(-1, 1, 1), focusRadius: 16 }; },
-    post: { ...GROUND_POST, exposure: 0.21, dof: { focus: 3.4, fstop: 4, max: 11 } } },
-  { id: 's04', name: 'Take-off', t0: 23.0, t1: 28.8, terrain: 'ground', note: 'Long lens across the runway: rotation, wheels off, the desert and its far ranges behind.',
+    camera: (lt) => { const k = ease(lt / 8.7); return { pos: park(-4.5 + 1.0 * k, 0.45 + 0.05 * k, -1.0 - 0.1 * k), look: park(3 + 0.5 * k, 0.62, -2.3), fov: 28, shake: { rot: 0.02, freq: 0.3, seed: 3 }, focus: park(-1, 1, 1), focusRadius: 16 }; },
+    post: { ...GROUND_POST, ...BACKLIT, rays: 0.4, exposure: 0.15, dof: { focus: 4.5, fstop: 4, max: 11 } } },
+  { id: 's04', name: 'Take-off', t0: 23.0, t1: 28.8, terrain: 'ground', cdiv: 2, note: 'Long lens from beside the runway: rotation and wheels off, the jet climbing out across the low sun into a silhouette, heat shimmer on the pavement.',
     pose: (lt, t, f) => { const r = roll(lt); poseGround(f, fieldW(r.u, 0, r.y), RWY_HDG, r.pitch, { haze: 1.3, ramp: true, nav: 0.7 }); },
-    camera: (lt) => { const r = roll(lt), l = roll(lt - 0.1); const tgt = fieldW(l.u + 2.5, 0, lerp(l.y, FIELD_ALT + 4, 0.1) + 0.2); return { pos: fieldW(150, 300, FIELD_ALT + 6.5), look: tgt, fov: 3.5 - 0.4 * smooth(2, 5.8, lt), shake: { rot: 0.018, freq: 1.3, seed: 4 }, focus: fieldW(r.u, 0, r.y), focusRadius: 9 }; },
-    post: { ...GROUND_POST, shimmer: [1.5, 30, 280], exposure: 0.2 } },
-  { id: 's05', name: 'Secluded airspace', t0: 28.8, t1: 33.6, terrain: 'air', note: 'High chase looking down: the jet over the long-shadowed ranges of the Mojave, cloud and cloud shadow below, the missile under its left wing.',
+    camera: (lt) => { const r = roll(lt), l = roll(lt - 0.1); const tgt = fieldW(l.u + 2.5, 0, lerp(l.y, FIELD_ALT + 4, 0.1) + 0.2); const cp = DEV().s04 || [320, -70, 3, 3.2, 16];
+      return { pos: fieldW(cp[0], cp[1], FIELD_ALT + cp[2]), look: tgt, fov: lerp(cp[3], cp[4], smooth(2.6, 5.8, lt)), shake: { rot: 0.018, freq: 1.3, seed: 4 }, focus: fieldW(r.u, 0, r.y), focusRadius: 9 }; },
+    post: { ...GROUND_POST, ...BACKLIT, shimmer: [1.5, 30, 280], exposure: 0.14 } },
+  { id: 's05', name: 'Secluded airspace', t0: 28.8, t1: 33.6, terrain: 'air', note: 'High chase looking down towards the low sun: the jet over the long-shadowed ranges of the Mojave, cloud below, the missile under its left wing.',
     pose: (lt, t, f) => poseAir(f, SIG.s05(t), t),
-    camera: (lt, t) => { const s = acAt(SIG.s05(t)), k = ease(lt / 4.8); return { pos: body(s, [-17 + 4 * k, 33 - 3 * k, -22 + 3 * k]), look: body(s, [3.0, -1.5, 0.6]), fov: 30, shake: { rot: 0.04, freq: 0.45, seed: 5 }, focus: s.p.clone(), focusRadius: 7 }; },
-    post: (lt, t) => { const s = acAt(SIG.s05(t)); return { ...AIR_POST, exposure: 0.29, contrast: 1.16, clouds: { ...CLOUDS, hole: [s.p.x, s.p.z, 17000, 0.7] } }; } },
-  { id: 's06', name: 'Digital target', t0: 33.6, t1: 44.0, terrain: 'top', note: 'Engagement plot over the Mojave relief (original, illustrative): a target track arrives; a human operator tasks ENGAGE; the aircraft sequences the shot.',
+    camera: (lt, t) => { const s = acAt(SIG.s05(t)), k = ease(lt / 4.8); return { pos: body(s, [-42 + 6 * k, 24 - 3 * k, 12 - 2 * k]), look: body(s, [30, -22, -12]), fov: 28, shake: { rot: 0.04, freq: 0.45, seed: 5 }, focus: s.p.clone(), focusRadius: 7 }; },
+    post: (lt, t) => { const s = acAt(SIG.s05(t)); return { ...AIR_POST, exposure: 0.2, clouds: { ...CLOUDS, hole: [s.p.x, s.p.z, 17000, 0.7] } }; } },
+  { id: 's06', name: 'Digital target', t0: 33.6, t1: 44.0, terrain: 'top', note: 'Engagement plot over the Mojave relief in the low sun (original, illustrative): a target track arrives; a human operator tasks ENGAGE; the aircraft sequences the shot.',
     pose: (lt, t, f) => poseAir(f, -20, t, { missile: false, haze: 0, nav: 0 }),
     camera: (lt) => plotCam(lt),
     post: () => ({ ...PLOT_POST }) },
-  { id: 's07', name: 'On the rail', t0: 44.0, t1: 46.7, terrain: 'air', note: 'Simulated wing-station camera looking forward along the missile, the low sun at the edge of frame.',
-    pose: (lt, t, f) => poseAir(f, SIG.s07(t), t),
+  { id: 's07', name: 'On the rail', t0: 44.0, t1: 46.7, terrain: 'air', note: 'Simulated wing-station camera looking forward along the missile, the low sun in frame over the cloud deck.',
+    pose: (lt, t, f) => poseAir(f, SIG.s07(t), t, { nav: 0.2 }),
     camera: (lt, t) => { const s = acAt(SIG.s07(t)); attitude(s.hdg, s.pitch, s.roll, q1); return { pos: body(s, [-2.62, -0.63, -2.78], true), look: body(s, [4.5, -0.50, -1.72], true), up: v3(0, 1, 0).applyQuaternion(q1), fov: 60, shake: { rot: 0.16, freq: 3.2, seed: 7, jolt: 0.07 }, focus: s.p.clone(), focusRadius: 7 }; },
-    post: { ...AIR_POST, exposure: 0.2, lensK: 0.06, vignette: 0.42, grain: 0.055, sat: 1.05, rays: 0.35, flare: FLARE, sunDisk: SUN_AIR } },
-  { id: 's08', name: 'Fox three', t0: 46.7, t1: 52.2, terrain: 'air', note: 'Port-side chase, long lens, slow motion: the motor lights under the wing and floods it orange, the missile slides off the rail and outruns the frame, its smoke rolling up behind it.',
+    post: { ...AIR_POST, ...BACKLIT, rays: 0.35, exposure: 0.17, lensK: 0.06, grain: 0.055 } },
+  { id: 's08', name: 'Fox three', t0: 46.7, t1: 52.2, terrain: 'air', note: 'Behind and below on the starboard side, long lens, slow motion, looking into the low sun: the motor lights under the far wing, the missile slides off the rail and outruns the jet, its smoke rolling back past it, backlit.',
     pose: (lt, t, f) => poseAir(f, SIG.s08(t), t, { blur: V * SLOW / 30 * 0.25, stretch: 1.3 }),
-    camera: (lt, t) => { const sig = SIG.s08(t), s = acAt(sig), k = smooth(T_IGN + 0.55, T_IGN + 3.0, t), j = t > T_IGN ? Math.exp(-(t - T_IGN) * 2.2) : 0;
-      const lead = Math.min(mslAhead(sig), 20) * 0.25 * smooth(T_IGN, T_IGN + 1.6, t);
-      return { pos: body(s, [-2.5 + 5.5 * k, -3.4 - 0.9 * k, -35 + 3 * k]), look: body(s, [0.6 + lead + 1.5 * k, -0.62 + 0.2 * k, -1.6 + 0.6 * k]), fov: 14.5 + 13.5 * k, shake: { rot: 0.025 + 0.09 * j, freq: 1.4, seed: 8, jolt: 0.05 * j }, focus: s.p.clone(), focusRadius: 9 }; },
-    post: (lt, t) => ({ ...AIR_POST, exposure: 0.245 - (t > T_IGN ? 0.03 * Math.exp(-(t - T_IGN) * 2.5) : 0), bloom: 0.09, shutter: 0.3, shimmer: [0.8, 22, 30] }) },
-  { id: 's09', name: 'Fly-out', t0: 52.2, t1: 58.2, terrain: 'air', note: 'Behind and above, looking into the low sun: the trail runs past the jet and away, backlit, to a point of flame climbing toward a target that is not there.',
+    camera: (lt, t) => { const sig = SIG.s08(t), s = acAt(sig), j = t > T_IGN ? Math.exp(-(t - T_IGN) * 2.2) : 0, m = ease(lt / 5.5);
+      const lead = Math.min(mslAhead(sig), 20) * 0.25 * smooth(T_IGN, T_IGN + 1.6, t), cp = DEV().s08 || [-36, -3, 4, 3, -0.6, -1.4, 16, 3, 0.5, 2];
+      return { pos: body(s, [cp[0] + cp[7] * m, cp[1], cp[2] + cp[8] * m]), look: body(s, [cp[3] + lead, cp[4], cp[5]]), fov: cp[6] + cp[9] * m, shake: { rot: 0.025 + 0.09 * j, freq: 1.4, seed: 8, jolt: 0.05 * j }, focus: s.p.clone(), focusRadius: 9 }; },
+    post: (lt, t) => ({ ...AIR_POST, ...BACKLIT, exposure: 0.19 - (t > T_IGN ? 0.03 * Math.exp(-(t - T_IGN) * 2.5) : 0), shutter: 0.3, shimmer: [0.8, 22, 30] }) },
+  { id: 's09', name: 'Fly-out', t0: 52.2, t1: 58.2, terrain: 'air', note: 'Behind and above, looking into the low sun: the trail runs past the jet and away over the cloud deck to a point of flame climbing toward a target that is not there.',
     pose: (lt, t, f) => poseAir(f, SIG.s09(t), t, { blur: V / 30 * 0.25 }),
-    camera: (lt, t) => { const sig = SIG.s09(t), s = acAt(sig), k = ease(lt / 6); const cp = DEV().s09 || [-50, 3, 38, 420, 46, -150, 36]; return { pos: body(s, [cp[0] - 6 * k, cp[1] + 1.5 * k, cp[2] - 2 * k]), look: body(s, [cp[3], cp[4] + 12 * k, cp[5] + 10 * k]), fov: cp[6] - 5 * k, shake: { rot: 0.05, freq: 0.6, seed: 9 }, focus: s.p.clone(), focusRadius: 8 }; },
-    post: { ...AIR_POST, exposure: 0.18, rays: 0.45, flare: FLARE, sunDisk: SUN_AIR, bloom: 0.08 } },
+    camera: (lt, t) => { const sig = SIG.s09(t), s = acAt(sig), k = ease(lt / 6); const cp = DEV().s09 || [-100, 10, 12, 1500, 3, -190, 24];
+      return { pos: body(s, [cp[0] - 10 * k, cp[1] + 8 * k, cp[2] - 2 * k]), look: body(s, [cp[3], cp[4] - 48 * k, cp[5]]), fov: cp[6] + 2 * k, shake: { rot: 0.05, freq: 0.6, seed: 9 }, focus: s.p.clone(), focusRadius: 8 }; },
+    post: { ...AIR_POST, ...BACKLIT, exposure: 0.18 } },
   { id: 's10', name: 'Resolved as data', t0: 58.2, t1: 65.3, terrain: 'top', note: 'Back on the plot: the missile track runs out to the digital target. No physical target, no explosion.',
     pose: (lt, t, f) => poseAir(f, 20, t, { missile: false, haze: 0, nav: 0 }),
     camera: (lt) => plotCam(lt + 10.4),
     post: () => ({ ...PLOT_POST }) },
-  { id: 's11', name: 'One step closer', t0: 65.3, t1: 72.3, terrain: 'air', note: 'Ahead and below on the port side, the sun behind the lens: the jet in golden light, the rail under its left wing empty.',
-    pose: (lt, t, f) => poseAir(f, SIG.s11(t), t, { missile: false }),
-    camera: (lt, t) => { const s = acAt(SIG.s11(t)), k = ease(lt / 7); return { pos: body(s, [13.5 - 5 * k, -2.0 + 0.8 * k, -15 + 1.5 * k]), look: body(s, [-0.6 - 0.4 * k, -0.25, -1.1]), fov: 24, shake: { rot: 0.045, freq: 0.5, seed: 11 }, focus: s.p.clone(), focusRadius: 8 }; },
-    post: (lt, t) => { const s = acAt(SIG.s11(t)); return { ...AIR_POST, exposure: 0.25, clouds: { ...CLOUDS, hole: [s.p.x, s.p.z, 8000, 0.6] } }; } },
-  { id: 's12', name: 'End card', t0: 72.3, t1: DUR, terrain: 'air', note: 'The jet banks away toward the low sun; title, date, sources.',
+  { id: 's11', name: 'One step closer', t0: 65.3, t1: 72.3, terrain: 'air', note: 'Level on the starboard side, long lens: the jet a dark profile against the sunlit cloud deck, the low sun on its far side.',
+    pose: (lt, t, f) => poseAir(f, SIG.s11(t), t, { missile: false, nav: 0.3 }),
+    camera: (lt, t) => { const s = acAt(SIG.s11(t)), k = ease(lt / 7), c = DEV().s11 || [6, 1.5, 22, 0, -0.3, 0, 22, -4]; return { pos: body(s, [c[0] + c[7] * k, c[1], c[2]]), look: body(s, [c[3], c[4], c[5]]), fov: c[6] - 2 * k, shake: { rot: 0.045, freq: 0.5, seed: 11 }, focus: s.p.clone(), focusRadius: 8 }; },
+    post: (lt, t) => { const s = acAt(SIG.s11(t)); return { ...AIR_POST, exposure: 0.19, clouds: { ...AIR_CLOUDS, hole: [s.p.x, s.p.z, 8000, 0.3] } }; } },
+  { id: 's12', name: 'End card', t0: 72.3, t1: DUR, terrain: 'air', note: 'The jet banks away into the low sun over the cloud deck; title, date, sources.',
     pose: (lt, t, f) => poseAir(f, SIG.s12(t), t, { missile: false }),
-    camera: (lt, t) => { const s0 = acAt(T_BRK - 0.6), s = acAt(SIG.s12(t)); const cam = body({ p: tA.copy(s0.p).addScaledVector(FWD, V * lt), hdg: HDG }, [-27, 3.2, 9.5]);
-      const look = s.p.clone(); look.y -= cam.distanceTo(s.p) * 0.14 * smooth(0.2, 1.6, lt);   // the jet rides above the title card
-      return { pos: cam, look, fov: 30 - 5 * smooth(0.5, 6, lt), shake: { rot: 0.05, freq: 0.6, seed: 12 }, focus: s.p.clone(), focusRadius: 7 }; },
-    post: { ...AIR_POST, exposure: 0.19, rays: 0.4, flare: FLARE, sunDisk: SUN_AIR, bloom: 0.08 } },
+    camera: (lt, t) => { const s = acAt(SIG.s12(t)), c = DEV().s12 || [-30, -3, 4, 0.16, 30, 4, -30]; const cam = body(s, [c[0] + c[6] * smooth(1, 6.7, lt), c[1], c[2]]);
+      const look = s.p.clone(); look.y -= cam.distanceTo(s.p) * c[3] * smooth(0.2, 1.6, lt);   // the jet rides above the title card
+      return { pos: cam, look, fov: c[4] + c[5] * smooth(0.5, 6, lt), shake: { rot: 0.05, freq: 0.6, seed: 12 }, focus: s.p.clone(), focusRadius: 7 }; },
+    post: { ...AIR_POST, ...BACKLIT, exposure: 0.17, flare: { ...FLARE, ghost: 0.015, halo: 0.01 } } },
 ];
 
 for (const s of shots) { const c = s.camera; s.camera = (lt, t, f) => { const o = c(lt, t, f), w = DEV().wheel; return w ? { ...o, pos: park(FURY.mainGear.x + w[0], w[1], -FURY.mainGear.z + w[2]), look: park(FURY.mainGear.x, w[4] ?? 0.2, -FURY.mainGear.z), fov: w[3] || o.fov, shake: null, focus: park(FURY.mainGear.x, 0.3, -FURY.mainGear.z), focusRadius: 5 } : o; }; }
-for (const s of shots) { const p = s.post; s.post = (lt, t, f) => ({ ...(typeof p === 'function' ? p(lt, t, f) : p), ...DEV().post }); }   // look development overrides
+// look development: DEV().cam = { pos: [forward, up, right], look: [...], fov, rigid } replaces a shot's camera, in the
+// aircraft's frame in the air and the parked aircraft's frame on the ground; DEV().cl merges into the shot's clouds
+for (const s of shots) { const c = s.camera; s.camera = (lt, t, f) => { const sn = DEV().sun; if (sn) f.pipe.atmo.setSun(sn[0], sn[1]); else f.pipe.atmo.setSun(SUN.az, SUN.el);   // (DEV().sun: try another sun)
+  const o = c(lt, t, f), k = DEV().cam; if (!k || s.terrain === 'top') return o;
+  const fr = s.terrain === 'air' ? (v => body(acAt(SIG[s.id](t)), v, !!k.rigid)) : (v => park(v[0], v[1], v[2]));
+  return { ...o, pos: fr(k.pos), look: fr(k.look), fov: k.fov ?? o.fov, up: undefined, shake: k.shake === undefined ? o.shake : k.shake }; }; }
+for (const s of shots) { const p = s.post; s.post = (lt, t, f) => { const o = { ...(typeof p === 'function' ? p(lt, t, f) : p), ...DEV().post }; if (DEV().cl && o.clouds) o.clouds = { ...o.clouds, ...DEV().cl }; return o; }; }   // look development overrides
 
 // ------------------------------------------------------------------ overlays
 const cues = [
@@ -444,7 +457,7 @@ startFilm({
   build, shots, cues, buildHud, updateHud, score,
   frame(t, shot, lt, film, c) {
     W.terrain.update(shot.terrain);
-    { const div = DEV().cdiv ?? (+film.params.get('cdiv') || (shot.terrain === 'air' ? 2 : 3)); if (W.clouds.div !== div) { W.clouds.div = div; W.clouds.setSize(film.pipe.w, film.pipe.h); } }   // the deck from above is the backdrop: half resolution; from the ground a third
+    { const div = DEV().cdiv ?? (+film.params.get('cdiv') || shot.cdiv || (shot.terrain === 'air' ? 2 : 3)); if (W.clouds.div !== div) { W.clouds.div = div; W.clouds.setSize(film.pipe.w, film.pipe.h); } }   // the deck from above is the backdrop: half resolution; from the ground a third
     { const A = film.pipe.atmo.uniforms, air = shot.terrain === 'air', d = DEV(); A.uHaze.value = d.haze ?? (air ? AIR_HAZE[0] : 0.62); A.uHazeH.value = d.hazeH ?? (air ? AIR_HAZE[1] : 1200); }
     W.scrub.visible = shot.id === 's04' && !film.off.has('scrub');
     if (W.scrub.visible) { // thin the scrub out with distance: plants under about a pixel are skipped
