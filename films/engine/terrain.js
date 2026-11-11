@@ -247,13 +247,14 @@ function ringGeometry(cols, rings) {
   g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
   return g;
 }
-// ring radii: spacing never finer than the far field needs (it grows with distance past ~35 km)
-function ringsFor(preset) {
+// ring radii: spacing never finer than the far field needs (it grows with distance past ~35 km).
+// q (0.4..1) coarsens the grid for small render targets, where the vertex work would otherwise dominate.
+function ringsFor(preset, q = 1) {
   const out = []; let r;
-  const lin = (to, step) => { while (r < to) { out.push(r); r += step; } };
-  const geo = (to, k) => { while (r < to) { out.push(r); r *= k; } };
-  const grow = (to, step, k) => { while (r < to) { out.push(r); r += Math.max(step, r * k); } };
-  if (preset === 'ground') { r = 0; out.push(0); r = 0.6; geo(5000, 1.055); grow(80000, 80, 0.005); geo(520000, 1.06); }
+  const lin = (to, step) => { while (r < to) { out.push(r); r += step / q; } };
+  const geo = (to, k) => { const kk = 1 + (k - 1) / q; while (r < to) { out.push(r); r *= kk; } };
+  const grow = (to, step, k) => { while (r < to) { out.push(r); r += Math.max(step, r * k) / q; } };
+  if (preset === 'ground') { r = 0; out.push(0); r = 0.6; geo(5000, 1.07); grow(80000, 100, 0.0065); geo(520000, 1.06); }
   else if (preset === 'top') { r = 0; lin(24000, 70); geo(520000, 1.07); }
   else { r = 0; lin(4000, 125); grow(130000, 160, 0.006); geo(520000, 1.045); }
   out.push(r);
@@ -331,8 +332,10 @@ export class Terrain {
     const pipe = this.pipe, cam = pipe.camera, mu = this.meshUniforms;
     this.bake();
     const full = preset === 'top';
-    if (!this.geos[preset]) this.geos[preset] = ringGeometry(full ? 768 : (preset === 'ground' ? 640 : 448), ringsFor(preset));
-    this.mesh.geometry = this.geos[preset];
+    // grid density follows the render size: about one column per 3.4 px, rings to match
+    const q = Math.min(1, Math.max(0.4, pipe.h / 1080)), cols = Math.round((full ? 768 : (preset === 'ground' ? 560 : 448)) * Math.min(1, Math.max(0.35, pipe.w / 1920)) / 8) * 8, gk = `${preset}:${cols}:${q.toFixed(2)}`;
+    if (!this.geos[gk]) this.geos[gk] = ringGeometry(cols, ringsFor(preset, q));
+    this.mesh.geometry = this.geos[gk];
     pipe.atmo.sunIrradiance(this.recipe.groundAlt ?? 1400, this.uniforms.uSunGround.value);
     this.uniforms.uPixAngle.value = 2 * Math.tan(cam.fov * Math.PI / 360) / pipe.h;
     mu.logDepthBufFC.value = 2 / (Math.log(cam.far + 1) / Math.LN2);
