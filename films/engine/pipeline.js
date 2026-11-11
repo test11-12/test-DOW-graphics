@@ -622,6 +622,7 @@ ${NOISE}
 uniform sampler2D tColor, tBloom, tDetail, tRays, tFlare;
 uniform vec2 uRes; uniform float uFrame, uExposure, uBloom, uVignette, uGrain, uCA, uLensK, uFade, uSat, uContrast, uSharpen, uRays, uFlare;
 uniform vec3 uWB, uLift, uTint, uBloomTint; uniform int uMode; uniform vec4 uThermal; // gain, level, noise, polarity
+uniform vec4 uTone; uniform vec3 uToneLo, uToneHi;   // post.tone: black point, blue saturation, top / bottom grad (stops); shadow and highlight tints
 varying vec2 vUv;
 vec3 agxCurve(vec3 x){ vec3 x2=x*x, x4=x2*x2; return 15.5*x4*x2-40.14*x4*x+31.96*x4-6.868*x2*x+0.4298*x2+0.1191*x-0.00232; }
 vec3 agx(vec3 v){
@@ -651,6 +652,7 @@ void main(){
   col = max(col, vec3(0.0))*uExposure*uWB;
   float vig = 1.0-uVignette*smoothstep(0.08, 0.95, r2*1.15);
   col *= vig;
+  if (uTone.z+uTone.w > 0.0) col *= exp2(-uTone.z*smoothstep(0.45, 1.0, vUv.y)-uTone.w*smoothstep(0.45, 1.0, 1.0-vUv.y));   // graduated ND, top and bottom
   vec3 o;
   if (uMode == 1){
     // long-wave IR look: scene luminance stands in for apparent temperature
@@ -667,7 +669,13 @@ void main(){
     o = pow(max(o, vec3(0.0)), vec3(uContrast));
     l = dot(o, vec3(0.2126,0.7152,0.0722));
     o = l+uSat*(o-l);
+    if (uTone.y != 1.0){   // saturation of blues only (hue near 225 degrees)
+      float h = atan(1.7320508*(o.g-o.b), 2.0*o.r-o.g-o.b), dh = abs(mod(h+5.4977871, 6.2831853)-3.1415927);
+      o = l+(o-l)*mix(1.0, uTone.y, exp(-dh*dh/0.45));
+    }
     o = agxOut(o);
+    if (uTone.x > 0.0) o = max(o-uTone.x, vec3(0.0))/(1.0-uTone.x);   // black point
+    if (uToneLo != vec3(1.0) || uToneHi != vec3(1.0)) o *= mix(uToneLo, uToneHi, smoothstep(0.0, 0.7, dot(o, vec3(0.2126,0.7152,0.0722))));   // split tone
     o = o*uTint+uLift*(1.0-o);
   }
   // sensor grain, heavier in the mids and shadows
@@ -782,6 +790,7 @@ export class Pipeline {
       uLensK: { value: 0.0 }, uFade: { value: 1 }, uSat: { value: 1.12 }, uContrast: { value: 1.12 }, uSharpen: { value: 0.0 }, uRays: { value: 0 }, uFlare: { value: 0 },
       uWB: { value: new THREE.Vector3(1, 1, 1) }, uLift: { value: new THREE.Vector3(0, 0, 0) }, uTint: { value: new THREE.Vector3(1, 1, 1) }, uBloomTint: { value: new THREE.Vector3(1, 1, 1) },
       uMode: { value: 0 }, uThermal: { value: new THREE.Vector4(2.2, 0.3, 0.06, 0) },
+      uTone: { value: new THREE.Vector4(0, 1, 0, 0) }, uToneLo: { value: new THREE.Vector3(1, 1, 1) }, uToneHi: { value: new THREE.Vector3(1, 1, 1) },
     });
 
     // environment probe (image-based lighting for PBR materials)
@@ -883,7 +892,8 @@ export class Pipeline {
 
   // post: { exposure, bloom, bloomTint, vignette, grain, ca, lensK, fade, sat, contrast, wb, lift, tint, shutter, shimmer:[amp,scale,far],
   //         sunDisk, aerial, mode, thermal, sharpen, envKey, cirrus:{alt,cover,opacity,scale,wind}, clouds:{...},
-  //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, rayShape:{reach,fall,cone,cap}, flare:{ghost,halo,streak,thr} }
+  //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, rayShape:{reach,fall,cone,cap}, flare:{ghost,halo,streak,thr},
+  //         tone:{black (display black point, 0), blueSat (1), grad:[top, bottom] (stops, 0), shadows:[r,g,b], highlights:[r,g,b] (split tone, 1)} }
   render(time, frameIndex, post = {}) {
     const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene;
     if (this.prof) { this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }
@@ -1077,6 +1087,7 @@ export class Pipeline {
     uf.uSharpen.value = post.sharpen ?? 0;
     uf.uWB.value.fromArray(post.wb || [1, 1, 1]); uf.uLift.value.fromArray(post.lift || [0, 0, 0]); uf.uTint.value.fromArray(post.tint || [1, 1, 1]);
     uf.uBloomTint.value.fromArray(post.bloomTint || [1, 1, 1]);
+    { const tn = post.tone || {}; uf.uTone.value.set(tn.black ?? 0, tn.blueSat ?? 1, tn.grad?.[0] ?? 0, tn.grad?.[1] ?? 0); uf.uToneLo.value.fromArray(tn.shadows || [1, 1, 1]); uf.uToneHi.value.fromArray(tn.highlights || [1, 1, 1]); }
     uf.uMode.value = post.mode === 'thermal' ? 1 : 0;
     if (post.thermal) uf.uThermal.value.fromArray(post.thermal);
     if (post.debug === 'scene') uf.tColor.value = sceneTex;

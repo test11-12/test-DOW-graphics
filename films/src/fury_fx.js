@@ -39,6 +39,9 @@ export function makeMissileTrail(pipe, noise3, K) {
     uMass: { value: new THREE.Vector4(1.6, 0.75, 0.85, 1.1) },
     uPlume: { value: new THREE.Vector3(1.0, 0.6, 0.28) }, uPlumeK: { value: 1 },
     uDeck: { value: new THREE.Vector3(0.45, 0.45, 0.45) }, uLight: { value: new THREE.Vector4(0.16, 0.03, 1.6, 0.8) }, uBlur: { value: 0 }, uStretch: { value: 1 }, uPix: { value: 0.002 }, uAlbedo: { value: new THREE.Vector3(0.87, 0.915, 0.97) },
+    // x: forward-scattering g of the first order, y: weight of the backward lobe, z: fine erosion of the smoke's edge, w: core opacity (transmittance
+    // below this is taken as none, so the sun cannot burn through the thick of the trail); uWander: slow drift of the old trail (m per s of age)
+    uPhase: { value: new THREE.Vector4(0.72, 0.35, 0.0, 0.0) }, uWander: { value: 0 },
   };
   const ENV = 1.62;      // the smoke surface never lies outside this many radii
   const mat = new THREE.ShaderMaterial({
@@ -58,7 +61,7 @@ export function makeMissileTrail(pipe, noise3, K) {
       ${DEPTH}
       uniform sampler2D tDepth, tAmbient; uniform sampler3D tNoise3; uniform vec2 uRes; uniform float uFrame;
       uniform vec3 uSunColor, uSunT, uCamT, uBoxMin, uBoxMax, uClimb, uPlume, uDrift, uDeck, uAlbedo; uniform vec4 uKin, uRad, uShape, uMass, uLight;   // uLight: second and third scattering orders, sky light, how far the sun's colour is paled
-      uniform float uNow, uANow, uPlumeK, uBlur, uStretch, uPix;
+      uniform float uNow, uANow, uPlumeK, uBlur, uStretch, uPix, uWander; uniform vec4 uPhase;
       varying vec3 vT; varying float vZ;
       const float ENV = ${ENV.toFixed(2)};
       float sceneDist(){ float d = texture2D(tDepth, gl_FragCoord.xy/uRes).x; return d >= 0.999999 ? 1.0e9 : viewZ(d); }
@@ -84,6 +87,7 @@ export function makeMissileTrail(pipe, noise3, K) {
         float w = min(age, 12.0), m = 0.2*w+0.03*w*w;
         vec2 c = vec2(climb(tau)-uDrift.y*w+m*(0.6*sin(a*0.043+1.3)+0.4*sin(a*0.131)),
                       uDrift.x*w+m*(0.6*sin(a*0.031+0.4)+0.4*sin(a*0.117+2.0)));
+        c += uWander*w*vec2(0.5*sin(a*0.0047+0.9)+0.3*sin(a*0.0131+2.2), sin(a*0.0039+0.3)+0.45*sin(a*0.0113+4.0));   // wind shear bends the old trail
         q = p.yz-c;
         float d = length(q)-R*ENV;
         d = max(d, max(-p.x-0.2, p.x-uANow));
@@ -105,11 +109,13 @@ export function makeMissileTrail(pipe, noise3, K) {
         // the smoke surface: pushed out where a cell sits, eaten in between; old smoke breaks into separate puffs
         float brk = uMass.z*smoothstep(1.5, 9.0, age)*(1.0-smoothstep(0.35, 0.8, pf));
         float edge = 1.0+uShape.y*(big-0.55)*1.25-brk;
+        if (uPhase.z > 0.0) edge -= uPhase.z*lod*(texture(tNoise3, pn/(0.23*La)+ob.zxy).a-0.5)*smoothstep(0.02, 0.6, age);   // the edge breaks into wisps
         float soft = mix(uShape.z, uShape.w, smoothstep(0.15, 6.0, age));
         float d = clamp((edge-rr)/soft, 0.0, 1.0); d *= d*(3.0-2.0*d);
         d *= mix(1.0, 0.25+1.5*fine*fine, uMass.y*smoothstep(0.05, 2.5, age));   // wisps and hollows once it has aged
         float rho = uMass.x/(R*R)*(0.55+0.9*pf);                         // the same smoke over a wider section
-        return d*rho*smoothstep(0.004, 0.035, age)*(1.0-smoothstep(11.0, 18.0, age));
+        // smoke starts a few metres behind the nozzle (behind the flame) however fast the missile is flying
+        return d*rho*smoothstep(1.5, 7.0, uANow-p.x)*(1.0-smoothstep(11.0, 18.0, age));
       }
       float hg(float c, float g){ return (1.0-g*g)/(12.566371*pow(max(1.0+g*g-2.0*g*c, 1e-3), 1.5)); }
       void main(){
@@ -120,7 +126,7 @@ export function makeMissileTrail(pipe, noise3, K) {
         if (tF <= tN) discard;
         float cv = dot(rd, uSunT);
         // each scattering order is dimmer, reaches deeper and forgets more of the sun's direction
-        float ph0 = mix(hg(cv, 0.72), hg(cv, -0.25), 0.35), ph1 = mix(hg(cv, 0.36), hg(cv, -0.12), 0.35), ph2 = 0.0796;
+        float ph0 = mix(hg(cv, uPhase.x), hg(cv, -0.25), uPhase.y), ph1 = mix(hg(cv, 0.36), hg(cv, -0.12), 0.35), ph2 = 0.0796;
         vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb*0.3183;
         // smoke this white photographs paler than the low sun's own colour (thin edges are lit by the whole sky as well)
         vec3 sunC = mix(uSunColor, vec3(dot(uSunColor, vec3(0.3, 0.55, 0.15))), uLight.w);
@@ -154,6 +160,7 @@ export function makeMissileTrail(pipe, noise3, K) {
           t += ds;
         }
         if (T > 0.999) discard;
+        if (uPhase.w > 0.0) T *= smoothstep(uPhase.w, uPhase.w*4.0, T);
         gl_FragColor = vec4(C, 1.0-T);
       }`,
   });
@@ -168,7 +175,8 @@ export function makeMissileTrail(pipe, noise3, K) {
   const climb = t => { const u = Math.max(t - K.climbT0, 0); return u < K.climbT1 ? K.climbK * u * u : K.climbK * K.climbT1 * (2 * u - K.climbT1); };
   // now: seconds since the motor lit; ignRel: ignition point relative to the render origin; hdg: launch heading (deg)
   // o: { density, plume (glow in the young smoke), blur (m of travel during the exposure), stretch, light, deck: [r,g,b] light from
-  //      below, rad, shape, mass (look development: replace uRad, uShape, uMass) }
+  //      below, rad, shape, mass (look development: replace uRad, uShape, uMass), phase: [g, backward weight, edge erosion, core
+  //      opacity] (uPhase), wander (m of drift per s of age) }
   mesh.userData.set = (now, ignRel, hdg, sunDir, o = {}) => {
     if (now <= 0.002) { mesh.visible = false; return; }
     mesh.visible = true;
@@ -183,6 +191,8 @@ export function makeMissileTrail(pipe, noise3, K) {
     U.uBoxMax.value.set(aNow + 0.05, climb(tb) + Rm + m + 0.3, Rm + m + dr.x * w + 0.3);
     U.uMass.value.x = (o.mass ? o.mass[0] : 1.6) * (o.density ?? 1); U.uPlumeK.value = o.plume ?? 1; U.uBlur.value = o.blur ?? 0; U.uStretch.value = o.stretch ?? 1;
     if (o.deck) U.uDeck.value.fromArray(o.deck); if (o.albedo) U.uAlbedo.value.fromArray(o.albedo);
+    U.uPhase.value.fromArray(o.phase || [0.72, 0.35, 0, 0]); U.uWander.value = o.wander ?? 0;
+    if (o.wander) { const e = o.wander * w * 1.8; U.uBoxMin.value.y -= e; U.uBoxMin.value.z -= e; U.uBoxMax.value.y += e; U.uBoxMax.value.z += e; }
   };
   return mesh;
 }
