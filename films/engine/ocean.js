@@ -16,6 +16,9 @@ const WAVES = /* glsl */`
 uniform vec4 uWA[NW];   // dir.x, dir.z, wavenumber, amplitude
 uniform vec2 uWB[NW];   // angular frequency, phase
 uniform float uTime, uChop;
+uniform vec4 uCalm;     // sheltered water: centre x, z, inner radius, outer radius
+uniform float uCalmK;   // wave amplitude factor inside the inner radius (1 = no shelter)
+float shelter(vec2 w){ return mix(uCalmK, 1.0, smoothstep(uCalm.z, uCalm.w, length(w-uCalm.xy))); }
 `;
 
 // depth-only geometry; log depth per vertex (triangles are small) keeps early-Z
@@ -33,6 +36,7 @@ void main(){
     disp.y += A.w*sin(ph)*att;
     disp.xz += A.xy*(A.w*cos(ph)*att*uChop);
   }
+  disp *= shelter(w);
   vec3 p = vec3(d.x*r+disp.x, disp.y-uOrigin.y-r*r/(2.0*${RG.toFixed(1)}), d.y*r+disp.z);
   gl_Position = projectionMatrix*viewMatrix*vec4(p,1.0);
   gl_Position.z = (log2(max(1e-6, 1.0+gl_Position.w))*logDepthBufFC-1.0)*gl_Position.w;
@@ -138,6 +142,7 @@ void main(){
     pinch += ka*sin(ph);                              // sum of k a sin: crests pinch where this is large
     var += 0.5*ka*ka*(1.0-att*att);
   }
+  { float sk = shelter(vW); slope *= sk; pinch *= sk; var *= sk*sk; }
   vec4 amp = vec4(0.42, 0.42, 0.40, 0.36)*uDetailAmp*vec4(1.0, 1.0, calm, calm);
   vec4 res = clamp(1.0-fp*vec4(uSc[0], uSc[1], uSc[2], uSc[6])*8.0, 0.0, 1.0);
   vec2 d0 = dtex(duv(0), 0).rg-0.5, d1 = dtex(duv(1), 1).gr-0.5, d2 = dtex(duv(2), 2).rg-0.5, d3 = dtex(duv(6), 6).gr-0.5;
@@ -308,6 +313,7 @@ export class Ocean {
     this.cloudK = { value: new THREE.Vector3(5000, 0, 0) };
     this.meshUniforms = {
       uOrigin: S.uOrigin, uTime: S.uTime, uChop: { value: 0.75 }, uYaw: { value: 0 }, uSector: { value: Math.PI * 2 }, logDepthBufFC: { value: 1 },
+      uCalm: { value: new THREE.Vector4(0, 0, 0, 1) }, uCalmK: { value: 1 },
       uWA: { value: Array.from({ length: NW }, () => new THREE.Vector4()) }, uWB: { value: Array.from({ length: NW }, () => new THREE.Vector2()) },
     };
     const mu = this.meshUniforms;
@@ -321,7 +327,7 @@ export class Ocean {
       uPixAngle: { value: 0.001 }, uReflOn: { value: 0 }, uFogK: { value: 0 }, uDetailAmp: { value: 1 }, uGlitter: { value: 1 }, uThermal: { value: 0 }, uChop: mu.uChop,
       uSparkle: { value: 0.8 }, uWhitecap: { value: 0 }, uSlick: { value: 0.6 }, uCloudK: this.cloudK,
       uCov: cl ? cl.cover.uCov : { value: new THREE.Vector4(0, 1, 0, 0) }, uCovHole: cl ? cl.cover.uCovHole : { value: new THREE.Vector4(0, 0, 1, 0) },
-      uWA: mu.uWA, uWB: mu.uWB,
+      uWA: mu.uWA, uWB: mu.uWB, uCalm: mu.uCalm, uCalmK: mu.uCalmK,
       uPh: { value: Array.from({ length: NS }, () => new THREE.Vector2()) }, uSc: { value: this.scales },
       uRot: { value: this.rots.map(([deg, sx, sy]) => { const a = deg * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a); return new THREE.Vector4(c * sx, sn * sx, -sn * sy, c * sy); }) },
     };
@@ -387,8 +393,13 @@ export class Ocean {
   }
   // surface height (m) at world x,z and time t (vertical term only)
   heightAt(x, z, t) {
-    let h = 0; for (const w of this.waves) h += w.a * Math.sin((w.dx * x + w.dz * z) * w.k - w.om * t + w.ph); return h;
+    let h = 0; for (const w of this.waves) h += w.a * Math.sin((w.dx * x + w.dz * z) * w.k - w.om * t + w.ph);
+    const c = this.meshUniforms.uCalm.value, k = this.meshUniforms.uCalmK.value;
+    if (k < 1) { const d = Math.hypot(x - c.x, z - c.y), u = Math.min(1, Math.max(0, (d - c.z) / (c.w - c.z))); h *= k + (1 - k) * u * u * (3 - 2 * u); }
+    return h;
   }
+  // sheltered water (a harbour basin): waves scale down to `k` inside r0 and recover by r1
+  setShelter(x, z, r0, r1, k) { this.meshUniforms.uCalm.value.set(x, z, r0, r1); this.meshUniforms.uCalmK.value = k; }
 
   _ribbons(t) {
     const P = this.wPos.array, D = this.wDat.array, I = this.wIdx.array;

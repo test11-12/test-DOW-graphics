@@ -198,7 +198,7 @@ const hash = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x
 export class Trail {
   constructor(pipe, o = {}) {
     this.pipe = pipe;
-    this.o = { rate: 60, life: 6, size0: 0.4, size1: 6, grow: 0.6, color: [0.9, 0.9, 0.92], alpha: 0.6, jitter: 0.3, drift: [0, 0.3, 0], drag: 2.0, spreadV: 1.5, lit: 1, emissive: [0, 0, 0], emissiveLife: 0.15, additive: false, softness: 2, fadeIn: 0.04, start: -1e9, stop: 1e9, noise: 1, ...o };
+    this.o = { rate: 60, life: 6, size0: 0.4, size1: 6, grow: 0.6, color: [0.9, 0.9, 0.92], alpha: 0.6, jitter: 0.3, drift: [0, 0.3, 0], drag: 2.0, spreadV: 1.5, lit: 1, emissive: [0, 0, 0], emissiveLife: 0.15, additive: false, softness: 2, fadeIn: 0.04, start: -1e9, stop: 1e9, noise: 1, color1: null, ...o };
     const N = this.N = Math.ceil(this.o.rate * this.o.life);
     const geo = new THREE.InstancedBufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
@@ -212,7 +212,7 @@ export class Trail {
       transparent: true, depthTest: false, depthWrite: false,
       blending: this.o.additive ? THREE.AdditiveBlending : THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
       uniforms: { ...fxU(pipe), uSunDir: S.uSunDir, uSunColor: S.uSunColor, tAmbient: S.tAmbient,
-        uColor: { value: new THREE.Vector3(...this.o.color) }, uAlpha: { value: this.o.alpha }, uLit: { value: this.o.lit },
+        uColor: { value: new THREE.Vector3(...this.o.color) }, uColor1: { value: new THREE.Vector3(...(this.o.color1 || this.o.color)) }, uAlpha: { value: this.o.alpha }, uLit: { value: this.o.lit },
         uEmis: { value: new THREE.Vector3(...this.o.emissive) }, uEmisLife: { value: this.o.emissiveLife }, uSoft: { value: this.o.softness }, uNoise: { value: this.o.noise }, uFadeIn: { value: this.o.fadeIn } },
       vertexShader: /* glsl */`
         attribute vec3 iPos; attribute vec4 iDat; // size, age01, seed, rotation
@@ -230,7 +230,7 @@ export class Trail {
       fragmentShader: /* glsl */`
         precision highp float;
         ${SOFT}
-        uniform sampler2D tDetail, tAmbient; uniform vec3 uColor, uSunColor, uEmis; uniform float uAlpha, uLit, uEmisLife, uSoft, uNoise, uFadeIn;
+        uniform sampler2D tDetail, tAmbient; uniform vec3 uColor, uColor1, uSunColor, uEmis; uniform float uAlpha, uLit, uEmisLife, uSoft, uNoise, uFadeIn;
         varying vec2 vQ; varying float vZ; varying float vAge; varying float vSeed; varying vec3 vSunV;
         void main(){
           float r2 = dot(vQ,vQ); if (r2 > 1.0) discard;
@@ -246,8 +246,9 @@ export class Trail {
           vec3 N = normalize(vec3(vQ, sqrt(max(1.0-r2, 0.0))+0.35));
           float wrap = dot(N, normalize(vSunV))*0.5+0.5;
           vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb*0.3183;
-          vec3 lit = uColor*(uSunColor*0.3183*(0.25+0.75*wrap*wrap)*(0.75+0.5*n) + amb*1.2);
-          vec3 col = mix(uColor, lit, uLit);
+          vec3 base = mix(uColor, uColor1, smoothstep(0.0, 0.55, vAge));
+          vec3 lit = base*(uSunColor*0.3183*(0.25+0.75*wrap*wrap)*(0.75+0.5*n) + amb*1.2);
+          vec3 col = mix(base, lit, uLit);
           col += uEmis*exp(-vAge/uEmisLife)*(0.5+n);
           gl_FragColor = vec4(col*a, a);
         }`,
