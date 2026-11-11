@@ -1,0 +1,30 @@
+<div id="stage">
+  <div id="frame">
+    <canvas id="view" tabindex="0" aria-label="{{aria}}"></canvas>
+    <div id="ov" aria-hidden="true"></div>
+    <div id="start">
+      <div class="st-in">
+        <p class="st-k">{{kicker}}</p>
+        <h1 class="st-t">{{headline}}</h1>
+        <p class="st-d">{{dek}}</p>
+        <button id="btn-start" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5v13l11-6.5z"/></svg>Play film<span>{{runtime}}</span></button>
+        <p class="st-n">Simulated visualization built from public reporting. Not actual footage.</p>
+      </div>
+    </div>
+    <div id="ui">
+      <button id="btn-play" type="button" data-state="play" aria-label="Play">
+        <svg class="i-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5v13l11-6.5z"/></svg>
+        <svg class="i-pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2h3.5v12H3zM9.5 2H13v12H9.5z"/></svg>
+      </button>
+      <div class="seekwrap"><div id="ticks"></div><input id="seek" type="range" min="0" max="100" value="0" step="1" aria-label="Seek through the film"></div>
+      <span id="time">0:00 / 0:00</span>
+      <button id="btn-cc" type="button" aria-pressed="true" aria-label="Captions">CC</button>
+      <button id="btn-mute" type="button" aria-pressed="false" aria-label="Mute sound">
+        <svg class="i-on" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h2.6L8 3v10L4.6 10H2zM10.2 5.2a4 4 0 010 5.6l-.9-.9a2.7 2.7 0 000-3.8zM12 3.4a6.5 6.5 0 010 9.2l-.9-.9a5.2 5.2 0 000-7.4z"/></svg>
+        <svg class="i-off" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h2.6L8 3v10L4.6 10H2zM10 6.1l.9-.9L12.5 6.8l1.6-1.6.9.9L13.4 7.7 15 9.3l-.9.9-1.6-1.6-1.6 1.6-.9-.9 1.6-1.6z"/></svg>
+      </button>
+      <button id="btn-fs" type="button" aria-label="Full screen"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h4.5v1.5h-3v3H2zM9.500 2H14v4.500h-1.500v-3h-3zM2 9.500h1.500v3h3V14H2zM12.500 9.500H14V14H9.500v-1.500h3z"/></svg></button>
+    </div>
+    <div id="status" role="status">Loading</div>
+  </div>
+</div>
