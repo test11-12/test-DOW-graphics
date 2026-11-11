@@ -12,14 +12,19 @@ html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-text);overflow:hidden;-webkit-font-smoothing:antialiased}
 #stage{box-sizing:border-box;height:100%;display:grid;place-items:center;container-type:size;background:var(--bg);
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+#col{display:grid;justify-items:center;gap:20px;width:100%}
 #frame{position:relative;width:min(100cqw,calc(100cqh*16/9));aspect-ratio:16/9;max-width:100%;overflow:hidden;background:#000;container-type:size}
+#below{display:none;width:100%;gap:10px}
+#below .st-k{font-size:10px}#below .st-t{font-size:44px}#below .st-d{font-size:14px;max-width:none}#below .st-n{font-size:9px}
+body.prestart #ov{visibility:hidden}
 #view{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
 #ov{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 #ov>*{position:absolute}
 body.render{overflow:hidden}
 body.render #stage{padding:0;display:block}
 body.render #frame{max-width:none}
-body.render #start,body.render #ui,body.render #status{display:none}
+body.render #start,body.render #ui,body.render #status,body.render #below{display:none}
+body.render #col{display:block}
 
 /* ---- burned-in overlays */
 .ov-tag{left:2.3cqw;top:2.5cqw;display:flex;align-items:center;gap:.8cqw;font:400 .86cqw/1 var(--f-data);letter-spacing:.16em;text-transform:uppercase;color:var(--ink);text-shadow:0 0 .5cqw rgba(0,0,0,.7)}
@@ -91,4 +96,12 @@ body.ready #status:empty{display:none}
 #ticks i{position:absolute;top:-4px;width:1px;height:9px;background:rgba(243,241,234,.45)}
 #ui button:focus-visible,#btn-start:focus-visible,#seek:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 @media (max-width:560px){#time{display:none}#btn-fs{display:none}}
+/* narrow or portrait stage: title block moves under the picture, the poster keeps only the play button */
+@container (max-width:680px){
+  #below{display:grid}
+  #start{align-content:center;justify-items:center;background:rgba(5,7,10,.28)}
+  #start .st-in{padding:0;max-width:none}
+  #start .st-k,#start .st-t,#start .st-d,#start .st-n{display:none}
+  #btn-start{margin:0}
+}
 @media (prefers-reduced-motion:reduce){#ui{transition:none}}

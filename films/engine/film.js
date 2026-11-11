@@ -60,6 +60,7 @@ export class Film {
     this.renderFrame(this.renderMode ? 0 : (def.poster ?? 0));
     this.setStatus('');
     document.body.classList.add('ready');
+    if (!this.renderMode) document.body.classList.add('prestart');
     this.soundtrack = null;
     this.soundReady = renderSoundtrack(this.duration, def.score || (() => {}), this.narration).then(b => { this.soundtrack = b; return b; }).catch(e => { console.warn('soundtrack failed', e); return null; });
     return true;
@@ -154,16 +155,18 @@ export class Film {
     this.seekEl.max = String(Math.round(this.duration * 100)); this.seekEl.value = '0';
     const ticks = document.getElementById('ticks');
     if (ticks) ticks.innerHTML = this.shots.slice(1).map(s => `<i style="left:${(s.t0 / this.duration * 100).toFixed(3)}%"></i>`).join('');
-    this.btnStart.addEventListener('click', () => { this.startEl.hidden = true; this.seek(0); this.play(); });
+    const begin = () => { this.startEl.hidden = true; document.body.classList.remove('prestart'); };
+    this.begin = begin;
+    this.btnStart.addEventListener('click', () => { begin(); this.seek(0); this.play(); });
     this.btnPlay.addEventListener('click', () => this.toggle());
     this.canvas.addEventListener('click', () => { if (this.startEl.hidden) this.toggle(); });
-    this.seekEl.addEventListener('input', () => { this.startEl.hidden = true; this.seek(+this.seekEl.value / 100); });
+    this.seekEl.addEventListener('input', () => { begin(); this.seek(+this.seekEl.value / 100); });
     this.btnCC.addEventListener('click', () => { this.captionsOn = !this.captionsOn; this.btnCC.setAttribute('aria-pressed', this.captionsOn); if (!this.playing) this.renderFrame(this.t); });
     this.btnMute.addEventListener('click', () => { this.muted = !this.muted; this.btnMute.setAttribute('aria-pressed', this.muted); if (this.gainNode) this.gainNode.gain.value = this.muted ? 0 : 1; });
     this.btnFs.addEventListener('click', () => { const s = document.getElementById('stage'); try { (document.fullscreenElement ? document.exitFullscreen() : s.requestFullscreen()).catch(() => {}); } catch (e) { /* optional */ } });
     window.addEventListener('keydown', e => {
       if (e.target && /INPUT|BUTTON/.test(e.target.tagName) && e.key === ' ') return;
-      if (e.key === ' ' || e.key === 'k') { e.preventDefault(); if (!this.startEl.hidden) { this.startEl.hidden = true; this.seek(0); this.play(); } else this.toggle(); }
+      if (e.key === ' ' || e.key === 'k') { e.preventDefault(); if (!this.startEl.hidden) { begin(); this.seek(0); this.play(); } else this.toggle(); }
       else if (e.key === 'ArrowRight') this.seek(this.t + 2); else if (e.key === 'ArrowLeft') this.seek(this.t - 2);
       else if (e.key === 'c') this.btnCC.click(); else if (e.key === 'm') this.btnMute.click(); else if (e.key === 'f') this.btnFs.click();
     });

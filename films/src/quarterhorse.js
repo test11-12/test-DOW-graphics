@@ -63,7 +63,7 @@ function buildAirfield(pipe) {
   const rnd = (() => { let s = 20260526; return () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
   const lumpy = (detail, amt) => { const b = new THREE.IcosahedronGeometry(1, detail); const p = b.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), k = 1 + amt * Math.sin(x * 7.1 + y * 3.3) * Math.cos(z * 5.7 + x * 2.1); p.setXYZ(i, x * k, Math.max(y, -0.25) * k, z * k); } b.computeVertexNormals(); return b; };
   const N = pipe.quality.lowTerrain ? 30000 : 130000;
-  const bush = new THREE.InstancedMesh(lumpy(1, 0.22), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }), N);
+  const bush = new THREE.InstancedMesh(lumpy(0, 0.3), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }), N);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
   const patch = (x, z) => 0.5 + 0.5 * Math.sin(x * 0.011 + Math.sin(z * 0.004) * 2.1) * Math.cos(z * 0.0075 + Math.sin(x * 0.006) * 1.7);
   let n = 0, guard = 0;
@@ -219,7 +219,7 @@ const shots = [
   { id: 's12', name: 'Break', t0: 69.6, t1: 75.2, terrain: 'air', note: 'The jet rolls toward the sun and peels away.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.7, shock: 0.6 }),
     camera: (lt, t) => { const s0 = air(69.6), s = air(t); const cam = bodyCam({ p: tmp.copy(s0.p).add(v3(0, 0, -(t - 69.6) * machAt(69.6) * A_SOUND)), hdg: 0 }, [-24, 2.6, -7.5], v3()); return { pos: cam, look: s.p.clone().lerp(cam, 0.02), fov: 31 - 7 * smooth(1, 5.6, lt), shake: { rot: 0.06, freq: 0.8, seed: 12 }, focus: s.p.clone(), focusRadius: 11 }; },
-    post: (lt) => ({ ...AIR_POST, exposure: 0.185, sunDisk: 0.06, bloom: 0.08 }) },
+    post: (lt) => ({ ...AIR_POST, exposure: 0.25, sunDisk: 0.06, bloom: 0.08 }) },
   { id: 's13', name: 'End card', t0: 75.2, t1: 80, terrain: 'air', note: 'Empty sky over the basin; title, date, sources.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.3, shock: 0 }),
     camera: (lt, t) => { const s = air(75.2); return { pos: v3(s.p.x - 400, s.p.y - 300, s.p.z + 6000 - lt * 30), look: v3(s.p.x - 3000 + lt * 40, s.p.y - 900, s.p.z - 30000), fov: 34, shake: { rot: 0.03, freq: 0.3, seed: 13 } }; },

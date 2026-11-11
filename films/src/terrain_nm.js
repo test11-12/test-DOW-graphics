@@ -152,7 +152,7 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
   alb = mix(alb, vec3(0.08,0.13,0.05), m1.b*(0.5+0.4*n4));
   // lava, gypsum / alkali
   alb = mix(alb, vec3(0.05,0.045,0.042)*(0.7+0.6*n4), m0.g);
-  vec3 white = mix(vec3(0.80,0.77,0.70), vec3(0.93,0.925,0.90), m1.a);
+  vec3 white = mix(vec3(0.80,0.77,0.70), vec3(0.95,0.945,0.925), m1.a);
   alb = mix(alb, white*(0.93+0.1*n4), m0.r);
   // range roads
   float rd = min(abs(p.x+2.4), abs(p.y-5.6));
