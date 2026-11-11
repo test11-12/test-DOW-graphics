@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Ten short animated graphics, one for each of ten American defence-technology wins, drawn from reported figures.",
+  "description": "Ten short animated graphics, one for each of ten American defense-technology wins, drawn from reported figures.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "release": "node scripts/build.mjs --release && node tools/copy.mjs",

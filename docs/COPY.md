@@ -11,7 +11,7 @@ and the sources.
 
 ## 01 · Fury
 
-Anduril · Mojave Desert, California · July 2026 · Air
+Anduril · Mojave Desert, California · Announced July 2026 · Air
 
 **Headline.** No pilot. Live missile.
 
@@ -43,28 +43,28 @@ Epirus · Camp Atterbury, Indiana · August 2025 · Land
 
 **Headline.** Forty-nine drones. One pulse.
 
-**Under the name.** One pulse of high-power microwaves dropped a swarm of 49 drones at the same instant. All 61 flown that day came down.
+**Under the name.** Epirus says one pulse of high-power microwaves dropped a swarm of 49 drones at once, and that all 61 flown that day came down.
 
 **Watch for.** Count what is still flying after the pulse.
 
 | At | Act | Caption |
 | --- | --- | --- |
-| 0:00 | Four set pieces | Camp Atterbury, Indiana. Epirus flies drones at its own microwave weapon while nine allied countries watch. |
+| 0:00 | Four set pieces | Camp Atterbury, Indiana. Drones are flown at Epirus’s own microwave weapon while nine allied countries watch. |
 | 0:01 | Four set pieces | Three from the left, three from the right. Then one of a pair, picked by someone in the audience. |
-| 0:04 | Four set pieces | One dropped inside a marked safe zone. Then three at three ranges, all at once. |
+| 0:04 | Four set pieces | One dropped inside a pre-set safe zone. Then three at three ranges, all at once. |
 | 0:07 | The swarm | Then the finale: forty-nine drones of two types, in one swarm. |
-| 0:11 | The swarm | Interceptors would take them one at a time. Leonidas gets one pulse. |
+| 0:11 | The swarm | Missile interceptors would take them one at a time. Leonidas gets one pulse. |
 | 0:13 | One pulse | One pulse. All forty-nine fall at the same instant. |
 
 **The viewer acts at 0:13.** Button: “Fire the pulse”. It releases itself after 5 seconds.
 
 **Takeaway.** Sixty-one went up and sixty-one came down, by the company’s count. A missile takes one drone. A pulse takes a sky full.
 
-**For people who cannot see it.** A view from above of a test range with a microwave emitter at the bottom. Small groups of drones approach and are brought down in four short engagements. Then forty-nine drones gather in one swarm. A single pulse sweeps out from the emitter and all forty-nine fall at once. A roster of sixty-one dots fills as the drones come down.
+**For people who cannot see it.** A view from above of a test range with a microwave emitter at the bottom. Small groups of drones approach and are brought down in four short scenarios. Then forty-nine drones gather in one swarm. A single pulse sweeps out from the emitter and all forty-nine fall at once. A roster of sixty-one dots fills as the drones come down.
 
-**What it cannot show.** The counts are Epirus’s own, from an invitation-only demonstration. No independent tally has been published.
+**What it cannot show.** The 61-of-61 count is Epirus’s own, from an invitation-only demonstration. Axios, the only press present, reported the 49-drone finale. No independent tally has been published.
 
-**Sources.** [Epirus, 10 Sep 2025](https://epirusinc.com/press-releases/epirus-leonidas-high-power-microwave-defeats-49-drone-swarm-100-of-drones-flown-at-live-fire-demonstration) · [Red Hot Cyber](https://www.redhotcyber.com/?p=135398)
+**Sources.** [Epirus, 10 Sep 2025](https://epirusinc.com/press-releases/epirus-leonidas-high-power-microwave-defeats-49-drone-swarm-100-of-drones-flown-at-live-fire-demonstration) · [Axios, 28 Aug 2025](https://www.axios.com/2025/08/28/epirus-indiana-drone-swarm-demo-leonidas)
 
 ## 03 · Ward 250
 
@@ -82,14 +82,14 @@ Valar Atomics · California to Utah · February 2026 · Land
 | 0:03 | Load | It travels as eight modules in three aircraft, with no fuel on board. |
 | 0:07 | Fly | Operation Windlord: nearly 700 miles to Hill Air Force Base, Utah, in about two hours. |
 | 0:11 | Fly | The Energy Secretary rides along. A critic calls it a dog-and-pony show. |
-| 0:14 | Switch on | From Hill it goes to a state lab outside Orangeville, where it is fuelled. |
-| 0:17 | Switch on | On 18 June the Energy Department says it has gone critical. The deadline was 4 July. |
+| 0:14 | Switch on | From Hill it goes to a state lab outside Orangeville, where it is fueled. |
+| 0:17 | Switch on | On June 18 the Energy Department says it has gone critical. The deadline was July 4. |
 
 **Takeaway.** A power plant used to be something you built where it stood. This one flew in and went critical in four months.
 
 **For people who cannot see it.** A cutaway of a C-17 cargo aircraft with a reactor module moving up its ramp, beside the outline of a minivan for scale. Then a map of the route from March Air Reserve Base in California to Hill Air Force Base in Utah, crossed by three aircraft while a clock counts two hours. Then a calendar of dots counts 123 days from the flight to the reactor reaching criticality in Utah, sixteen days before a 4 July deadline.
 
-**What it cannot show.** The reactor flew without fuel. Reports of its power rating differ, so none is shown. Criticality here is a zero-power chain reaction, announced by the Energy Department on 18 June 2026.
+**What it cannot show.** The reactor flew without fuel. Reports of its power rating differ, so none is shown. Criticality here is a zero-power chain reaction, announced by the Energy Department on June 18, 2026.
 
 **Sources.** [PBS NewsHour, 21 Feb 2026](https://www.pbs.org/newshour/nation/u-s-military-airlifts-small-reactor-for-the-first-time-as-trump-pushes-to-quickly-deploy-nuclear-power) · [Nuclear Newswire, 22 Jun 2026](https://www.ans.org/news/2026-06-22/article-8136/valars-ward-250-reaches-criticality-in-utah/) · [New Atlas](https://newatlas.com/military/us-air-force-airlifts-complete-nuclear-reactor)
 
@@ -105,7 +105,7 @@ Stratolaunch · Pacific Ocean to Vandenberg · December 2024 and March 2025 · A
 
 | At | Act | Caption |
 | --- | --- | --- |
-| 0:00 | Single use | Stratolaunch’s first Talon-A ended its flight the usual way for a hypersonic test: in the ocean. |
+| 0:00 | Single use | Stratolaunch’s first Talon-A was built to fly once. Its flight ended in the ocean. |
 | 0:03 | Single use | One flight, one airframe. |
 | 0:06 | Flight one | December 2024. Roc, the widest aircraft ever flown, releases Talon-A2 over the Pacific. |
 | 0:09 | Flight one | The rocket lights. It passes Mach 5, flies itself to Vandenberg and lands on the runway. |
@@ -114,7 +114,7 @@ Stratolaunch · Pacific Ocean to Vandenberg · December 2024 and March 2025 · A
 
 **Takeaway.** A hypersonic test bed that lands and flies again turns a rare event into a schedule.
 
-**For people who cannot see it.** A side-on flight profile over the Pacific. A first test vehicle is released, climbs, and comes down in the ocean. Then the Roc carrier aircraft releases Talon-A2, which climbs under rocket power, passes a mark labelled Mach 5, glides down and lands on a runway at Vandenberg. The same vehicle is carried back and flies the profile a second time, slightly higher and faster.
+**For people who cannot see it.** A side-on flight profile over the Pacific. A first test vehicle is released, climbs, and comes down in the ocean. Then the Roc carrier aircraft releases Talon-A2, which climbs under rocket power, passes a mark labeled Mach 5, glides down and lands on a runway at Vandenberg. The same vehicle is carried back and flies the profile a second time, slightly higher and faster.
 
 **What it cannot show.** Stratolaunch has not released top speeds, altitudes or distances. Both flights passed Mach 5 and the second was faster. The profile is schematic.
 
@@ -132,18 +132,18 @@ Varda Space Industries · Koonibba, South Australia · January 2026 · Space
 
 | At | Act | Caption |
 | --- | --- | --- |
-| 0:00 | Orbit | Launched from California on 28 November 2025, Varda’s W-5 capsule spends 63 days in orbit on the company’s own spacecraft. |
-| 0:04 | Orbit | On board is a US Navy payload built to take data on the way down. |
-| 0:07 | Re-entry | 30 January 2026. The capsule separates over Antarctica and hits the atmosphere at about 30,000 km/h. |
+| 0:00 | Orbit | Launched from California on November 28, 2025, Varda’s W-5 capsule spends 63 days in orbit on the company’s own spacecraft. |
+| 0:04 | Orbit | On board is a payload for the US Navy. |
+| 0:07 | Re-entry | January 30, 2026. The capsule separates over Antarctica and hits the atmosphere at about 30,000 km/h. |
 | 0:10 | Re-entry | People in Koonibba and Ceduna watch it draw a line across the night. |
-| 0:14 | Recovery | A parachute opens. It comes down on the Koonibba Test Range, 41,000 square kilometres of outback. |
+| 0:14 | Recovery | A parachute opens. It comes down on the Koonibba Test Range, 41,000 square kilometers of outback. |
 | 0:18 | Recovery | It is the third capsule to land here in under twelve months. |
 
 **Takeaway.** A capsule that comes home on purpose is a hypersonic test range you can book.
 
 **For people who cannot see it.** A night sky over South Australia, with stars drawn as dots above a flat horizon. A small inset shows a spacecraft circling the Earth while a counter reaches 63 days, then a capsule leaving it over Antarctica. In the main picture the capsule crosses the sky as a bright streak, slowing as it goes, then descends under a parachute and lands inside a marked test range.
 
-**What it cannot show.** Speed figures are Varda’s and Southern Launch’s. The Navy payload is described only as collecting data during re-entry. The sky and the track are schematic.
+**What it cannot show.** Speed figures are Varda’s and Southern Launch’s. Varda says only that the payload was for the US Navy. The sky and the track are schematic.
 
 **Sources.** [Space Connect](https://www.spaceconnectonline.com.au/discovery/6934-community-and-astrophotographer-capture-spectacular-return-of-varda-space-capsule-over-sa) · [Southern Launch](https://www.southernlaunch.space/news-feed/southern-launch-supports-third-orbital-re-entry-in-12-months-to-koonibba-test-range) · [Varda, W-5 mission page](https://www.varda.com/mission/w-5)
 
@@ -161,7 +161,7 @@ SpektreWorks · Arabian Gulf · December 2025 · Sea
 | --- | --- | --- |
 | 0:00 | On deck | USS Santa Barbara, a littoral combat ship, in the Arabian Gulf. On its flight deck sits a drone about ten feet long. |
 | 0:03 | On deck | LUCAS is an American copy of Iran’s Shahed-136, built by SpektreWorks. Reported price: about $35,000. |
-| 0:07 | Rocket-assisted | 16 December 2025. A rocket kicks it off the deck. |
+| 0:07 | Rocket-assisted | December 16, 2025. A rocket kicks it off the deck. |
 | 0:09 | Rocket-assisted | The booster falls away and the engine takes over. |
 | 0:13 | Away | Central Command calls it the first one-way attack drone launched from a Navy ship at sea. It did not say how far it flew. |
 | 0:17 | Away | Ten weeks later it confirmed the drone’s first use in combat, in strikes on Iran. |
@@ -207,26 +207,26 @@ Saronic · Franklin, Louisiana · May 2026 · Sea
 
 **Headline.** A ship in nine months. Then another.
 
-**Under the name.** A 180-foot ship with no crew went from first design to the water in under a year. The second hull took fewer hours than the first.
+**Under the name.** Saronic says its 180-foot crewless ship went from first design to the water in under a year. The second hull took fewer hours than the first.
 
 **Watch for.** Watch the calendar under the hull.
 
 | At | Act | Caption |
 | --- | --- | --- |
 | 0:00 | Keel | Franklin, Louisiana, August 2025. Saronic lays the keel of a ship meant to sail with no one aboard. |
-| 0:03 | Keel | The yard was closing when Saronic took it over. |
-| 0:06 | Hull one | Frames, then plating. It is built to carry 150 tonnes for 5,400 nautical miles. |
+| 0:03 | Keel | Saronic says the yard was closing when it took it over. |
+| 0:06 | Hull one | Frames, then plating. It is built to carry 150 metric tons and to range 5,400 nautical miles. |
 | 0:10 | Hull one | May 2026: in the water. Saronic says first design to sea trials took under a year. |
-| 0:13 | Hull two | November: hull two is afloat, built with 8 percent fewer labour hours. |
-| 0:17 | Hull two | Two more are under construction. The yard is being sized for twenty a year. |
+| 0:13 | Hull two | November: hull two is afloat, built, Saronic says, with 8 percent fewer labor hours. |
+| 0:17 | Hull two | Hulls three and four were already under construction in May. The yard is being sized for twenty a year. |
 
 **Takeaway.** The first ship proves the design. The second proves the yard.
 
 **For people who cannot see it.** A side view of a ship on a building slip. Its keel is laid, frames rise along it, plating fills in as dots, a deckhouse and mast go on, and water rises around it nine months after the keel was laid. A calendar underneath marks the dates. A row of twenty small hulls then appears: two afloat, two under construction and sixteen outlined, the yearly output the yard is being sized for.
 
-**What it cannot show.** The timeline and labour figures are Saronic’s. The ship was announced as 150 feet at keel-laying and reported as 180 feet at launch. The hull form is schematic.
+**What it cannot show.** The timeline and labor figures are Saronic’s. The design grew from 150 feet at keel-laying to 180 feet at launch. The hull form is schematic.
 
-**Sources.** [Marine Log](https://www.marinelog.com/?p=109514) · [Naval News, 29 May 2026](https://www.navalnews.com/naval-news/2026/05/saronic-launches-first-marauder-medium-unmanned-surface-vessel/) · [WorkBoat, 5 Nov 2026](https://www.workboat.com/saronic-launches-second-marauder-at-louisiana-shipyard)
+**Sources.** [Naval News, 29 May 2026](https://www.navalnews.com/naval-news/2026/05/saronic-launches-first-marauder-medium-unmanned-surface-vessel/) · [WorkBoat, 5 Nov 2026](https://www.workboat.com/saronic-launches-second-marauder-at-louisiana-shipyard) · [Marine Log](https://www.marinelog.com/?p=109514)
 
 ## 09 · Victus Haze
 
@@ -243,14 +243,15 @@ Rocket Lab and True Anomaly · Low Earth orbit · June and July 2026 · Space
 | 0:00 | The order | The Space Force sends Rocket Lab a notice to launch, into an orbit it has not been told until now. |
 | 0:03 | The order | The record, set in 2023, was 27 hours. Electron lifts off from New Zealand at 16 hours 42 minutes. |
 | 0:07 | The hunt | The satellite is Puma. True Anomaly’s Jackal, in orbit since May, has 72 hours to find it, close in and photograph it. |
-| 0:10 | The hunt | Jackal circles its target and images it from every side. Done in 61. |
-| 0:14 | The escape | Round two, 14 July. This time Puma fires its thrusters and runs. |
-| 0:16 | The escape | A new plan in under 30 minutes, a 23-minute burn sequence, and Jackal is back on it. |
-| 0:19 | The escape | True Anomaly calls it the first time a company has chased down an evading target in orbit. |
+| 0:10 | The hunt | Jackal circles its target and images it from several sides. Done in 61. |
+| 0:14 | Round two | Round two, July 14: a validated plan in under 30 minutes, then 23 minutes of burns to close in. |
+| 0:17 | Round two | This time Puma fires its thrusters and slips out of view. |
+| 0:19 | Round two | The ground replans. Fresh burns put Jackal back on its target. |
+| 0:21 | Round two | True Anomaly calls it the first pursuit of an evading target in orbit by any company. |
 
 **Takeaway.** Launch on a day’s notice is the first half. Catching a target that does not want to be caught is the half that matters.
 
-**For people who cannot see it.** A schematic of the Earth seen from above with two satellites in low orbit. A clock runs to 16 hours 42 minutes beside a bar that stops well short of the previous record of 27 hours, and a rocket climbs from New Zealand to release a white satellite, Puma. A lime satellite, Jackal, leaves its lower orbit, closes on Puma and circles it. Puma then burns to a higher orbit and fades from view; Jackal follows a new path and closes on it again.
+**For people who cannot see it.** A schematic of the Earth seen from above with two satellites in low orbit. A clock runs to 16 hours 42 minutes beside a bar that stops well short of the previous record of 27 hours, and a rocket climbs from New Zealand to release a white satellite, Puma. A lime satellite, Jackal, leaves its lower orbit, closes on Puma and circles it. Jackal returns to its own orbit. In a second sortie it approaches again; Puma burns to a higher orbit and fades from view, and Jackal follows a new path and closes on it once more.
 
 **What it cannot show.** Orbits, distances and closest approach were not released, so the geometry is schematic. Times are from the Space Force, Rocket Lab and True Anomaly.
 
@@ -268,7 +269,7 @@ Castelion · US Navy flight test · September 2026 · Air
 
 | At | Act | Caption |
 | --- | --- | --- |
-| 0:00 | On the wing | 25 September 2026. The Navy posts footage of a Super Hornet in flight with Castelion’s Blackbeard under its wing. |
+| 0:00 | On the wing | September 25, 2026. The Navy posts footage of a Super Hornet in flight with Castelion’s Blackbeard under its wing. |
 | 0:03 | On the wing | It has not said how fast, how far, or whether one has left the rail. |
 | 0:06 | First lot | Eleven days earlier it ordered the first production lot: 444 missiles for $43.65 million. |
 | 0:10 | First lot | That works out to roughly $98,000 a round. |

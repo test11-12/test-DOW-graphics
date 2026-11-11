@@ -1,10 +1,10 @@
 /* Win 08 — Saronic Marauder
    A crewless ship goes from a keel to the water in nine months, the second hull
-   follows with fewer labour hours, and the yard is sized for twenty a year.
+   follows with fewer labor hours, and the yard is sized for twenty a year.
 
    Three bands in one plate: the hull on the slip, a calendar under it, and a row of
    twenty small hulls that is the yard's stated yearly capacity. The dates, the specs
-   and the labour figure are Saronic's; the hull form is schematic. */
+   and the labor figure are Saronic's; the hull form is schematic. */
 import * as K from '../core/kit.ts';
 import type { Pt } from '../core/kit.ts';
 import { DASH, FONT, Halftone, Pen } from '../draw/pen.ts';
@@ -67,11 +67,11 @@ const def: SceneDef = {
   ],
   captions: [
     { at: 0, text: 'Franklin, Louisiana, August 2025. Saronic lays the keel of a ship meant to sail with no one aboard.' },
-    { at: 3.4, text: 'The yard was closing when Saronic took it over.' },
-    { at: HULL, text: 'Frames, then plating. It is built to carry 150 tonnes for 5,400 nautical miles.' },
+    { at: 3.4, text: 'Saronic says the yard was closing when it took it over.' },
+    { at: HULL, text: 'Frames, then plating. It is built to carry 150 metric tons and to range 5,400 nautical miles.' },
     { at: WET + 0.1, text: 'May 2026: in the water. Saronic says first design to sea trials took under a year.' },
-    { at: REPEAT, text: 'November: hull two is afloat, built with 8 percent fewer labour hours.' },
-    { at: 17, text: 'Two more are under construction. The yard is being sized for twenty a year.' },
+    { at: REPEAT, text: 'November: hull two is afloat, built, Saronic says, with 8 percent fewer labor hours.' },
+    { at: 17, text: 'Hulls three and four were already under construction in May. The yard is being sized for twenty a year.' },
   ],
 
   setup(ctx) {
@@ -95,9 +95,9 @@ const def: SceneDef = {
     const pair = rail.pair();
     const months = pair.stat({ label: 'Months, keel to water', slots: 1, bar: true });
     const afloat = pair.stat({ label: 'Hulls afloat', slots: 1 });
-    const hours = rail.chart({ label: 'Labour hours to build', height: 58 });
-    const chips = rail.chips({ label: 'As launched', items: ['180 ft', '150 tonnes of payload', '5,400 nautical miles', '25+ knots', 'No crew'] });
-    rail.note('Dates, specifications and the labour figure are Saronic’s. The ship was announced as 150 ft and reported as 180 ft at launch. Hull form schematic.');
+    const hours = rail.chart({ label: 'Labor hours to build', height: 58 });
+    const chips = rail.chips({ label: 'As launched', items: ['180 ft', '150 metric tons of payload', '5,400 nautical miles', '25+ knots', 'No crew'] });
+    rail.note('Dates, specifications and the labor figure are Saronic’s. The design grew from 150 ft at keel-laying to 180 ft at launch. Hull form schematic.');
 
     return {
       update(f) {
@@ -256,7 +256,7 @@ const def: SceneDef = {
         pen.label(at(-0.3, 0)[0], SY - 0.043 * SIZE - 26 + bob, at(-0.32, 0)[0], KEEL_Y - 150, ['Payload deck', 'room for four 40-ft containers'], { color: col.ink, u: K.pulse(t, 9, REPEAT - 0.3, 0.4) * fitted, align: 'right' });
         pen.label(at(0.2, -0.17)[0], at(0, -0.17)[1] + bob, at(0.29, 0)[0], at(0, -0.2)[1], ['Marauder, hull one', 'in the water, May 2026'], { color: col.live, u: K.tween(t, WET + 0.6, WET + 1.5) });
         pen.label(month(WATER_AT), CAL_Y - 5, month(WATER_AT) + 26, CAL_Y - 34, ['Nine months', 'keel to water'], { color: col.live, u: K.pulse(t, WET + 0.2, REPEAT + 0.3, 0.4) });
-        pen.label(month(SECOND_AT), CAL_Y - 16, month(SECOND_AT) - 26, CAL_Y - 44, ['Hull two afloat', '3 Nov 2026 · 8% fewer hours'], { color: col.live, u: K.tween(t, 16.4, 17.1), align: 'right' });
+        pen.label(month(SECOND_AT), CAL_Y - 16, month(SECOND_AT) - 26, CAL_Y - 44, ['Hull two afloat', 'November 2026 · 8% fewer hours'], { color: col.live, u: K.tween(t, 16.4, 17.1), align: 'right' });
 
         /* ================= Instruments ================= */
         phase.set(K.tween(t, HULL, HULL + 0.7) + K.tween(t, REPEAT, REPEAT + 0.7));

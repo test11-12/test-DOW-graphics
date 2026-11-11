@@ -1,7 +1,7 @@
 /* Win 09 — Victus Haze
    A launch 16 hours and 42 minutes after the order; a satellite that finds, closes on
-   and photographs the one just launched; then a second round in which the target runs
-   and is run down.
+   and photographs the one just launched; then a second sortie in which the target runs
+   during the approach and is run down.
 
    There is almost no footage of any of this, so this is the film that draws it. The
    clock in the rail is the first act. The chase is a small model (victus-haze.sim.ts):
@@ -17,31 +17,32 @@ const FX = 44;
 const FY = 43;
 const FW = 840;
 const FH = 434;
-const { DUR, HUNT, ESCAPE, CENTRE, R_EARTH } = S;
+const { DUR, HUNT, ROUND_TWO, CENTRE, R_EARTH } = S;
 const [CX, CY] = CENTRE;
 const PITCH = 8;
 const ORDER: Pt = [FX + 24, FY + 30];
-/** Moments in the first sortie when Jackal photographs Puma from a new side. */
-const FRAMES = [11, 11.55, 12.1];
+/** Moments when Jackal photographs Puma from a new side: three in the first sortie, two at the end of the second. */
+const FRAMES = [11, 11.55, 12.1, S.BACK + 0.7, S.BACK + 1.5];
 
 const def: SceneDef<S.Era[]> = {
   id: 'victus-haze',
   duration: DUR,
   takeaway: 'Launch on a day’s notice is the first half. Catching a target that does not want to be caught is the half that matters.',
-  alt: 'A schematic of the Earth seen from above with two satellites in low orbit. A clock runs to 16 hours 42 minutes beside a bar that stops well short of the previous record of 27 hours, and a rocket climbs from New Zealand to release a white satellite, Puma. A lime satellite, Jackal, leaves its lower orbit, closes on Puma and circles it. Puma then burns to a higher orbit and fades from view; Jackal follows a new path and closes on it again.',
+  alt: 'A schematic of the Earth seen from above with two satellites in low orbit. A clock runs to 16 hours 42 minutes beside a bar that stops well short of the previous record of 27 hours, and a rocket climbs from New Zealand to release a white satellite, Puma. A lime satellite, Jackal, leaves its lower orbit, closes on Puma and circles it. Jackal returns to its own orbit. In a second sortie it approaches again; Puma burns to a higher orbit and fades from view, and Jackal follows a new path and closes on it once more.',
   acts: [
     { at: 0, label: 'The order' },
     { at: HUNT, label: 'The hunt' },
-    { at: ESCAPE, label: 'The escape' },
+    { at: ROUND_TWO, label: 'Round two' },
   ],
   captions: [
     { at: 0, text: 'The Space Force sends Rocket Lab a notice to launch, into an orbit it has not been told until now.' },
     { at: 3.2, text: 'The record, set in 2023, was 27 hours. Electron lifts off from New Zealand at 16 hours 42 minutes.' },
     { at: HUNT, text: 'The satellite is Puma. True Anomaly’s Jackal, in orbit since May, has 72 hours to find it, close in and photograph it.' },
-    { at: 10.7, text: 'Jackal circles its target and images it from every side. Done in 61.' },
-    { at: ESCAPE, text: 'Round two, 14 July. This time Puma fires its thrusters and runs.' },
-    { at: 16, text: 'A new plan in under 30 minutes, a 23-minute burn sequence, and Jackal is back on it.' },
-    { at: 19.2, text: 'True Anomaly calls it the first time a company has chased down an evading target in orbit.' },
+    { at: 10.7, text: 'Jackal circles its target and images it from several sides. Done in 61.' },
+    { at: ROUND_TWO, text: 'Round two, July 14: a validated plan in under 30 minutes, then 23 minutes of burns to close in.' },
+    { at: S.EVADE + 0.2, text: 'This time Puma fires its thrusters and slips out of view.' },
+    { at: S.EVADE + S.LAG + 0.6, text: 'The ground replans. Fresh burns put Jackal back on its target.' },
+    { at: S.BACK + 1, text: 'True Anomaly calls it the first pursuit of an evading target in orbit by any company.' },
   ],
   prepare: S.story,
 
@@ -59,12 +60,12 @@ const def: SceneDef<S.Era[]> = {
     }
 
     const rail = ctx.rail();
-    const phase = rail.phase('Mission', ['Notice to launch', 'First sortie', 'The pursuit']);
+    const phase = rail.phase('Mission', ['Notice to launch', 'First sortie', 'Second sortie']);
     const clock = rail.clock({ label: 'From the order to liftoff', unit: 'h : min' });
     const race = rail.chart({ label: 'Notice to launch', height: 56 });
     const pair = rail.pair();
     const sortie = pair.stat({ label: 'First sortie, hours', slots: 2, bar: true });
-    const replan = pair.stat({ label: 'New plan, minutes', prefix: 'under', slots: 2 });
+    const plan = pair.stat({ label: 'Round two: plan, min', prefix: 'under', slots: 2 });
     rail.note('Times are from the Space Force, Rocket Lab and True Anomaly. Orbits are schematic: no altitude or distance was released.');
 
     /* The viewer's turn: every press is another burn, and another chase. */
@@ -211,7 +212,22 @@ const def: SceneDef<S.Era[]> = {
         }
         // The plan: once Jackal has one, the path it is about to fly.
         const e = eras[eras.length - 1];
-        if (eras.length > 1) {
+        const drafted = K.seg(t, S.PLANNED, S.INGRESS);
+        if (drafted > 0 && t < S.EVADE) {
+          // Round two's approach, as planned: it aims at where Puma will be if Puma does nothing.
+          pen.stroke(col.live, 0.75, 1.1, DASH.fine);
+          g.beginPath();
+          const from = Math.max(t, S.INGRESS);
+          const to = K.lerp(S.INGRESS, S.INGRESS_END, drafted);
+          for (let x = from; x <= to + 1e-6; x += 0.05) {
+            const q = S.jackal(told.slice(0, 1), x).p;
+            if (x === from) g.moveTo(q[0], q[1]);
+            else g.lineTo(q[0], q[1]);
+          }
+          g.stroke();
+          g.setLineDash([]);
+        }
+        if (eras.length > 1 && s >= e.at) {
           const planned = K.seg(s, e.at + 0.9, e.at + S.LAG);
           const flown = K.seg(s, e.at + S.LAG, e.at + S.LAG + S.CHASE);
           if (planned > 0 && flown < 1) {
@@ -281,19 +297,21 @@ const def: SceneDef<S.Era[]> = {
         pen.text('Rocket Lab · the target', kx, ky + 18, { size: 10.5, color: col.muted, alpha: met, align: 'right' });
         if (P) {
           const p = S.point(P);
-          tie(p, ['On station in 61 hours', '72 were allowed'], col.live, K.pulse(t, S.DONE, ESCAPE + 0.2, 0.4));
+          tie(p, ['Sortie complete in 61 hours', '72 were allowed'], col.live, K.pulse(t, S.DONE, S.HOME, 0.4));
           tie(p, ['Puma burns', 'and slips out of view'], col.ink, K.pulse(t, S.EVADE + 0.1, S.EVADE + 2.2, 0.3));
-          if (!extra) tie(p, ['Back in view', 'Jackal images it again'], col.live, K.tween(t, S.EVADE + S.LAG + S.CHASE + 0.1, S.EVADE + S.LAG + S.CHASE + 0.9));
+          if (!extra) tie(p, ['Back in view', 'Jackal images it again'], col.live, K.tween(t, S.BACK + 0.1, S.BACK + 0.9));
         }
-        /* The second sortie as a short log in the corner: what Jackal's crew knew, in order. */
+        /* The second sortie as a short log in the corner: what happened, in the order it is reported. */
         const e0 = e.at;
-        const log: Array<[number, string, string]> = [
-          [e0 + 0.45, 'Custody lost', col.alert],
-          [e0 + 1, 'New plan · under 30 minutes', col.live],
-          [e0 + S.LAG, 'Burn sequence · 23 minutes', col.live],
+        const chased: Array<[number, string, string]> = [
+          [e0 + 0.45, 'Puma maneuvers · custody lost', col.alert],
+          [e0 + S.LAG - 0.6, 'New plan from the ground', col.live],
           [e0 + S.LAG + S.CHASE * 0.8, 'Back in view', col.live],
         ];
-        if (eras.length > 1) {
+        const log: Array<[number, string, string]> = extra
+          ? chased
+          : [[S.TASKED_AGAIN + 0.2, 'Tasked again · July 14', col.ink], [S.PLANNED, 'Plan validated · under 30 minutes', col.live], [S.INGRESS, 'Ingress and burns · 23 minutes', col.live], ...chased];
+        if (s >= log[0][0]) {
           const shown = 1 - K.tween(s, e0 + S.LAG + S.CHASE + 3.2, e0 + S.LAG + S.CHASE + 4.2);
           log.forEach(([at, text, color], i) => {
             const a = K.tween(s, at, at + 0.3) * (extra ? shown : 1);
@@ -303,15 +321,15 @@ const def: SceneDef<S.Era[]> = {
         }
 
         /* ---- Instruments ---- */
-        phase.set(K.tween(t, HUNT, HUNT + 0.7) + K.tween(t, ESCAPE, ESCAPE + 0.7));
+        phase.set(K.tween(t, HUNT, HUNT + 0.7) + K.tween(t, ROUND_TWO, ROUND_TWO + 0.7));
         const counted = K.seg(t, S.NOTICE + 0.9, S.LIFTOFF);
         clock.set(S.NOTICE_HOURS * counted);
         const hunted = K.seg(t, S.TASKED, S.DONE);
         sortie.set(S.SORTIE_HOURS * hunted);
         sortie.bar((S.SORTIE_HOURS * hunted) / S.SORTIE_LIMIT);
         sortie.alpha(0.35 + 0.65 * K.tween(t, S.TASKED - 0.3, S.TASKED + 0.2));
-        replan.set(S.REPLAN_MIN * K.tween(t, S.EVADE + 1, S.EVADE + 1.9, 'out'));
-        replan.alpha(0.35 + 0.65 * K.tween(t, S.EVADE + 0.9, S.EVADE + 1.3));
+        plan.set(S.PLAN_MIN * K.tween(t, S.PLANNED, S.PLANNED + 0.9, 'out'));
+        plan.alpha(0.35 + 0.65 * K.tween(t, S.PLANNED - 0.1, S.PLANNED + 0.3));
 
         /* The record and the new time, on one scale of hours. */
         race.clear();

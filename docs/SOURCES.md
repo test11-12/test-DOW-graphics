@@ -5,8 +5,17 @@ claim, what was not released, what the film works out for itself, where sources
 disagree, and what is drawn rather than reported. The links a viewer sees on the page
 are in `src/projects.ts`; this file is the longer account behind them.
 
-Everything was read on 10 November 2026. Where a figure is given below without a
-caveat, at least one of the linked sources states it.
+The sources were read on 10 and 11 November 2026. Where a figure is given below without
+a caveat, at least one of the linked sources states it. Two of the links in the
+original brief could not be read: Red Hot Cyber (Leonidas) returns "not found", and has
+been replaced; Marine Log (Marauder) refuses automated readers, so nothing here was
+checked against it. Axios (Leonidas) also refuses automated readers: its report was
+read through a repost and a summary, and should be opened before it is quoted.
+
+One film, Leonidas, was also put through an independent check of every claim against
+the company's release. It found no wrong figure and ten points of wording and
+sourcing, all applied. The other nine were audited by the author against the same
+sources, with the riskiest claims re-read at the source.
 
 ## 01 · Fury
 
@@ -22,9 +31,12 @@ Sources: [The Aviationist, 15 Jul 2026](https://theaviationist.com/2026/07/15/yf
   in February 2026 and production contracts in June 2026. The Air Force intends to
   field about 1,000 Collaborative Combat Aircraft across several increments (that is
   all such aircraft, not this type alone, and the film says "aircraft like it").
-- **Not released.** The date of the test, the range of the shot, altitude and speed,
-  where the operator was, whether another aircraft was involved, and the simulated
-  result. The film says so on the plate.
+- **Not released.** The date of the test (the film gives the month it was announced),
+  the range of the shot, altitude and speed, where the operator was, whether another
+  aircraft was involved, and the simulated result. The film says so on the plate. The
+  report does not say where on the aircraft the missile was carried for this shot;
+  the earlier captive-carry flights had it under the wings, and the film draws it
+  there.
 - **Drawn, not reported.** The geometry of the shot, the wedge standing for
   "pilot-defined parameters", and the link to the operator are diagrams. The missile is
   drawn about three fifths the length of the jet, which is roughly their real
@@ -32,21 +44,27 @@ Sources: [The Aviationist, 15 Jul 2026](https://theaviationist.com/2026/07/15/yf
 
 ## 02 · Leonidas
 
-Sources: [Epirus, 10 Sep 2025](https://epirusinc.com/press-releases/epirus-leonidas-high-power-microwave-defeats-49-drone-swarm-100-of-drones-flown-at-live-fire-demonstration); [Red Hot Cyber](https://www.redhotcyber.com/?p=135398).
+Sources: [Epirus, 10 Sep 2025](https://epirusinc.com/press-releases/epirus-leonidas-high-power-microwave-defeats-49-drone-swarm-100-of-drones-flown-at-live-fire-demonstration); [Axios, 28 Aug 2025](https://www.axios.com/2025/08/28/epirus-indiana-drone-swarm-demo-leonidas).
 
-- **The maker's own count.** Everything here is from Epirus. The demonstration was on
-  26 August 2025 at Camp Atterbury, Indiana, by invitation, before people from the
-  Defense Department, other US agencies and nine allied countries. Sixty-one drones flew
-  in five scenarios and all sixty-one were disabled: two groups of three from opposite
-  sides; one of two close drones chosen by a member of the audience, then the other;
-  one brought down inside a marked safe zone; three at different ranges at once; and a
-  swarm of forty-nine, of two drone types, defeated with one pulse. 6 + 2 + 1 + 3 + 49
-  is 61.
-- **Not independently verified.** No outside tally has been published. The film calls
-  the count the company's.
-- **Drawn, not reported.** Where each drone flew and exactly when. The caption's remark
-  that interceptors take drones one at a time is a general statement, not a figure from
-  the demonstration.
+- **The maker's own count.** The demonstration was on 26 August 2025 at Camp Atterbury,
+  Indiana, by invitation, before people from the Defense Department, other US agencies
+  and nine allied countries. By Epirus's account sixty-one drones flew in five scenarios
+  and all sixty-one were disabled: two groups of three from opposite sides; one of two
+  close drones chosen by a member of the audience, then the other; one dropped inside a
+  "software-defined, pre-identified safe zone"; three at different ranges
+  "simultaneously"; and a swarm of forty-nine, of two drone types, defeated with one
+  pulse. 6 + 2 + 1 + 3 + 49 is 61. Epirus says "one pulse" only of the swarm.
+- **Independently reported.** Axios was the only press present. It reported that
+  Leonidas faced 49 quadcopters and brought all of them down at once. It gives no
+  61-drone total and does not count pulses.
+- **Not released.** Range, altitude, drone models and timings. No outside tally has been
+  published, and the film calls the count the company's.
+- **Drawn, not reported.** Where each drone flew and exactly when; who flew the drones;
+  and the order of the first four scenarios, which follows the release's list (the
+  release does not number them, and says only that the swarm came last). The film
+  draws seven engagements, one for each defeat the release describes. The caption's
+  remark that missile interceptors take drones one at a time is a general statement,
+  not a figure from the demonstration.
 
 ## 03 · Ward 250
 
@@ -55,12 +73,12 @@ Sources: [PBS NewsHour / AP, 21 Feb 2026](https://www.pbs.org/newshour/nation/u-
 - **Reported.** On 15 February 2026 a Valar Atomics reactor, described as minivan-sized
   and carried without fuel, was flown from March Air Reserve Base, California, to Hill
   Air Force Base, Utah: nearly 700 miles in about two hours (PBS/AP, whose reporters
-  were aboard). The operation was called Windlord; the reactor travelled as eight
+  were aboard). The operation was called Windlord; the reactor traveled as eight
   modules in three C-17s (New Atlas, and Valar's chief executive). Energy Secretary
   Chris Wright was aboard. Edwin Lyman of the Union of Concerned Scientists called the
   flight "a dog-and-pony show". The reactor went on to the Utah San Rafael Energy Lab
   outside Orangeville. The Energy Department announced on 18 June 2026 that it had
-  reached zero-power criticality, the second reactor in its pilot programme to do so
+  reached zero-power criticality, the second reactor in its pilot program to do so
   and the first outside a national laboratory. The presidential deadline was 4 July.
 - **Arithmetic.** 15 February to 18 June 2026 is 123 days; to 4 July, 139; the margin
   is 16.
@@ -84,7 +102,7 @@ Sources: [Stratolaunch, 5 May 2025](https://www.stratolaunch.com/news/stratolaun
   first Talon-A (TA-1) was a single-use vehicle that ended its flight with a water
   landing. The Defense Department's Test Resource Management Center called the
   campaign the first return to reusable hypersonic flight testing since the X-15
-  programme ended in 1968. Roc's wingspan, 385 ft, is the largest of any aircraft flown.
+  program ended in 1968. Roc's wingspan, 385 ft, is the largest of any aircraft flown.
 - **Arithmetic.** 1968 to December 2024 is 56 years.
 - **Not released.** Top speeds, altitudes, distances. The film's profile has no scale,
   and its speed bars end open beyond Mach 5.
@@ -95,20 +113,27 @@ Sources: [Stratolaunch, 5 May 2025](https://www.stratolaunch.com/news/stratolaun
 Sources: [Space Connect](https://www.spaceconnectonline.com.au/discovery/6934-community-and-astrophotographer-capture-spectacular-return-of-varda-space-capsule-over-sa); [Southern Launch](https://www.southernlaunch.space/news-feed/southern-launch-supports-third-orbital-re-entry-in-12-months-to-koonibba-test-range); [Varda, W-5 mission page](https://www.varda.com/mission/w-5).
 
 - **Reported.** W-5 launched on 28 November 2025 on SpaceX's Transporter-15 from
-  California, spent 63 days in orbit attached to Varda's own next-generation
-  spacecraft, separated over Antarctica on 30 January 2026 (Australian time),
-  re-entered at about 30,000 km/h and came down by parachute on the Koonibba Test
-  Range in South Australia, a range of more than 41,000 square kilometres run by
-  Southern Launch. The re-entry was photographed by astrophotographer Will Godward and
-  by people in Koonibba and Ceduna. Southern Launch calls it the third capsule to land
-  at Koonibba in under twelve months.
-- **The maker's own figures.** Mach 25 and above at entry (Varda). A payload for the
-  US Navy that collects data during re-entry, funded through the Air Force Research
-  Laboratory's Prometheus programme, and a heat shield of C-PICA made by Varda (Varda).
+  Vandenberg, California, spent 63 days in orbit attached to Varda's own
+  next-generation spacecraft, separated over Antarctica on 30 January 2026 (Australian
+  time; 29 January in California), re-entered at about 30,000 km/h and came down by
+  parachute on the Koonibba Test Range in South Australia, a range of more than 41,000
+  square kilometers run by Southern Launch. The re-entry was photographed by
+  astrophotographer Will Godward and by people in Koonibba and Ceduna. Southern Launch
+  calls it the third capsule to land at Koonibba in under twelve months.
+- **The maker's own account.** The capsule "carried a specialized payload for the U.S.
+  Navy"; this was the first re-entry of Varda's next-generation satellite bus, the
+  company's fifth mission and fourth re-entry; the heat shield was made at Varda's
+  headquarters from C-PICA. Varda's capsules enter at 18,000 miles an hour and reach
+  "Mach 25+ on every mission": a figure for the series, not a measurement of this
+  flight.
+- **Left out.** Varda's page also quotes an Air Force Research Laboratory official on
+  its Prometheus missions. Whether W-5 flew under that program is not clear from the
+  page, so the film does not say so. What the Navy payload did is not stated either.
 - **Arithmetic.** 28 November 2025 to 30 January 2026 is 63 days.
 - **Drawn, not reported.** The sky, the track across it, the spacing of the time marks
   and the landing point. The marks are laid down at equal intervals of film time to
-  show slowing; they are not telemetry.
+  show slowing; they are not telemetry. That every landing is a hypersonic flight test
+  is the film's own framing of a capsule that re-enters at Mach 25.
 
 ## 06 · LUCAS
 
@@ -152,24 +177,26 @@ Sources: [Mobility Engineering Technology, 3 Jun 2026](https://www.mobilityengin
 
 ## 08 · Marauder
 
-Sources: [Marine Log](https://www.marinelog.com/?p=109514); [Naval News, 29 May 2026](https://www.navalnews.com/naval-news/2026/05/saronic-launches-first-marauder-medium-unmanned-surface-vessel/); [WorkBoat, 5 Nov 2026](https://www.workboat.com/saronic-launches-second-marauder-at-louisiana-shipyard).
+Sources: [Naval News, 29 May 2026](https://www.navalnews.com/naval-news/2026/05/saronic-launches-first-marauder-medium-unmanned-surface-vessel/); [WorkBoat, 5 Nov 2026](https://www.workboat.com/saronic-launches-second-marauder-at-louisiana-shipyard); [Marine Log](https://www.marinelog.com/?p=109514) (the link in the brief; it refuses automated readers, so nothing here was checked against it).
 
 - **The maker's own account.** Saronic laid the keel of the first Marauder at its yard
-  in Franklin, Louisiana, on 22 August 2025 and announced its launch on 29 May 2026,
-  saying the ship went from first design to on-water trials in under a year. As
-  launched: payload of 150 tonnes (four 40-ft or eight 20-ft containers), range up to
-  5,400 nautical miles, more than 25 knots, no crew. The second hull was launched in
-  early November 2026 with 8 percent fewer labour hours than the first; the third and
-  fourth are under construction; the yard is being expanded to build up to twenty a
-  year. Saronic says the yard was closing when it took it over.
-- **Where sources differ.** Length: 150 ft at keel-laying, 180 ft in reports of the
-  launch. The film uses 180 ft and says so in its note. Range was given as 3,500
-  nautical miles at keel-laying and 5,400 at launch; the film uses the later figure.
+  in Franklin, Louisiana, on 22 August 2025 (the date is Janes's) and announced its
+  launch on 29 May 2026, saying the ship went from first design to on-water trials in
+  under a year. As launched: payload of 150 metric tons (four 40-ft or eight 20-ft
+  containers), range up to 5,400 nautical miles, more than 25 knots, no crew. The
+  second hull was turned over in March 2026 and launched in early November 2026 with
+  8 percent fewer labor hours than the first; the third and fourth were under
+  construction in May; the yard is being expanded to build up to twenty a year.
+  Saronic says the yard was closing when it took it over.
+- **The design grew.** At keel-laying the ship was 150 ft (46 m) with 40 metric tons
+  of payload and a range of 3,500 nautical miles. Later reports say Saronic enlarged
+  the design to 180 ft (55 m), and the launch figures are the larger ones. The film
+  uses the figures given at launch and says in its note that the design grew.
 - **Arithmetic.** 22 August 2025 to 29 May 2026 is 280 days, a little over nine
   months. The second date is the announcement, so the film says "nine months" and no
   finer.
 - **Not reported.** When the second hull was started. Its line on the calendar begins
-  where it was turned over, in March 2026.
+  where it was turned over.
 - **Drawn, not reported.** The hull form, the order of building, and the arrangement of
   containers on deck.
 
@@ -177,22 +204,33 @@ Sources: [Marine Log](https://www.marinelog.com/?p=109514); [Naval News, 29 May 
 
 Sources: [True Anomaly, 29 Jul 2026](https://www.trueanomaly.space/newsroom/victus-haze-mission-update-jackal-hunts-puma) and [1 Jul 2026](https://www.trueanomaly.space/newsroom/first-victus-haze-mission-complete); [Rocket Lab, 22 Jun 2026](https://investors.rocketlabcorp.com/news-releases/news-release-details/rocket-lab-shatters-responsive-space-record-launches-us-space); [DefenseScoop, 23 Jun 2026](https://defensescoop.com/2026/06/23/space-force-victus-haze-launch-rocket-lab/).
 
-- **Reported.** Rocket Lab launched its spacecraft, Puma, on an Electron from Mahia,
-  New Zealand, on 19 June 2026, 16 hours 42 minutes after the Space Force's notice to
-  launch and into an orbit it had not been told in advance. The previous record, on
-  Victus Nox in 2023, was 27 hours. True Anomaly's Jackal had been in orbit since May.
-  True Anomaly was tasked to complete a first sortie within 72 hours and did so in 61:
-  it found Puma, closed on it, flew round it several times and photographed it from
-  several sides. On 14 July 2026 it was tasked again. This time Puma manoeuvred to get
-  away. Jackal's crew validated a new plan in under 30 minutes, the ingress and burn
-  sequence took 23 minutes, and Jackal closed on Puma again and completed its imaging.
-- **The maker's own claim.** That this was the first time a company has pursued an
-  evading target in orbit (True Anomaly).
-- **Not released.** Every altitude and distance, and how close Jackal came.
+- **Reported: the launch.** Rocket Lab launched its spacecraft, Puma, on an Electron
+  from Mahia, New Zealand, on 19 June 2026, 16 hours 42 minutes after the Space Force's
+  notice to launch and into an orbit it had not been told in advance. The previous
+  record, on Victus Nox in 2023, was 27 hours. True Anomaly's Jackal had been in orbit
+  since May.
+- **Reported: the first sortie.** True Anomaly was tasked to complete it within 72
+  hours and did so in 61: Jackal found Puma, closed on it, made several circuits of
+  it, photographed it from several aspects and returned to its own orbit.
+- **Reported: the second sortie, in this order.** Space Systems Command tasked True
+  Anomaly on 14 July. "Jackal's crew produced a validated mission plan in under 30
+  minutes from tasking." "Jackal executed ingress and a burn sequence over 23 minutes
+  to close on Puma." During the approach Puma maneuvered away; Jackal sent down what
+  it saw; the ground team replanned, revalidated and implemented a new plan "in rapid
+  succession"; Jackal made fresh burns to re-engage and image Puma. Puma maneuvered
+  again, and Jackal stayed on it and completed the mission. So the 30 minutes and the
+  23 minutes belong to the first plan and the first approach, not to the response to
+  the escape, for which no duration is given. An earlier build of the film had this
+  the wrong way round.
+- **The maker's own claim.** "The first company ever to execute a space-to-space
+  pursuit of an evading target" (True Anomaly).
+- **Not released.** Every altitude and distance, how close Jackal came, and how long
+  the replanning took.
 - **Drawn, not reported.** The whole geometry. The model keeps one true rule (the lower
-  orbit is the faster one) and the reported durations; the size of the orbits, the
-  direction of Puma's burn and the shape of the chase are illustrative. The viewer's
-  extra burns after the story are the model's, not the mission's.
+  orbit is the faster one) and the reported durations and order; the size of the
+  orbits, the direction of Puma's burn and the shape of the chase are illustrative.
+  The film shows one escape in the story; the second is left to the viewer's button,
+  and any further burns are the model's, not the mission's.
 
 ## 10 · Blackbeard
 

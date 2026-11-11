@@ -48,7 +48,7 @@ const def: SceneDef = {
   captions: [
     { at: 0, text: 'USS Santa Barbara, a littoral combat ship, in the Arabian Gulf. On its flight deck sits a drone about ten feet long.' },
     { at: 3.6, text: 'LUCAS is an American copy of Iran’s Shahed-136, built by SpektreWorks. Reported price: about $35,000.' },
-    { at: ROCKET, text: '16 December 2025. A rocket kicks it off the deck.' },
+    { at: ROCKET, text: 'December 16, 2025. A rocket kicks it off the deck.' },
     { at: 9.8, text: 'The booster falls away and the engine takes over.' },
     { at: AWAY, text: 'Central Command calls it the first one-way attack drone launched from a Navy ship at sea. It did not say how far it flew.' },
     { at: 17.2, text: 'Ten weeks later it confirmed the drone’s first use in combat, in strikes on Iran.' },

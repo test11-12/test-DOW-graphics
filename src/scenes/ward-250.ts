@@ -84,8 +84,8 @@ const def: SceneDef = {
     { at: 3.8, text: 'It travels as eight modules in three aircraft, with no fuel on board.' },
     { at: FLY, text: 'Operation Windlord: nearly 700 miles to Hill Air Force Base, Utah, in about two hours.' },
     { at: 11, text: 'The Energy Secretary rides along. A critic calls it a dog-and-pony show.' },
-    { at: ON, text: 'From Hill it goes to a state lab outside Orangeville, where it is fuelled.' },
-    { at: 17.2, text: 'On 18 June the Energy Department says it has gone critical. The deadline was 4 July.' },
+    { at: ON, text: 'From Hill it goes to a state lab outside Orangeville, where it is fueled.' },
+    { at: 17.2, text: 'On June 18 the Energy Department says it has gone critical. The deadline was July 4.' },
   ],
 
   setup(ctx) {

@@ -53,7 +53,7 @@ const def: SceneDef = {
     { at: BOOK, label: 'The order book' },
   ],
   captions: [
-    { at: 0, text: '25 September 2026. The Navy posts footage of a Super Hornet in flight with Castelion’s Blackbeard under its wing.' },
+    { at: 0, text: 'September 25, 2026. The Navy posts footage of a Super Hornet in flight with Castelion’s Blackbeard under its wing.' },
     { at: 3.4, text: 'It has not said how fast, how far, or whether one has left the rail.' },
     { at: LOT_ACT, text: 'Eleven days earlier it ordered the first production lot: 444 missiles for $43.65 million.' },
     { at: 10.3, text: 'That works out to roughly $98,000 a round.' },
@@ -76,7 +76,7 @@ const def: SceneDef = {
     const lot = pair.stat({ label: 'First production lot', slots: 3, bar: true });
     const each = pair.stat({ label: 'Per round, about', prefix: '$', unit: 'thousand', slots: 2 });
     const book = rail.stat({ label: 'Framework, over five years', slots: 5, size: 'm', bar: true });
-    const log = rail.log({ label: 'Paper trail, 2026', items: ['Framework for 12,000', 'Test loading on jets begins', 'First lot of 444 ordered', 'Flight footage released'] });
+    const log = rail.log({ label: 'Paper trail, 2026', items: ['Framework for 12,000', 'Test loading on jets confirmed', 'First lot of 444 ordered', 'Flight footage released'] });
     rail.note('Cost per round is the contract divided by the rounds, not an official price. Speed, range and how many a jet carries were not released.');
     const STAMPS = ['May', 'Aug', '14 Sep', '25 Sep'];
 

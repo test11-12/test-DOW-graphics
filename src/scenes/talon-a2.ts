@@ -3,7 +3,7 @@
    Vandenberg, and then the same airframe does it again.
 
    A flight profile: height against distance, with the Pacific under most of it. The
-   first Talon-A is drawn first, in the colour of the old way, because it ended where
+   first Talon-A is drawn first, in the color of the old way, because it ended where
    hypersonic test vehicles usually end. Stratolaunch has released no altitudes, ranges
    or top speeds, so the profile has no numbers on it: only the order of events and the
    one threshold both flights are known to have crossed. */
@@ -23,7 +23,7 @@ const TWO = 14;
 const SEA = 404;
 const SHORE = 700;
 const RUNWAY: [number, number] = [742, 858];
-/** Roc's wingspan, and the year the X-15 programme ended. */
+/** Roc's wingspan, and the year the X-15 program ended. */
 export const SPAN_FT = 385;
 export const X15_END = 1968;
 export const YEARS = 2024 - X15_END;
@@ -77,14 +77,14 @@ const def: SceneDef = {
   id: 'talon-a2',
   duration: DUR,
   takeaway: 'A hypersonic test bed that lands and flies again turns a rare event into a schedule.',
-  alt: 'A side-on flight profile over the Pacific. A first test vehicle is released, climbs, and comes down in the ocean. Then the Roc carrier aircraft releases Talon-A2, which climbs under rocket power, passes a mark labelled Mach 5, glides down and lands on a runway at Vandenberg. The same vehicle is carried back and flies the profile a second time, slightly higher and faster.',
+  alt: 'A side-on flight profile over the Pacific. A first test vehicle is released, climbs, and comes down in the ocean. Then the Roc carrier aircraft releases Talon-A2, which climbs under rocket power, passes a mark labeled Mach 5, glides down and lands on a runway at Vandenberg. The same vehicle is carried back and flies the profile a second time, slightly higher and faster.',
   acts: [
     { at: 0, label: 'Single use' },
     { at: ONE, label: 'Flight one' },
     { at: TWO, label: 'Flight two' },
   ],
   captions: [
-    { at: 0, text: 'Stratolaunch’s first Talon-A ended its flight the usual way for a hypersonic test: in the ocean.' },
+    { at: 0, text: 'Stratolaunch’s first Talon-A was built to fly once. Its flight ended in the ocean.' },
     { at: 3.5, text: 'One flight, one airframe.' },
     { at: ONE, text: 'December 2024. Roc, the widest aircraft ever flown, releases Talon-A2 over the Pacific.' },
     { at: 9.4, text: 'The rocket lights. It passes Mach 5, flies itself to Vandenberg and lands on the runway.' },

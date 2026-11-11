@@ -172,34 +172,41 @@ for (const [id, before, label] of [['fury', 9.6, 'Authorize release'], ['leonida
 }
 
 await check('Quarterhorse: the viewer can set the speed', async () => {
-  await show(page, 'quarterhorse', 21, 2);
+  const end = await show(page, 'quarterhorse', 0);
+  await seek(page, end, 2);
   const options = page.locator('#controls .control-group button');
   ok((await options.count()) === 3 && (await options.first().isVisible()), 'three speeds are offered once the story is told');
-  await seek(page, 21, 9);
+  await seek(page, end, 9);
   const supersonic = await pixels();
-  await seek(page, 21, 2);
+  await seek(page, end, 2);
   await options.nth(0).click();
   await settle(page);
   ok((await options.nth(0).getAttribute('aria-pressed')) === 'true', 'the choice is marked');
-  await seek(page, 21, 9);
+  await seek(page, end, 9);
   ok((await pixels()) !== supersonic, 'and the sound rearranges itself');
   await seek(page, 5);
   ok(await options.first().isHidden(), 'scrubbing back puts the story in charge again');
 });
 
 await check('Victus Haze: the viewer can make the target run again', async () => {
-  await show(page, 'victus-haze', 21, 6);
+  const end = await show(page, 'victus-haze', 0);
+  await seek(page, end - 3);
   const run = page.locator('#controls button');
+  ok(await run.isHidden(), 'no button while the story is still being told');
+  await seek(page, end, 6);
   ok(await run.isVisible(), 'the button is offered at the end');
-  await seek(page, 21, 9);
+  await seek(page, end, 9);
   const calm = await pixels();
-  await seek(page, 21, 6);
+  await seek(page, end, 6);
   await run.click();
-  await seek(page, 21, 9);
+  await seek(page, end, 9);
   ok((await pixels()) !== calm, 'the target burns and the hunter follows');
   ok(await run.isDisabled(), 'no second burn until the chase is over');
-  await seek(page, 21, 14);
+  await seek(page, end, 14);
   ok(await run.isEnabled(), 'then it can run again');
+  await seek(page, end - 3);
+  await seek(page, end, 9);
+  ok((await pixels()) === calm, 'scrubbing back forgets the extra burn');
 });
 
 await check('no console errors on the page', () => ok(!errors.length, errors.slice(0, 3).join(' | ')));

@@ -16,12 +16,12 @@ on it are marks, not illustrations. Aircraft and ships are outlines from
 `src/draw/craft.ts`: right in proportion, bare of detail.
 
 **Dots carry quantity.** Where there are many of something (days, drones, missiles),
-each one is a dot and its size or colour says what happened to it. Count them and the
+each one is a dot and its size or color says what happened to it. Count them and the
 number is true: 556 days, 61 drones, 123 days, 12,000 missiles.
 
 **Labels are tied to what they name.** A label sits beside its mark, joined by a
 dashed leader line, in small caps with a plain second line. Nothing is explained in a
-legend if it can be labelled in place. (Two satellites that never hold still are the
+legend if it can be labeled in place. (Two satellites that never hold still are the
 one exception: their names sit in a corner.)
 
 **Instruments on the right.** The rail beside the field holds the numbers: the phase,
@@ -30,14 +30,14 @@ chart. A film sets them every frame from the same time value that draws the fiel
 
 **Black, white and one accent.** The page and the films share a small palette.
 
-| token | colour | meaning |
+| token | color | meaning |
 | --- | --- | --- |
-| `--mark`, `--bright` | light grey, white | the thing itself: the aircraft, the ship, the route |
+| `--mark`, `--bright` | light gray, white | the thing itself: the aircraft, the ship, the route |
 | `--old` | warm tan | the old way, or the record being beaten |
 | `--alert` | red | failure only |
 | `--live` | lime | the one accent: what has just happened, or the thing to look at now |
 | `--ink` | white | text, and a person's action |
-| `--dim`, `--wire`, `--line-2` | greys | structure and everything not yet touched |
+| `--dim`, `--wire`, `--line-2` | grays | structure and everything not yet touched |
 
 Use the accent sparingly. If more than two or three things on screen are lime, it has
 stopped meaning anything.

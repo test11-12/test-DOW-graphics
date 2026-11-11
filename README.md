@@ -1,6 +1,6 @@
 # Ten wins in motion
 
-Ten short animated graphics, one for each of ten American defence-technology wins
+Ten short animated graphics, one for each of ten American defense-technology wins
 between December 2024 and November 2026. Each film runs about twenty seconds, shows
 one thing that happened, and carries its own text: a headline, a line telling the
 viewer what to watch for, captions, a takeaway and a source.
@@ -8,19 +8,19 @@ viewer what to watch for, captions, a takeaway and a source.
 | | Win | The picture | The viewer can |
 | --- | --- | --- | --- |
 | 01 | **Fury** · Anduril's YFQ-44A fires a live AMRAAM | The jet held in frame over a moving desert; the missile leaves for a digital target; 556 dots count the days from first design to first flight | Authorize the release |
-| 02 | **Leonidas** · Epirus drops 49 drones with one pulse | Every drone of the day's 61 as a mark that stays where it falls; the pulse as a wave through a field of dots | Fire the pulse |
+| 02 | **Leonidas** · Epirus says one pulse dropped 49 drones | Every drone of the day's 61 as a mark that stays where it falls; the pulse as a wave through a field of dots | Fire the pulse |
 | 03 | **Ward 250** · Valar's reactor flies in a C-17 | A cutaway of the loading, a map of the flight, and a calendar of 123 dots to criticality | |
 | 04 | **Talon-A2** · Stratolaunch's reusable hypersonic flights | A flight profile flown three times: once into the ocean, twice onto a runway by the same airframe | |
 | 05 | **Varda W-5** · a capsule comes home over South Australia | A night sky of dots with the re-entry as a long exposure | |
 | 06 | **LUCAS** · a one-way attack drone leaves a warship | A littoral combat ship on a sea of dots; a rocket-assisted takeoff; the booster falls away | |
 | 07 | **Quarterhorse** · Hermeus goes supersonic, uncrewed | Rings of sound leaving the nose, piling into a wall at Mach 1 and folding into a cone at Mach 1.21 | Set the Mach number |
 | 08 | **Marauder** · Saronic's crewless ship, keel to water in nine months | A hull built frame by frame over a calendar, then the yard's twenty-a-year row | |
-| 09 | **Victus Haze** · a launch in 16 h 42 min, then a chase in orbit | A 27-hour dial, then two satellites round the Earth: one runs, one hunts | Make the target run again |
+| 09 | **Victus Haze** · a launch in 16 h 42 min, then a chase in orbit | A 27-hour dial, then two satellites round the Earth: one hunts, and in the second sortie the other runs | Make the target run again |
 | 10 | **Blackbeard** · Castelion's hypersonic missile, ordered by the thousand | One round under a Super Hornet's wing, then a field of exactly 12,000 dots with 444 lit | |
 
 These are real events. Every number on screen comes from a listed source or is plain
 arithmetic on two such numbers; what was not released is said to be not released; and
-every drawing is labelled for what it is (schematic, not to scale). The ledger is in
+every drawing is labeled for what it is (schematic, not to scale). The ledger is in
 [docs/SOURCES.md](docs/SOURCES.md), and every word the films show is in
 [docs/COPY.md](docs/COPY.md).
 
@@ -110,7 +110,7 @@ those films were fiction and said so; these are real events and cite their sourc
 ## Fonts
 
 Two open-licensed typefaces, cut down to the characters used and renamed, as their
-licence asks of modified versions:
+license asks of modified versions:
 
 - **Field Sans** is a subset of Uncut Sans by Kasper Nordkvist: all text.
 - **Field Mono** is a subset of Geist Mono by the Geist Project Authors: numerals and key hints.

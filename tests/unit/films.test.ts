@@ -67,29 +67,43 @@ test('Quarterhorse: the rings obey the Mach number', () => {
   for (const r of Horse.rings(50, (s) => s)) assert.ok(Math.abs(r.back - r.radius) < 1e-9);
 });
 
-test('Victus Haze: the reported times, and a chase that closes every time', () => {
+test('Victus Haze: the reported times in the reported order, and a chase that closes every time', () => {
   assert.ok(Math.abs(Haze.NOTICE_HOURS - 16.7) < 1e-9, '16 hours 42 minutes');
   assert.ok(Haze.RECORD_HOURS - Haze.NOTICE_HOURS > 10, 'the old record is beaten by more than ten hours');
   assert.equal(Haze.SORTIE_LIMIT - Haze.SORTIE_HOURS, 11);
+  assert.equal(Haze.PLAN_MIN, 30);
+  assert.equal(Haze.INGRESS_MIN, 23);
   assert.ok(Haze.omega(Haze.R_JACKAL) > Haze.omega(Haze.R_PUMA) && Haze.omega(Haze.R_PUMA) > Haze.omega(Haze.R_RUN), 'the lower orbit is the faster one');
   const eras = Haze.story();
   assert.equal(eras.length, 2);
   assert.equal(Haze.puma(eras, Haze.INSERT - 0.01), null, 'Puma does not exist until it is launched');
+
+  // First sortie: from a distance, onto the target, done, and home again.
   assert.equal(Haze.jackal(eras, 3).mode, 'waiting');
   assert.ok(Haze.separation(eras, Haze.CLOSE) > 60, 'the first approach starts from a distance');
-  for (let s = Haze.ON_STATION; s < Haze.EVADE; s += 0.2) assert.ok(Haze.separation(eras, s) < 22, 'on station, Jackal stays close');
+  for (let s = Haze.ON_STATION; s < Haze.EGRESS; s += 0.2) assert.ok(Haze.separation(eras, s) < 22, 'on station, Jackal stays close');
   assert.equal(Haze.custody(eras, 5), false);
   assert.equal(Haze.custody(eras, Haze.ON_STATION + 1), true);
-  // The escape: Puma opens the range, Jackal loses it, then closes again.
+  assert.ok(Haze.DONE < Haze.EGRESS && Haze.HOME <= Haze.TASKED_AGAIN, 'the first sortie is over before the second is tasked');
+  assert.equal(Haze.jackal(eras, Haze.HOME + 0.2).mode, 'waiting');
+  assert.ok(Haze.separation(eras, Haze.HOME + 0.2) > 30, 'between the sorties Jackal is back in its own orbit');
+  assert.equal(Haze.custody(eras, Haze.HOME + 0.2), false);
+
+  // Second sortie, in the order True Anomaly reports it: tasked, a plan, an approach, and the burn comes during the approach.
+  assert.ok(Haze.TASKED_AGAIN < Haze.PLANNED && Haze.PLANNED <= Haze.INGRESS && Haze.INGRESS < Haze.EVADE && Haze.EVADE < Haze.INGRESS_END);
+  assert.equal(Haze.jackal(eras, Haze.EVADE - 0.1).mode, 'closing');
+  assert.equal(Haze.custody(eras, Haze.EVADE - 0.1), true);
   const gap = Haze.EVADE + Haze.LAG;
+  assert.ok(Haze.INGRESS_END < gap, 'the planned approach runs out before the new plan arrives');
   assert.ok(Haze.separation(eras, gap) > 40, 'the burn opens a real gap');
   assert.equal(Haze.custody(eras, gap), false);
-  assert.equal(Haze.jackal(eras, Haze.EVADE + 0.5).mode, 'blind');
-  const back = Haze.EVADE + Haze.LAG + Haze.CHASE;
-  assert.ok(back < Haze.DUR - 1, 'the pursuit ends inside the film');
-  for (let s = back; s < back + 12; s += 0.2) assert.ok(Haze.separation(eras, s) < 22, 'and Jackal is back on it');
-  assert.equal(Haze.custody(eras, back + 0.1), true);
-  // Nothing jumps: neither satellite moves far in a twentieth of a second, even across a burn.
+  assert.equal(Haze.jackal(eras, Haze.INGRESS_END + 0.3).mode, 'blind');
+  assert.equal(Haze.BACK, gap + Haze.CHASE);
+  assert.ok(Haze.BACK < Haze.DUR - 2, 'the pursuit ends inside the film, with time to photograph');
+  for (let s = Haze.BACK; s < Haze.BACK + 12; s += 0.2) assert.ok(Haze.separation(eras, s) < 22, 'and Jackal is back on it');
+  assert.equal(Haze.custody(eras, Haze.BACK + 0.1), true);
+
+  // Nothing jumps: neither satellite moves far in a twentieth of a second, across every hand-over between legs.
   for (let s = 0; s < Haze.DUR + 8; s += 0.05) {
     const a = Haze.jackal(eras, s).p;
     const b = Haze.jackal(eras, s + 0.05).p;

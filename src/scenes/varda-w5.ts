@@ -19,7 +19,7 @@ const DUR = 21;
 const ENTRY = 7;
 const RECOVERY = 14;
 export const DAYS = 63;
-/** Thousands of kilometres an hour at entry, as reported; and Varda's Mach figure. */
+/** Kilometers an hour at entry, as reported; and Varda's Mach figure for its capsules. */
 export const KMH = 30000;
 export const MACH = 25;
 
@@ -59,11 +59,11 @@ const def: SceneDef = {
     { at: RECOVERY, label: 'Recovery' },
   ],
   captions: [
-    { at: 0, text: 'Launched from California on 28 November 2025, Varda’s W-5 capsule spends 63 days in orbit on the company’s own spacecraft.' },
-    { at: 4.2, text: 'On board is a US Navy payload built to take data on the way down.' },
-    { at: ENTRY, text: '30 January 2026. The capsule separates over Antarctica and hits the atmosphere at about 30,000 km/h.' },
+    { at: 0, text: 'Launched from California on November 28, 2025, Varda’s W-5 capsule spends 63 days in orbit on the company’s own spacecraft.' },
+    { at: 4.2, text: 'On board is a payload for the US Navy.' },
+    { at: ENTRY, text: 'January 30, 2026. The capsule separates over Antarctica and hits the atmosphere at about 30,000 km/h.' },
     { at: 10.6, text: 'People in Koonibba and Ceduna watch it draw a line across the night.' },
-    { at: RECOVERY, text: 'A parachute opens. It comes down on the Koonibba Test Range, 41,000 square kilometres of outback.' },
+    { at: RECOVERY, text: 'A parachute opens. It comes down on the Koonibba Test Range, 41,000 square kilometers of outback.' },
     { at: DOWN + 0.2, text: 'It is the third capsule to land here in under twelve months.' },
   ],
 
@@ -86,7 +86,7 @@ const def: SceneDef = {
     const days = pair.stat({ label: 'Days in orbit', slots: 2, bar: true });
     const mach = pair.stat({ label: 'Mach at entry', slots: 2, unit: '+' });
     const speed = rail.stat({ label: 'Speed at entry, km/h, about', slots: 5, size: 'm' });
-    const chips = rail.chips({ label: 'Flying on W-5', items: ['US Navy payload', 'AFRL Prometheus', 'Varda’s own spacecraft', 'C-PICA heat shield'] });
+    const chips = rail.chips({ label: 'Flying on W-5', items: ['US Navy payload', 'Varda’s own spacecraft', 'In-house C-PICA heat shield', 'Varda’s fourth re-entry'] });
     rail.note('Speeds are Varda’s and Southern Launch’s figures. The sky, the track and the landing point are schematic.');
 
     const along = (s: number): number => K.tween(s, T_IN, T_OUT, 'out');

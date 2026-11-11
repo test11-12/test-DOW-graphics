@@ -1,7 +1,8 @@
 /* The Leonidas demonstration as a schedule: 61 drones in five scenarios, as Epirus
-   described them, and the seven shots that brought them down.
+   described them, and the seven engagements that brought them down.
 
-   The counts and the order are from the company's account. Where each drone flies and
+   The counts are from the company's account, and so is the order: its release lists the
+   four set pieces without numbering them and puts the swarm last. Where each drone flies and
    exactly when is invented to make the sequence legible. No DOM in here, so the counts
    can be tested without a browser. */
 import * as K from '../core/kit.ts';

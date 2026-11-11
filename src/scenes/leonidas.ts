@@ -20,7 +20,7 @@ const NOTES: Array<[number, string]> = [
   [1.0, 'Scenario 1 of 5 · two groups, opposite sides'],
   [3.35, 'Scenario 2 of 5 · one of a pair, chosen by the audience'],
   [4.95, 'Scenario 3 of 5 · brought down inside a safe zone'],
-  [6.0, 'Scenario 4 of 5 · three ranges, one shot'],
+  [6.0, 'Scenario 4 of 5 · three ranges, at once'],
   [SWARM_ACT, 'Scenario 5 of 5 · a swarm of forty-nine'],
 ];
 
@@ -28,18 +28,18 @@ const def: SceneDef<S.Sim> = {
   id: 'leonidas',
   duration: DUR,
   takeaway: 'Sixty-one went up and sixty-one came down, by the company’s count. A missile takes one drone. A pulse takes a sky full.',
-  alt: 'A view from above of a test range with a microwave emitter at the bottom. Small groups of drones approach and are brought down in four short engagements. Then forty-nine drones gather in one swarm. A single pulse sweeps out from the emitter and all forty-nine fall at once. A roster of sixty-one dots fills as the drones come down.',
+  alt: 'A view from above of a test range with a microwave emitter at the bottom. Small groups of drones approach and are brought down in four short scenarios. Then forty-nine drones gather in one swarm. A single pulse sweeps out from the emitter and all forty-nine fall at once. A roster of sixty-one dots fills as the drones come down.',
   acts: [
     { at: 0, label: 'Four set pieces' },
     { at: SWARM_ACT, label: 'The swarm' },
     { at: GATE, label: 'One pulse' },
   ],
   captions: [
-    { at: 0, text: 'Camp Atterbury, Indiana. Epirus flies drones at its own microwave weapon while nine allied countries watch.' },
+    { at: 0, text: 'Camp Atterbury, Indiana. Drones are flown at Epirus’s own microwave weapon while nine allied countries watch.' },
     { at: 1.9, text: 'Three from the left, three from the right. Then one of a pair, picked by someone in the audience.' },
-    { at: 4.95, text: 'One dropped inside a marked safe zone. Then three at three ranges, all at once.' },
+    { at: 4.95, text: 'One dropped inside a pre-set safe zone. Then three at three ranges, all at once.' },
     { at: SWARM_ACT, text: 'Then the finale: forty-nine drones of two types, in one swarm.' },
-    { at: 11.6, text: 'Interceptors would take them one at a time. Leonidas gets one pulse.' },
+    { at: 11.6, text: 'Missile interceptors would take them one at a time. Leonidas gets one pulse.' },
     { at: GATE + 0.05, text: 'One pulse. All forty-nine fall at the same instant.' },
   ],
   gates: [{ id: 'pulse', at: GATE, label: 'Fire the pulse', auto: 5 }],
