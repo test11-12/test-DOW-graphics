@@ -10,3 +10,4 @@ films/dist/lookdev*
 films/out/
 __pycache__/
 *.pyc
+films/dist/*.offline.html

@@ -93,7 +93,7 @@ vec3 skyRad(vec3 d){
        + textureLod(tSky, vec2(uv.x,(v+2.0)/3.0), 0.0).rgb;
 }
 // mean Fresnel reflectance of a rough sea (Bruneton & Neyret)
-float meanFresnel(float cosV, float sigma){ return pow(1.0-cosV, 5.0*exp(-2.69*sigma))/(1.0+22.7*pow(sigma, 1.5)); }
+float meanFresnel(float cosV, float sigma){ return pow(max(1.0-cosV, 0.0), 5.0*exp(-2.69*sigma))/(1.0+22.7*pow(sigma, 1.5)); }
 // shadow of the hero objects (the sun's shadow map) on the water
 float heroShadow(vec3 P){
   if (uShadowK.x < 0.5) return 1.0;
@@ -194,7 +194,7 @@ void main(){
   }
   vec3 N = normalize(vec3(-slope.x, 1.0-uChop*pinch*0.6, -slope.y));
   float sigma = sqrt(max(var, 1.0e-5));
-  float NV = max(dot(N, V), 0.02);
+  float NV = clamp(dot(N, V), 0.02, 1.0);
   float F = 0.02+0.98*meanFresnel(NV, sigma);
 
   // light reaching the water: cloud shadows and the shadows of nearby hulls
@@ -249,7 +249,7 @@ void main(){
   float a2 = clamp(2.0*var, 0.0007, 0.25);
   float dd = NH*NH*(a2-1.0)+1.0;
   float Dg = a2/(3.14159265*dd*dd);
-  float Fh = 0.02+0.98*pow(1.0-max(dot(V, Hh), 0.0), 5.0);
+  float Fh = 0.02+0.98*pow(clamp(1.0-dot(V, Hh), 0.0, 1.0), 5.0);
   float vis = clamp(dot(N, uSunDir)*6.0, 0.0, 1.0)*smoothstep(-0.01, 0.03, uSunDir.y);
   float glint = 1.0;
   if (uSparkle > 0.0) glint = mix(1.0, 0.35+glints(vW, across, uTime), uSparkle);
