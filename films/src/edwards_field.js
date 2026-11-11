@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { LAYER } from '../engine/pipeline.js';
 import { canvasTex, rng } from '../engine/geo.js';
+import { loadGLB, hasAsset } from '../engine/assets.js';
 import { FIELD_U, FIELD_V } from './terrain_mojave.js';
 
 export const fieldXZ = (u, v) => [u * FIELD_U[0] + v * FIELD_V[0], u * FIELD_U[1] + v * FIELD_V[1]];
@@ -17,63 +18,66 @@ function rodG(a, b, r, seg = 8) {
 const wheel = (r, w) => { const g = new THREE.CylinderGeometry(r, r, w, 18); g.rotateX(Math.PI / 2); return g; };
 
 // ------------------------------------------------------------------ ground equipment, in the parked aircraft's frame
-// (+x towards its nose, +z to its right, y up from the pavement). ac: the FURY description from fury_model.js
-export function buildRamp(ac) {
+// (+x towards its nose, +z to its right, y up from the pavement). The props are modelled and baked from photoscans in
+// Blender (blender/fury_ramp.py -> assets/fury/ramp.glb, one node per prop, origin on the ground); this lays them out.
+// ac: the FURY description from fury_model.js
+export async function buildRamp(pipe, ac) {
   const g = new THREE.Group(); g.name = 'ramp';
-  const rubber = std(0x0d0d0e, 0.9), yellow = std(0xd8a514, 0.6), orange = std(0xe2571a, 0.55), white = std(0xe8e8e4, 0.5), red = std(0xb5201c, 0.45, 0.1), steel = std(0x9a9da0, 0.4, 0.8), olive = std(0x5a5f4a, 0.7), dark = std(0x1c1d1f, 0.6, 0.3), alu = std(0xd4d6d8, 0.35, 0.85);
   const gy = -ac.groundY;                      // height of the aircraft origin above the pavement
-  // wheel chocks, roped in pairs
-  const chockGeo = (() => { const s = new THREE.Shape(); s.moveTo(-0.11, 0); s.lineTo(0.11, 0); s.lineTo(0.03, 0.14); s.lineTo(-0.03, 0.14); s.closePath(); const e = new THREE.ExtrudeGeometry(s, { depth: 0.3, bevelEnabled: false }); e.translate(0, 0, -0.15); return e; })();
-  const chocks = (x, z, r) => { for (const sgn of [1, -1]) put(g, chockGeo, sgn > 0 ? yellow : rubber, [x + sgn * (r * 0.72 + 0.09), 0, z]); put(g, rodG([x - r - 0.1, 0.05, z + 0.17], [x + r + 0.1, 0.05, z + 0.17], 0.008, 5), std(0xc9c2a8, 0.9), null, null, false); };
-  chocks(ac.mainGear.x, ac.mainGear.z, ac.mainR); chocks(ac.mainGear.x, -ac.mainGear.z, ac.mainR); chocks(ac.noseGear.x, 0, 0.18);
-  // traffic cones at the extremities
-  const coneBody = new THREE.LatheGeometry([[0.165, 0.03], [0.15, 0.035], [0.035, 0.70], [0.0, 0.71]].map(p => new THREE.Vector2(p[0], p[1])), 18);
-  const coneBand = new THREE.LatheGeometry([[0.108, 0.30], [0.082, 0.46]].map(p => new THREE.Vector2(p[0] + 0.002, p[1])), 18);
-  const coneBase = new THREE.BoxGeometry(0.36, 0.03, 0.36);
-  for (const [x, z] of [[-1.4, 4.15], [-1.4, -4.15], [6.5, 1.1], [-5.9, -1.2], [-5.7, 2.3]]) { put(g, coneBody, orange, [x, 0, z]); put(g, coneBand, white, [x, 0, z], null, false); put(g, coneBase, rubber, [x, 0.015, z]); }
-  // tow bar lying ahead of the nose
-  { const a = [6.3, 0.19, 2.2], b = [9.5, 0.19, 3.4], t = new THREE.Group();
-    put(t, rodG(a, b, 0.045, 10), yellow); put(t, rodG([7.7, 0.19, 2.35], [8.0, 0.19, 3.1], 0.02, 6), steel);
-    for (const p of [[7.72, 0.14, 2.28], [7.98, 0.14, 3.17]]) put(t, wheel(0.14, 0.07), rubber, p, [0, 1.2, 0]);
-    put(t, new THREE.TorusGeometry(0.07, 0.018, 8, 16), steel, [9.58, 0.19, 3.43], [Math.PI / 2, 0, 0]);
-    put(t, new THREE.BoxGeometry(0.22, 0.07, 0.2), steel, [6.25, 0.19, 2.18], [0, -0.36, 0]); g.add(t); }
-  // wheeled fire extinguisher
-  { const f = new THREE.Group(); f.position.set(7.4, 0, -4.6); f.rotation.y = 0.5;
-    put(f, new THREE.CylinderGeometry(0.16, 0.16, 0.95, 16), red, [0, 0.72, 0], [0, 0, 0.2]);
-    put(f, new THREE.SphereGeometry(0.16, 14, 8, 0, 6.2832, 0, 1.5708), red, [-0.095, 1.185, 0], [0, 0, 0.2]);
-    put(f, new THREE.CylinderGeometry(0.03, 0.045, 0.14, 8), steel, [-0.12, 1.3, 0], [0, 0, 0.2]);
-    for (const z of [0.24, -0.24]) put(f, wheel(0.2, 0.06), rubber, [0.12, 0.2, z]);
-    put(f, rodG([0.12, 0.2, -0.24], [0.12, 0.2, 0.24], 0.015, 6), steel); put(f, rodG([0.2, 0.2, 0.2], [-0.33, 1.38, 0.2], 0.014, 6), dark); put(f, rodG([0.2, 0.2, -0.2], [-0.33, 1.38, -0.2], 0.014, 6), dark);
-    put(f, rodG([-0.33, 1.38, -0.2], [-0.33, 1.38, 0.2], 0.014, 6), dark);
-    put(f, new THREE.TorusGeometry(0.17, 0.022, 8, 20), dark, [-0.02, 0.62, 0.19], [0, 0, 0]); put(f, new THREE.TorusGeometry(0.15, 0.022, 8, 20), dark, [-0.02, 0.64, 0.215]);
-    put(f, new THREE.BoxGeometry(0.05, 0.3, 0.26), dark, [0.3, 0.15, 0], [0, 0, 0.5]); g.add(f); }
-  // ground power cart with its cable run to the belly
-  { const c = new THREE.Group(); c.position.set(2.2, 0, 8.6); c.rotation.y = -0.35;
-    const tex = canvasTex(512, 256, (x, w, h) => { x.fillStyle = '#6d7158'; x.fillRect(0, 0, w, h); const r = rng(5);
-      for (let i = 0; i < 60; i++) { x.fillStyle = `rgba(${r() < 0.5 ? '0,0,0' : '255,255,255'},${0.02 + r() * 0.05})`; x.fillRect(r() * w, r() * h, 20 + r() * 80, 4 + r() * 30); }
-      x.fillStyle = '#22241e'; for (let i = 0; i < 14; i++) x.fillRect(40 + i * 14, 60, 7, 120); x.strokeStyle = '#30332a'; x.lineWidth = 3; x.strokeRect(270, 40, 200, 170); x.strokeRect(20, 30, 230, 190);
-      x.fillStyle = '#d8a514'; x.fillRect(0, h - 26, w, 10); x.fillStyle = '#16171a'; for (let i = 0; i < 26; i++) { x.beginPath(); x.moveTo(i * 20, h - 26); x.lineTo(i * 20 + 10, h - 26); x.lineTo(i * 20, h - 16); x.lineTo(i * 20 - 10, h - 16); x.fill(); } }, { aniso: 4 });
-    const body = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7, metalness: 0.1 });
-    put(c, new THREE.BoxGeometry(2.3, 1.05, 1.25), body, [0, 0.83, 0]); put(c, new THREE.BoxGeometry(2.36, 0.07, 1.31), olive, [0, 1.39, 0]);
-    put(c, new THREE.BoxGeometry(2.5, 0.09, 1.1), dark, [0, 0.3, 0]);
-    for (const [x, z] of [[0.8, 0.6], [0.8, -0.6], [-0.8, 0.6], [-0.8, -0.6]]) put(c, wheel(0.24, 0.16), rubber, [x, 0.24, z]);
-    put(c, rodG([1.2, 0.34, 0], [2.3, 0.2, 0], 0.03, 8), yellow); put(c, new THREE.CylinderGeometry(0.035, 0.035, 0.5, 8), dark, [-0.7, 1.67, 0.3]);
-    put(c, new THREE.TorusGeometry(0.3, 0.035, 8, 22), rubber, [1.18, 0.75, 0], [0, Math.PI / 2, 0]); g.add(c);
-    // cable: from the cart across the ground to the belly behind the nose gear
-    const pts = [[1.3, 0.55, 8.1], [1.2, 0.045, 7.5], [0.8, 0.04, 5.5], [1.0, 0.04, 3.2], [0.5, 0.04, 1.5], [0.35, 0.05, 0.6], [0.3, gy - 0.72, 0.42]].map(p => new THREE.Vector3(p[0], p[1], p[2]));
-    put(g, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5), 60, 0.022, 6), rubber); }
-  // aluminium work stand by the forward fuselage
-  { const s = new THREE.Group(); s.position.set(4.3, 0, 3.4); s.rotation.y = 1.5708;
-    const leg = (x, z, h) => put(s, rodG([x, 0, z], [x, h, z], 0.018, 6), alu);
-    for (const z of [0.3, -0.3]) { leg(0.0, z, 0.9); leg(0.55, z, 0.9); leg(-0.35, z, 0.6); leg(-0.7, z, 0.3); put(s, rodG([-0.85, 0.0, z], [0.0, 0.9, z], 0.018, 6), alu); put(s, rodG([0.0, 0.9, z], [0.0, 1.75, z], 0.016, 6), alu); put(s, rodG([0.55, 0.9, z], [0.55, 1.75, z], 0.016, 6), alu); put(s, rodG([0.0, 1.75, z], [0.55, 1.75, z], 0.016, 6), alu); put(s, rodG([0.0, 1.35, z], [0.55, 1.35, z], 0.012, 6), alu); put(s, rodG([-0.7, 0.3, z], [0.0, 1.75, z], 0.014, 6), alu); }
-    put(s, new THREE.BoxGeometry(0.62, 0.03, 0.66), alu, [0.275, 0.9, 0]); put(s, new THREE.BoxGeometry(0.3, 0.025, 0.62), alu, [-0.2, 0.6, 0]); put(s, new THREE.BoxGeometry(0.3, 0.025, 0.62), alu, [-0.52, 0.3, 0]);
-    put(s, rodG([0.55, 1.75, 0.3], [0.55, 1.75, -0.3], 0.016, 6), alu); for (const [x, z] of [[0.58, 0.32], [0.58, -0.32], [-0.83, 0.32], [-0.83, -0.32]]) put(s, wheel(0.05, 0.03), rubber, [x, 0.05, z]); g.add(s); }
-  // drip tray under the engine bay, remove-before-flight streamers
-  put(g, new THREE.BoxGeometry(0.7, 0.03, 0.5), std(0x2a2b2d, 0.35, 0.9), [-2.6, 0.02, 0.1]);
-  const flag = (x, y, z, len, ry = 0) => { const m = put(g, new THREE.PlaneGeometry(0.045, len), new THREE.MeshStandardMaterial({ color: 0xc81e1e, roughness: 0.6, side: THREE.DoubleSide }), [x, y - len / 2, z], [0, ry, 0.06]); return m; };
+  if (hasAsset('fury/ramp.glb')) {
+    const { root } = await loadGLB('fury/ramp.glb', pipe, { envIntensity: 1.0 });
+    const proto = {};
+    root.traverse(o => { if (o.isMesh) proto[o.name] = o; });
+    const add = (name, x, z, yaw = 0, cast = true) => {
+      const p = proto[name]; if (!p) return null;
+      const m = p.clone(); m.position.set(x, 0, z); m.rotation.set(0, yaw, 0); m.castShadow = cast; m.receiveShadow = true; g.add(m); return m;
+    };
+    // chocks either side of each wheel, the rope outboard
+    add('chocks_main', ac.mainGear.x, ac.mainGear.z, 0); add('chocks_main', ac.mainGear.x, -ac.mainGear.z, Math.PI);
+    add('chocks_nose', ac.noseGear.x, 0, 0.0);
+    // cones off the wingtips, the nose and the tail
+    const wt = ac.wingTip;
+    for (const [x, z, a] of [[wt.x - 0.4, wt.z + 0.75, 0.3], [wt.x - 0.4, -wt.z - 0.75, 1.1], [ac.noseX + 1.3, 0.9, 0.2], [ac.tailX - 1.1, -1.3, 0.7], [ac.tailX - 0.9, 2.1, 2.0]]) add('cone', x, z, a);
+    add('towbar', ac.noseX + 0.9, 1.5, -0.38);                              // lying ahead of the nose, ready to hook up
+    add('extinguisher', ac.noseX + 2.4, -4.4, 2.3);                        // wheeled flight-line extinguisher
+    add('gpu', 2.0, 7.9, Math.PI - 0.32);                                  // power cart off the right wing
+    add('stand', 3.4, 2.1, Math.PI / 2);                                 // platform stand by the forward fuselage
+    add('driptray', -2.6, 0.08, 0.1, false);
+    // the neighbouring stand on the left, dressed but empty, and a cart further down the line (reads as a working ramp)
+    add('gpu', -1.5, -38.5, 0.25); add('cone', 2.0, -33.2, 0.4); add('cone', -6.0, -36.5, 1.2); add('stand', 4.2, -37.8, 0.7);
+    add('chocks_main', 0.6, -36.0, 1.57); add('extinguisher', 6.5, -40.5, 2.9);
+    add('gpu', -9.0, 31.0, 1.9); add('cone', -3.5, 34.0, 0.3);
+  }
+  // power cable from the cart to a receptacle aft of the nose gear
+  const cable = new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.62, metalness: 0.0 });
+  const pts = [[3.1, 0.8, 8.1], [3.0, 0.05, 7.5], [1.6, 0.03, 5.4], [1.4, 0.03, 3.4], [0.75, 0.03, 1.7], [0.5, 0.04, 0.7], [0.4, gy - 0.72, 0.42]].map(p => new THREE.Vector3(p[0], p[1], p[2]));
+  put(g, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5), 80, 0.021, 8), cable);
+  // remove-before-flight streamers (plain red: their lettering is not legible at this distance and is not reproduced)
+  const flagM = new THREE.MeshStandardMaterial({ color: 0x9c1414, roughness: 0.75, side: THREE.DoubleSide });
+  const flag = (x, y, z, len, ry = 0) => put(g, new THREE.PlaneGeometry(0.05, len, 1, 4), flagM, [x, y - len / 2, z], [0, ry, 0.05]);
   flag(ac.station.x + 0.55, gy + ac.station.y - 0.09, ac.station.z, 0.36, 0.4); flag(ac.noseGear.x + 0.05, 0.62, 0.05, 0.3, 1.2); flag(ac.mainGear.x + 0.2, 0.6, ac.mainGear.z - 0.2, 0.3, 0.3); flag(ac.mainGear.x + 0.2, 0.6, -ac.mainGear.z + 0.2, 0.3, 2.2);
   g.traverse(o => { if (o.isMesh) o.layers.set(LAYER.STATIC); });
   return g;
+}
+
+// The parked aircraft's tyres as they stand on the ramp (blender/fury_ramp.py -> assets/fury/tyres.glb): ribbed tread
+// with dust in the grooves, a scuffed crown, a flattened contact patch. They replace the plain lathe tyres of the
+// code-built airframe, which are found by what they are (a lathe about the axle in near-black rubber); a model
+// that brings its own tyres is left alone. Call before the aircraft is registered as dynamic. Returns the count.
+export async function dressTyres(pipe, acRoot) {
+  if (!hasAsset('fury/tyres.glb')) return 0;
+  const hits = [];
+  acRoot.traverse(o => { if (o.isMesh && o.geometry.type === 'LatheGeometry' && o.material.color && o.material.color.getHex() === 0x0b0b0c) hits.push(o); });
+  if (!hits.length) return 0;
+  const { root } = await loadGLB('fury/tyres.glb', pipe, { envIntensity: 1.0 });
+  const proto = {}; root.traverse(o => { if (o.isMesh) proto[o.name] = o; });
+  let n = 0;
+  for (const old of hits) {
+    old.geometry.computeBoundingBox(); const r = old.geometry.boundingBox.max.y;   // tread radius: the wheel centre stands this far above the pavement
+    const p = r > 0.2 ? proto.tyre_main : proto.tyre_nose; if (!p) continue;
+    const m = p.clone(); m.position.set(old.position.x, old.position.y - r, old.position.z); old.parent.add(m); old.visible = false; n++;
+  }
+  return n;
 }
 
 // ------------------------------------------------------------------ flight-line buildings, masts, lights, signs (field frame)
