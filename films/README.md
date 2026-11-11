@@ -98,6 +98,15 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   material node helpers (tri-planar scanned materials, edge-wear and occlusion masks), PBR baking
   (base colour, ORM, normal, emissive; occlusion denoised), glTF export, a quick Cycles preview, and
   downloads of CC0 photoscans from Poly Haven and ambientCG.
+- `blender/corsair.py` (with `corsair_geo.py`, `corsair_tex.py`): the Saronic Corsair of film 3, lofted from
+  station functions (hull, cowl, rub rail) plus fittings, mast and sensors, baked to three atlases (hull;
+  deck and engine box; mast and gear) and finished in numpy from baked position / normal / occlusion maps
+  (spray band, dried salt, runs under fittings, wet patches). `node tools/blender.mjs corsair geo <prefix>`
+  checks geometry alone in under three minutes; `corsair full [<prefix>] [deck=4096 hull=2048 gear=2048]`
+  bakes and exports `assets/corsair/corsair.glb` and the tiling non-skid detail `assets/corsair/tex/grip.webp`.
+  `blender/ship.py` builds the distant tanker, `assets/corsair/ship.glb`. `src/corsair_boat.js` loads both.
+- `blender/boatkit.py`: mesh builders with metric UVs (grids, sweeps, tubes, lathes, lids), atlas packing at
+  one texel density, float bakes of position / normal / material masks, numpy value noise, WebP output.
 - Conventions: metres; vehicles modelled nose along +X, up +Z, starboard along -Y (the engine's +x forward,
   +y up, +z right after export); per-material maps: base colour (sRGB), ORM (R occlusion, G roughness,
   B metal), OpenGL normal.

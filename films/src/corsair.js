@@ -11,7 +11,8 @@ import { CloudLayer } from '../engine/clouds.js';
 import { Ocean } from '../engine/ocean.js';
 import { attitude } from '../engine/geo.js';
 import { Trail, makeGlow } from '../engine/fx.js';
-import { buildCorsair, buildPort, buildShip, PORT } from './corsair_model.js';
+import { buildPort, PORT } from './corsair_model.js';
+import { buildCorsair, buildShip } from './corsair_boat.js';
 
 const NARRATION = __NARRATION__;
 const SUN = { az: 80, el: +new URLSearchParams(typeof location !== 'undefined' ? location.search : '').get('sunel') || 11 };   // low morning sun, east
@@ -57,7 +58,7 @@ async function build(film) {
   const P = film.params, sea = { wind: 50, amp: +P.get('seaamp') || 2.4, long: +P.get('sealong') || 0.45, chop: +P.get('seachop') || 0.85, spread: 40 };
   const ocean = new Ocean(pipe, { clouds, sea });
   ocean.setShelter(15, 70, 150, 340, 0.3);      // the basin behind the breakwaters
-  const boats = [0, 1, 2].map(() => { const b = buildCorsair(pipe); pipe.scene.add(b); pipe.registerDynamic(b); return b; });
+  const boats = []; for (let i = 0; i < 3; i++) { const b = await buildCorsair(pipe); pipe.scene.add(b); pipe.registerDynamic(b); boats.push(b); }
   // spray: two sheets thrown off the chines forward of midships and a rooster tail off the transom, per boat
   const spray = boats.map(() => ({
     side: [-1, 1].map(() => new Trail(pipe, { rate: 190, life: 0.45, size0: 0.08, size1: 0.44, grow: 0.8, color: [0.93, 0.95, 0.96], alpha: 0.15, jitter: 0.2, drift: [0, -2.4, 0], drag: 3.0, spreadV: 1.6, noise: 1.0, softness: 0.3, fadeIn: 0.05 })),
@@ -79,7 +80,7 @@ async function build(film) {
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: new THREE.Color(tone * 1.1, tone, tone * 0.88), roughness: 1, metalness: 0, side: THREE.DoubleSide }));
     m.frustumCulled = false; m.castShadow = false; m.receiveShadow = false; m.layers.set(LAYER.STATIC); hills.add(m);
   }
-  const ship = buildShip(250); pipe.scene.add(ship); ship.traverse(o => { if (o.isMesh) o.layers.set(LAYER.STATIC); });
+  const ship = await buildShip(250); pipe.scene.add(ship); ship.traverse(o => { if (o.isMesh) o.layers.set(LAYER.STATIC); });
   // the three detonations: flash, fire that turns to smoke, a column of white water, a long smoke plume
   const blasts = PORT.hits.map(([x, z], i) => {
     const T = HIT[i], glow = makeGlow(pipe, { color: [1.0, 0.72, 0.42], size: 30, depthSoft: 6 }); pipe.scene.add(glow);
