@@ -141,7 +141,7 @@ Varda Space Industries · Koonibba, South Australia · January 2026 · Space
 
 **Takeaway.** A capsule that comes home on purpose is a hypersonic test range you can book.
 
-**For people who cannot see it.** A night sky over South Australia, with stars drawn as dots above a flat horizon. A small inset shows a spacecraft circling the Earth while a counter reaches 63 days, then a capsule leaving it over Antarctica. In the main picture the capsule crosses the sky as a bright streak, slowing as it goes, then descends under a parachute and lands inside a marked test range.
+**For people who cannot see it.** A night sky over South Australia, with stars drawn as dots above a flat horizon. A plate in the middle of the sky shows a spacecraft circling the Earth while a counter reaches 63 days; it then shrinks into the corner and shows a capsule leaving the spacecraft over Antarctica. In the main picture the capsule crosses the sky as a bright streak, marked at equal steps of time that bunch up as it slows, then descends under a parachute and lands inside a marked test range.
 
 **What it cannot show.** Speed figures are Varda’s and Southern Launch’s. Varda says only that the Navy payload collected data during re-entry. Dates are Australian: in California it was still January 29. The sky and the track are schematic.
 
@@ -168,7 +168,7 @@ SpektreWorks · Arabian Gulf · December 2025 · Sea
 
 **Takeaway.** A cheap drone the enemy invented, a ship the Navy already owns, and a rocket to join them.
 
-**For people who cannot see it.** A side view of a littoral combat ship on a moving sea. A small delta-winged drone sits on a short rail on the flight deck. A rocket fires and the drone climbs away trailing smoke. The spent booster tumbles into the water and the drone shrinks toward the horizon.
+**For people who cannot see it.** A side view of a littoral combat ship on a moving sea. A small delta-winged drone sits on a short rail on the flight deck. A rocket fires and the drone climbs away trailing smoke. The spent booster tumbles into the water and the drone shrinks into the distance, leaving a dotted track behind it.
 
 **What it cannot show.** The Navy did not say how far the drone flew or whether it hit anything. The booster’s fall is drawn, not taken from the footage. The cost is Central Command’s figure.
 

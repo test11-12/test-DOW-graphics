@@ -16,6 +16,10 @@ const FH = 434;
 const { DUR, SWARM_ACT, GATE, PULSE, WAVE, EMITTER, SAFE, TOTAL } = S;
 const [EX, EY] = EMITTER;
 const PITCH = 14;
+/** How long the leading edge of a pulse stays lime: about two rows of dots. */
+const FRONT = 0.018;
+/** The small uppercase label, as the pen sets it: for measuring a backing. */
+const CAP = { font: 'sans', size: 10, weight: 500, track: 0.42 } as const;
 const NOTES: Array<[number, string]> = [
   [1.0, 'Scenario 1 of 5 · two groups, opposite sides'],
   [3.35, 'Scenario 2 of 5 · one of a pair, chosen by the audience'],
@@ -65,7 +69,7 @@ const def: SceneDef<S.Sim> = {
     const flying = pair.stat({ label: 'In the air', slots: 2 });
     const down = pair.stat({ label: 'Brought down', slots: 2, bar: true });
     const roster = rail.dots({ label: 'Every drone flown that day', count: TOTAL });
-    const chart = rail.chart({ label: 'Brought down so far', height: 74 });
+    const chart = rail.chart({ label: 'Brought down so far', height: 112 });
     rail.note('The counts are Epirus’s own, from an invitation-only demonstration. Flight paths and timing are drawn for clarity.');
 
     return {
@@ -97,10 +101,13 @@ const def: SceneDef<S.Sim> = {
             }
             const since = age - range[i] / WAVE;
             if (since < 0) continue;
-            const glow = Math.exp(-since * 3.4);
+            // Only the leading edge is lime; the wake behind it is grey and clears
+            // quickly, so whatever the wave has just passed can be seen falling.
+            const front = since < FRONT;
+            const glow = front ? 1 : 0.75 * Math.exp(-(since - FRONT) * 4.4);
             if (glow > tone) {
               tone = glow;
-              shade = since < 0.09 ? 2 : 1;
+              shade = front ? 2 : 1;
             }
           }
           air.tone[i] = tone;
@@ -108,21 +115,37 @@ const def: SceneDef<S.Sim> = {
         }
         air.draw(pen, [K.rgba(col.wire, 0.7), K.rgba(col.mark, 0.8), col.live], { min: 0.05, max: 0.3, gamma: 0.9 });
 
-        /* ---- The last shot's sector, held while the viewer decides ---- */
-        const aimed = K.tween(t, GATE - 1.6, GATE - 0.4);
-        if (aimed > 0 && t < PULSE + 1.2) {
-          pen.stroke(col.mark, 0.5 * aimed * (1 - K.tween(t, PULSE, PULSE + 1.2)), 1, DASH.dash, -live * 8);
+        /* ---- Every shot is aimed before it is fired: the same dashed sector each time ---- */
+        const sector = (s: S.Shot, grow: number): void => {
           g.beginPath();
           g.moveTo(EX, EY);
-          g.arc(EX, EY, final.reach * aimed, final.aim - final.half, final.aim + final.half);
+          g.arc(EX, EY, s.reach * grow, s.aim - s.half, s.aim + s.half);
           g.closePath();
           g.stroke();
           g.setLineDash([]);
+        };
+        let busy = 0;
+        for (let i = 0; i < shots.length - 1; i++) {
+          const age = t - shots[i].at;
+          busy = Math.max(busy, K.pulse(age, -0.75, 0.9, 0.3));
+          if (age < -0.45 || age > 0.6) continue;
+          const on = K.tween(age, -0.45, -0.05, 'out');
+          pen.stroke(col.mark, 0.42 * on * (1 - K.tween(age, 0.05, 0.6)), 1, DASH.dash);
+          sector(shots[i], 0.55 + 0.45 * on);
         }
-        // After the story, the emitter keeps watching: a slow sweep.
-        if (f.ended) {
+        /* The last one is held while the viewer decides, and stays on the plate afterwards
+           as a still outline: this much sky, one pulse. */
+        const aimed = K.tween(t, GATE - 1.6, GATE - 0.4);
+        if (aimed > 0) {
+          pen.stroke(col.mark, aimed * K.lerp(0.5, 0.2, K.tween(t, PULSE, PULSE + 1.2)), 1, DASH.dash, t < PULSE ? -live * 8 : 0);
+          sector(final, aimed);
+        }
+        // Whenever it is not aiming, the emitter watches: a slow sweep, from the first
+        // frame and again after the story has ended.
+        const watch = Math.max((1 - busy) * (1 - K.tween(t, GATE - 2.1, GATE - 1.6)), f.ended ? K.tween(f.idle, 0, 1.2) : 0);
+        if (watch > 0) {
           const a = -Math.PI / 2 + 0.9 * Math.sin(live * 0.5);
-          pen.stroke(col.mark, 0.28 * K.tween(f.idle, 0, 1.2), 1, DASH.fine).line(EX, EY, EX + 420 * Math.cos(a), EY + 420 * Math.sin(a));
+          pen.stroke(col.mark, 0.28 * watch, 1, DASH.fine).line(EX, EY, EX + final.reach * Math.cos(a), EY + final.reach * Math.sin(a));
           g.setLineDash([]);
         }
 
@@ -135,6 +158,11 @@ const def: SceneDef<S.Sim> = {
         }
 
         /* ---- Drones: flying, hit, fallen ---- */
+        const tallied = K.tween(t, PULSE + 1.6, PULSE + 2.4);
+        // While the swarm is the subject, what fell earlier steps back; at the tally
+        // all sixty-one come up to one weight, so the last frame can be counted.
+        const recede = K.tween(t, SWARM_ACT, SWARM_ACT + 0.8) * (1 - tallied);
+        const settled = K.blend(col.faint, col.mark, 0.4 * tallied);
         let nFlying = 0;
         let nDown = 0;
         for (let i = 0; i < drones.length; i++) {
@@ -166,8 +194,9 @@ const def: SceneDef<S.Sim> = {
             const x = d.at[0] + Math.cos(d.spin) * 5 * fall;
             const y = d.at[1] + 9 * fall;
             const flash = Math.exp(-since * 5);
+            const rest = d.scenario < 4 ? K.lerp(0.78, 0.38, recede) : 0.78;
             pen.fill(col.stage, 0.8).dot(x, y, 7);
-            pen.drone(x, y, d.spin + fall * 1.4, K.lerp(0.62, 0.5, fall), K.blend(col.faint, col.live, flash), K.lerp(1, 0.78, fall));
+            pen.drone(x, y, d.spin + fall * 1.4, K.lerp(0.62, 0.5, fall), K.blend(settled, col.live, flash), K.lerp(1, rest, fall));
           }
         }
         g.restore();
@@ -181,14 +210,31 @@ const def: SceneDef<S.Sim> = {
         pen.stroke(col.bright, 1, 1.3).line(EX - 9, EY + 5, EX - 14, EY + 14).line(EX + 9, EY + 5, EX + 14, EY + 14);
         const hot = Math.max(...shots.map((s) => Math.exp(-Math.max(0, t - s.at) * 6) * (t >= s.at ? 1 : 0)));
         if (hot > 0.02) pen.fill(col.live, hot).rect(EX - 26, EY - 5, 52, 10), g.fill();
-        pen.label(EX + 27, EY, EX + 74, EY - 26, ['Leonidas', 'high-power microwave'], { color: col.ink, u: K.tween(t, 0.3, 1.1) });
+        pen.label(EX + 27, EY, EX + 74, EY - 26, ['Leonidas', 'high-power microwave'], { color: col.ink });
 
         /* ---- What is happening now ---- */
         let k = -1;
         for (let i = 0; i < NOTES.length; i++) if (t >= NOTES[i][0]) k = i;
-        if (k >= 0) pen.cap(NOTES[k][1], FX + 14, FY + 22, col.ink, K.tween(t, NOTES[k][0], NOTES[k][0] + 0.3) * (1 - K.tween(t, PULSE + 1.4, PULSE + 2.2)));
-        const tallied = K.tween(t, PULSE + 1.6, PULSE + 2.4);
-        pen.cap('61 flown · 61 down · five scenarios', FX + 14, FY + 22, col.live, tallied);
+        const TALLY = '61 flown · 61 down · five scenarios';
+        if (k >= 0) {
+          // One note hands over to the next, and the last to the tally, without the two
+          // ever being on the plate together. A dark backing keeps the swarm, which
+          // enters across this corner, from running through the words.
+          const until = k + 1 < NOTES.length ? NOTES[k + 1][0] : PULSE + 1.6;
+          const shown = K.tween(t, NOTES[k][0], NOTES[k][0] + 0.3) * (1 - K.tween(t, until - (k + 1 < NOTES.length ? 0.18 : 0.5), until));
+          const came = K.tween(t, NOTES[0][0], NOTES[0][0] + 0.3);
+          const str = tallied > 0 ? TALLY : NOTES[k][1];
+          pen.fill(col.stage, 0.88 * came).rect(FX + 7, FY + 10, pen.measure(str.toUpperCase(), CAP) + 14, 26);
+          g.fill();
+          pen.cap(NOTES[k][1], FX + 14, FY + 22, col.ink, shown);
+          // Five pips, one for each scenario: where in the day this is.
+          for (let i = 0; i < NOTES.length; i++) {
+            if (i === k) pen.stroke(K.blend(col.ink, col.mark, tallied), came * K.lerp(1, 0.6, tallied), K.lerp(2, 1, tallied));
+            else pen.stroke(i < k ? col.mark : col.wire, came * (i < k ? 0.6 : 1), 1);
+            pen.hline(FX + 14 + i * 20, FX + 30 + i * 20, FY + 30);
+          }
+        }
+        pen.cap(TALLY, FX + 14, FY + 22, col.live, tallied);
         if (waiting) pen.cap('Sector set · waiting for the order', EX - 42, EY + 4, col.ink, 0.55 + 0.45 * Math.sin(live * 4) ** 2, 'right');
 
         /* ---- Instruments ---- */
@@ -208,6 +254,13 @@ const def: SceneDef<S.Sim> = {
         cg.beginPath();
         cg.moveTo(0, py(0) + 0.5);
         cg.lineTo(chart.w, py(0) + 0.5);
+        cg.stroke();
+        // A tick on the time axis where each act begins.
+        cg.beginPath();
+        for (const at of [SWARM_ACT, GATE]) {
+          cg.moveTo(Math.round(px(at)) + 0.5, py(0) + 0.5);
+          cg.lineTo(Math.round(px(at)) + 0.5, py(0) + 5);
+        }
         cg.stroke();
         cg.setLineDash([1.5, 3.5]);
         cg.strokeStyle = col.wire;
@@ -241,9 +294,11 @@ const def: SceneDef<S.Sim> = {
         cg.fillText('0', 0, chart.h - 2);
         cg.fillText('61', 0, py(TOTAL) + 12);
         if (t > PULSE + 0.4) {
+          cg.globalAlpha = K.tween(t, PULSE + 0.4, PULSE + 0.9);
           cg.fillStyle = col.muted;
           cg.textAlign = 'right';
           cg.fillText('49 in one pulse', px(PULSE) - 7, py(36));
+          cg.globalAlpha = 1;
         }
       },
     };

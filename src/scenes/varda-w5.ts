@@ -66,7 +66,7 @@ const def: SceneDef = {
   id: 'varda-w5',
   duration: DUR,
   takeaway: 'A capsule that comes home on purpose is a hypersonic test range you can book.',
-  alt: 'A night sky over South Australia, with stars drawn as dots above a flat horizon. A small inset shows a spacecraft circling the Earth while a counter reaches 63 days, then a capsule leaving it over Antarctica. In the main picture the capsule crosses the sky as a bright streak, slowing as it goes, then descends under a parachute and lands inside a marked test range.',
+  alt: 'A night sky over South Australia, with stars drawn as dots above a flat horizon. A plate in the middle of the sky shows a spacecraft circling the Earth while a counter reaches 63 days; it then shrinks into the corner and shows a capsule leaving the spacecraft over Antarctica. In the main picture the capsule crosses the sky as a bright streak, marked at equal steps of time that bunch up as it slows, then descends under a parachute and lands inside a marked test range.',
   acts: [
     { at: 0, label: 'Orbit' },
     { at: ENTRY, label: 'Re-entry' },

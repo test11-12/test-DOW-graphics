@@ -157,7 +157,10 @@ function createScene(id: string, def: SceneDef<any>): Mounted {
     button(label, onClick) {
       const b = K.h('button', 'primary-control', s.controls, label);
       b.type = 'button';
-      b.addEventListener('click', onClick);
+      b.addEventListener('click', () => {
+        onClick();
+        wake();
+      });
       return b;
     },
     options(labels, selected, onChange) {
@@ -171,6 +174,7 @@ function createScene(id: string, def: SceneDef<any>): Mounted {
         b.addEventListener('click', () => {
           api.set(i);
           onChange(i);
+          wake();
         });
         return b;
       });
@@ -197,6 +201,7 @@ function createScene(id: string, def: SceneDef<any>): Mounted {
         b.addEventListener('click', () => {
           api.set(i, !state[i]);
           onChange(i, state[i]);
+          wake();
         });
         return b;
       });
@@ -249,6 +254,16 @@ function release(auto: boolean): void {
   s.gateWait = 0;
   s.cur?.inst.onGate?.(g.id, { auto });
   emit('state');
+}
+
+/** A viewer who acts after the story has ended expects the picture to answer. Films
+    animate that answer on idle time, which only runs while playing, so start it even if
+    the viewer arrived at the end by scrubbing or had paused there. */
+function wake(): void {
+  if (s.cur && !s.playing && !s.glide && s.scrub == null && s.t >= s.duration - 1e-6) {
+    s.playing = true;
+    emit('state');
+  }
 }
 
 /* ---- Frame ----------------------------------------------------------------- */

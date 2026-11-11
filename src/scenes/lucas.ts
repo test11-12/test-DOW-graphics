@@ -53,7 +53,7 @@ const def: SceneDef = {
   id: 'lucas',
   duration: DUR,
   takeaway: 'A cheap drone the enemy invented, a ship the Navy already owns, and a rocket to join them.',
-  alt: 'A side view of a littoral combat ship on a moving sea. A small delta-winged drone sits on a short rail on the flight deck. A rocket fires and the drone climbs away trailing smoke. The spent booster tumbles into the water and the drone shrinks toward the horizon.',
+  alt: 'A side view of a littoral combat ship on a moving sea. A small delta-winged drone sits on a short rail on the flight deck. A rocket fires and the drone climbs away trailing smoke. The spent booster tumbles into the water and the drone shrinks into the distance, leaving a dotted track behind it.',
   acts: [
     { at: 0, label: 'On deck' },
     { at: ROCKET, label: 'Rocket-assisted' },

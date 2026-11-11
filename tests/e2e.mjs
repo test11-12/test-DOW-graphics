@@ -184,6 +184,12 @@ await check('Quarterhorse: the viewer can set the speed', async () => {
   ok((await options.nth(0).getAttribute('aria-pressed')) === 'true', 'the choice is marked');
   await seek(page, end, 9);
   ok((await pixels()) !== supersonic, 'and the sound rearranges itself');
+  // A viewer who scrubs to the end is paused there: no clock is running. A choice must still be answered.
+  await seek(page, end, 2);
+  const still = await pixels();
+  await options.nth(1).click();
+  await wait(page, 700);
+  ok((await pixels()) !== still, 'a choice made while paused at the end still plays out');
   await seek(page, 5);
   ok(await options.first().isHidden(), 'scrubbing back puts the story in charge again');
 });
