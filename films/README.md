@@ -103,6 +103,14 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   B metal), OpenGL normal.
 - Sources are cached in `$DOW_CACHE` (default `/opt/dow-cache`) and never committed; the exported `.glb`
   files are, so the films build without Blender.
+- `blender/quarterhorse.py` (with `qh_shape.py`, `qh_geo.py`, `qh_paint.py`) builds film 1's aircraft:
+  `node tools/blender.mjs quarterhorse all` (or the stages `geo`, `bake`, `paint`, `export`). The airframe is lofted
+  from stations measured on Hermeus photography; every part gets metric UVs, data maps (position, normal, part id,
+  occlusion) are baked per texture set, and `qh_paint.py` (numpy only, also runs as `python3 -I
+  blender/qh_paint.py`) paints the skin as a function of the surface: panel joints, rivet rows, oil canning, sheet
+  tone and grain (KHR_materials_anisotropy), smudges, soot and temper colours, and the markings, over ambientCG
+  metal scans. The GLB carries the nodes `gear` (landing gear, open doors, wells) and `ab_glow` (afterburner
+  surfaces whose emissive the film drives).
 - `src/lookdev.js` is a turntable for checking any packed asset under the films' sky and grade:
   `node tools/shot.mjs lookdev <prefix> --q="glb=quarterhorse/quarterhorse.glb&el=10&dist=20" t` (t from 0 to 12
   orbits once; `--q` passes any URL parameters to the page).

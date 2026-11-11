@@ -15,7 +15,7 @@ import { buildQuarterhorse, QH } from './quarterhorse_model.js';
 const NARRATION = __NARRATION__;
 const D = Math.PI / 180;
 const SUN = { az: 68, el: 8 };
-const GROUND_Y = FIELD_ALT + 1.95;          // aircraft origin height when sitting on its wheels
+const GROUND_Y = FIELD_ALT - QH.groundY;    // aircraft origin height when sitting on its wheels
 const RWY_START_Z = 1700;                    // brake-release point, south end; take-off run heads north (-z)
 
 // ------------------------------------------------------------------ airfield
@@ -171,9 +171,9 @@ async function build(film) {
   const cs = clouds.terrainShadow();
   const terrain = new Terrain(pipe, { ...NM_TERRAIN, uniforms: { ...(NM_TERRAIN.uniforms || {}), ...cs.uniforms }, defines: (NM_TERRAIN.defines || '') + cs.defines, near: { ...NM_TERRAIN.near, res: nearRes }, far: { ...NM_TERRAIN.far, res: film.quality.lowTerrain ? 1024 : 2048 } });
   const field = buildAirfield(pipe); pipe.scene.add(field.group);
-  const ac = buildQuarterhorse(pipe); pipe.scene.add(ac);
-  const plume = makePlume(pipe, { length: 11.5, radius: QH.nozzleR, diamonds: 6 }); plume.position.set(QH.nozzleX + 0.05, 0.06, 0); ac.add(plume);
-  const haze = makeHeatHaze(pipe, { length: 46, radius: 0.5, spread: 3.4, strength: 0.0042 }); haze.position.set(QH.nozzleX, 0.06, 0); ac.add(haze);
+  const ac = await buildQuarterhorse(pipe); pipe.scene.add(ac);
+  const plume = makePlume(pipe, { length: 11.5, radius: QH.nozzleR, diamonds: 6 }); plume.position.set(QH.nozzleX + 0.05, QH.nozzleY, 0); ac.add(plume);
+  const haze = makeHeatHaze(pipe, { length: 46, radius: 0.5, spread: 3.4, strength: 0.0042 }); haze.position.set(QH.nozzleX, QH.nozzleY, 0); ac.add(haze);
   const shocks = [[QH.noseX + 0.3, 0.03, 1.0], [QH.noseX - 7.6, -0.2, 0.7], [QH.nozzleX + 0.6, 0.3, 0.8]].map(([x, y, k]) => { const s = makeShockCone(pipe, { length: 150, strength: 0.0052 * k }); s.position.set(x, y, 0); s.userData.k = k; ac.add(s); return s; });
   pipe.registerDynamic(ac);
   if (film.off.has('cshadow')) CLOUDS.shadow = GROUND_CLOUDS.shadow = 0;
