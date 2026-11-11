@@ -212,62 +212,182 @@ vec4 mjTaxiway(vec2 f, float fp, float n5, float n6, float n7){
   c *= 1.0-0.22*exp(-sq((d-2.4)/1.3))*smoothstep(0.3, 0.7, tr);                  // tyre-polished band either side
   return vec4(c, cc.a);
 }
-// Apron: 6.1 m slabs with sealant, crack repairs, stains, tyre scuffs, tie-down points, taxilane and stand paint.
-// a: metres from the parking spot (x along the runway axis, y towards the flight line; the aircraft noses +y)
-vec4 mjApron(vec2 f, vec2 a, float fp, float n5, float n6, float n7){
-  float w = max(fp*0.6, 0.004);
-  vec4 cc = mjConcrete(f+vec2(1.3,0.4), 6.096, fp, vec3(0.455,0.445,0.415), n5, n6, n7); vec3 c = cc.rgb; float gl = cc.a;
-  float near = clamp(3.0/max(fp,0.01), 0.0, 1.0);
-  // crack-seal: wandering tar lines, in clusters
-  vec4 k1 = dn(f, 0.021, fp), k2 = dn(f+vec2(31.0,17.0), 0.047, fp);
-  float cl = smoothstep(0.5, 0.62, dn(f, 0.006, fp).r);
-  float crack = lineAA(abs(k1.g-0.5), 0.0035, fp*0.11)*cl+0.8*lineAA(abs(k2.r-0.47), 0.004, fp*0.22)*cl*step(0.5, k1.r);
-  crack *= near;
-  c = mix(c, vec3(0.045,0.043,0.042), crack*0.9); gl = mix(gl, 2.2, crack);
-  // oil and hydraulic stains; darker, slightly glossy
-  float st = smoothstep(0.60, 0.78, dn(f+vec2(7.0,3.0), 0.052, fp).r)*smoothstep(0.35, 0.6, k2.g);
-  st = max(st, 0.8*smoothstep(0.72, 0.9, dn(f, 0.19, fp).g)*smoothstep(0.45, 0.6, k1.r));
-  c *= 1.0-0.42*st; gl += 0.9*st;
-  // drips under where aircraft stand: a loose scatter around each stand centre line
-  float dsx = mod(a.x+18.0, 36.0)-18.0;
-  float drip = smoothstep(0.80, 0.9, dn(f, 0.9, fp).r)*exp(-dsx*dsx/30.0)*smoothstep(-16.0, -4.0, a.y)*smoothstep(12.0, 2.0, a.y)*near;
-  c *= 1.0-0.5*drip; gl += 0.6*drip;
-  // tie-down / grounding points: a recessed ring at every other slab corner
-  vec2 tq = (fract((f+vec2(1.3,0.4))/12.192)-0.5)*12.192; float td = length(tq);
-  float ring = stripe(td-0.085, 0.022, w)*near, hole = (1.0-smoothstep(0.05-w, 0.05+w, td))*near;
-  c = mix(c, vec3(0.30,0.29,0.27), ring*0.7); c = mix(c, vec3(0.03), hole*0.9);
-  // slot drain across the apron
-  float dr = abs(f.y-498.0);
-  float drain = (1.0-smoothstep(0.16-w, 0.16+w, dr));
-  c = mix(c, vec3(0.05,0.05,0.05)*(0.6+0.8*step(0.5, fract(f.x/0.06))*clamp(0.03/max(fp,1e-3), 0.0, 1.0)), drain*0.92);
-  c *= 1.0-0.16*exp(-dr/1.6)*(0.5+0.5*n6);
-  // taxilane centre line (yellow, black edged), a lead-in arc and line to each stand, nose-wheel stop bar
-  float wear = 0.4+0.6*smoothstep(0.25, 0.7, n6+0.25*(n7-0.5));
+// ---------------------------------------------------------------- photoscanned asphalt (blender/fury_ground.py)
+precision highp sampler2DArray;
+uniform sampler2DArray tGround;   // per material: albedo (sRGB) | normal x,y + roughness | height, occlusion, cavity
+uniform vec4 uGround;             // x: metres per scan tile, y: 1 when the scan is loaded
+uniform vec4 uAcAO;               // aircraft standing on the pavement: world x, z (m), heading (rad from north), strength
+uniform vec4 uAcGear;             // its gear in body metres: nose-wheel x, main-wheel x, main-wheel half track, tyre width
+mat2 gRot(vec2 v){ float a = h21(v*0.731+vec2(3.1, 7.7))*6.2831853; float c = cos(a), s = sin(a); return mat2(c, s, -s, c); }
+// Hex-tiled read (after Mikkelsen 2022): three randomly turned and shifted copies of the scan blended across a
+// triangle grid, so the 3 m scan never repeats visibly. st: position in scan tiles; dx, dy: pixel footprint (tiles);
+// L: first layer of the material; full: also read the height / occlusion layer (close up only).
+void gScan(vec2 st, vec2 dx, vec2 dy, float L, bool full, out vec3 alb, out vec2 nxy, out float rough, out vec3 hac){
+  vec2 s = st*1.55;
+  vec2 sk = vec2(s.x-0.57735027*s.y, 1.15470054*s.y);
+  vec2 b = floor(sk); vec3 t = vec3(fract(sk), 0.0); t.z = 1.0-t.x-t.y;
+  float sg = step(0.0, -t.z), s2 = 2.0*sg-1.0;
+  vec3 w = max(vec3(-t.z*s2, sg-t.y*s2, sg-t.x*s2), 0.0);
+  w = w*w*w; w = w*w; w /= max(dot(w, vec3(1.0)), 1e-6);          // ^6: narrow seams between the copies
+  alb = vec3(0.0); nxy = vec2(0.0); rough = 0.0; hac = vec3(0.0);
+  for (int i=0;i<3;i++){
+    vec2 v = b+(i==0 ? vec2(sg) : (i==1 ? vec2(sg, 1.0-sg) : vec2(1.0-sg, sg)));
+    float wi = i==0 ? w.x : (i==1 ? w.y : w.z);
+    if (wi < 0.003) continue;
+    vec2 cen = vec2(v.x+0.5*v.y, 0.8660254*v.y)/1.55;
+    mat2 R = gRot(v);
+    vec2 uv = R*(st-cen)+cen+vec2(h21(v+0.19), h21(v.yx+5.3));
+    vec2 gx = R*dx, gy = R*dy;
+    alb += textureGrad(tGround, vec3(uv, L), gx, gy).rgb*wi;
+    vec3 n = textureGrad(tGround, vec3(uv, L+1.0), gx, gy).rgb;
+    nxy += (transpose(R)*(n.rg*2.0-1.0))*wi; rough += n.b*wi;
+    if (full) hac += textureGrad(tGround, vec3(uv, L+2.0), gx, gy).rgb*wi;
+  }
+  alb = pow(alb, vec3(2.2));
+  if (!full) hac = vec3(0.5, 1.0, 0.5);
+}
+// Sky light the aircraft takes from the pavement under it, and the dark line where each tyre meets the ground, as an
+// albedo multiplier: full occlusion where the aircraft also shades the sun, much less where the low sun gets under it.
+float acOcclusion(vec2 wxz){
+  if (uAcAO.w <= 0.0) return 1.0;
+  vec2 d = wxz-uAcAO.xy; float s = sin(uAcAO.z), c = cos(uAcAO.z);
+  float lx = dot(d, vec2(s, -c)), lz = dot(d, vec2(c, s));          // body metres: forward, right
+  if (abs(lx) > 9.0 || abs(lz) > 6.0) return 1.0;
+  float fus = exp(-sq(lz/0.9))*smoothstep(-5.4, -3.6, lx)*smoothstep(5.8, 3.2, lx);
+  float wng = exp(-sq(lz/3.0))*exp(-sq((lx+0.5)/1.8));
+  float occ = clamp(fus*0.5+wng*0.22, 0.0, 0.62);
+  float tyre = exp(-sq((lx-uAcGear.x)/0.12)-sq(lz/(uAcGear.w*0.55)));
+  tyre = max(tyre, exp(-sq((lx-uAcGear.y)/0.15)-sq((abs(lz)-uAcGear.z)/(uAcGear.w*0.55))));
+  float sh = heroShadow(vRel+vec3(0.0, 0.04, 0.0));
+  float g = mix(1.0-occ, 1.0-0.28*occ, sh)*(1.0-0.7*tyre);
+  return mix(1.0, g, uAcAO.w);
+}
+// Apron in asphalt, as on the Edwards flight line in released photographs: the scan, laid in 3.66 m paving lanes with
+// their construction joints; transverse thermal cracks, most filled with sealant; saw-cut patches; oil and hydraulic
+// stains that gather where aircraft stand; rubber along the lead-in lines; worn yellow paint; tie-down collars; sand.
+// f: field metres; a: metres from the parking spot (x along the runway axis, y towards the parked aircraft's nose);
+// wxz: world metres. Returns albedo (rgb) and gloss (a); Nt receives the surface tilt (world x, z).
+vec4 mjApron(vec2 f, vec2 a, vec2 wxz, float fp, float n6, float n7, out vec2 Nt){
+  float w = max(fp*0.6, 0.0015);
+  float near = clamp(3.0/max(fp, 0.01), 0.0, 1.0);
+  // ---- the scan, fading to its mean where a pixel covers more than a few centimetres
+  vec3 c = vec3(0.118, 0.116, 0.104); vec2 nxy = vec2(0.0); float rough = 0.77; float hgt = 0.5, cav = 0.5, aoS = 1.0;
+  const float LIFT = 1.32;          // the scan is a little darker than the sun-bleached desert apron
+  float kd = uGround.y*smoothstep(0.75, 0.22, fp);
+  if (kd > 0.0){
+    vec3 sa, sh; vec2 sn; float sr; float tile = uGround.x;
+    gScan(wxz/tile, gGx*(1000.0/tile), gGy*(1000.0/tile), 0.0, fp < 0.05, sa, sn, sr, sh);
+    float kh = smoothstep(0.05, 0.02, fp);
+    c = mix(c, sa, kd); nxy = sn*kd; rough = mix(rough, sr, kd);
+    hgt = mix(0.5, sh.x, kh); aoS = mix(1.0, sh.y, kh); cav = mix(0.5, sh.z, kh);
+  }
+  float gl = mix(1.35, 0.22, rough);
+  vec2 tilt = nxy*smoothstep(0.9, 0.06, fp);
+  // ---- macro tone: paving lanes, sun-bleached oxidation, newer overlays
+  float lv = (f.y-251.0)/3.66, lane = floor(lv), lfr = fract(lv);
+  float tone = (0.93+0.14*h21(vec2(lane, 3.7)))*(0.84+0.32*dn(f, 0.011, fp).r)*(0.9+0.2*dn(f+vec2(41.0, 7.0), 0.07, fp).g);
+  c *= tone*LIFT;
+  // lane construction joint: a straight seam, slightly darker and open, intermittently sealed
+  float dj = min(lfr, 1.0-lfr)*3.66+(dn(vec2(f.x, lane*13.7), 0.7, fp).r-0.5)*0.02;
+  float jSeal = smoothstep(0.45, 0.6, dn(vec2(f.x*0.4, lane*7.3), 0.05, fp).r);
+  // transverse cracks every 7 to 16 m, wandering across the lanes
+  float cx = f.x/11.0, ci = floor(cx), dmin = 1.0e3, sdm = 0.0, cs = 0.0, ck = 0.0;
+  for (int k=-1;k<=1;k++){
+    float i = ci+float(k);
+    float xc = (i+0.5+0.62*(h21(vec2(i, 1.3))-0.5))*11.0;
+    float wob = (dn(vec2(i*7.31, f.y), 0.085, fp).r-0.5)*2.4+(dn(vec2(i*3.1, f.y), 0.55, fp).g-0.5)*0.36+(dn(vec2(i*1.7, f.y), 4.1, fp).r-0.5)*0.035;
+    float pres = step(0.2, h21(vec2(i, lane)));
+    float sd = f.x-xc-wob, dd = abs(sd)+(1.0-pres)*1.0e3;
+    if (dd < dmin){ dmin = dd; sdm = sd; cs = h21(vec2(i, 9.1)); ck = i; }
+  }
+  // sealant: black, glossy, a little proud of the surface; fresh where cs is low, dusted grey where it is old
+  float hwS = 0.024+0.034*dn(vec2(f.y*0.9, ck*5.1), 0.6, fp).g;
+  float sealT = stripe(dmin, hwS, w)*step(0.25, cs);
+  float sealJ = stripe(dj, 0.03+0.02*n7, w)*jSeal;
+  float seal = max(sealT, sealJ);
+  float crack = max(lineAA(dmin, 0.0025, fp)*(1.0-step(0.25, cs)), lineAA(dj, 0.002, fp)*(1.0-jSeal)*0.7)*near;
+  // saw-cut patches: newer, darker asphalt with a sealed edge
+  vec2 pcl = floor(f/vec2(27.0, 19.0)), pr = f/vec2(27.0, 19.0)-pcl;
+  float ph = h21(pcl+11.0);
+  vec2 p0 = vec2(0.25+0.5*h21(pcl+2.0), 0.25+0.5*h21(pcl+5.0)), ps = vec2(0.05+0.18*h21(pcl+8.0), 0.07+0.2*h21(pcl+9.0));
+  vec2 pdm = (abs(pr-p0)-ps)*vec2(27.0, 19.0);
+  float pdist = max(pdm.x, pdm.y), inP = step(0.8, ph)*(1.0-smoothstep(-w, w, pdist));
+  c = mix(c, c*0.5+vec3(0.004), inP); gl = mix(gl, gl*1.25, inP);
+  seal = max(seal, step(0.8, ph)*stripe(pdist, 0.018, w));
+  // where aircraft stand: oil and hydraulic stains, drips under the engine bay and gear
+  float sx = mod(a.x+18.0, 36.0)-18.0;
+  float under = exp(-sq(sx/3.4))*exp(-sq((a.y+1.2)/5.8));
+  float blot = smoothstep(0.55, 0.75, dn(f+vec2(7.0, 3.0), 0.23, fp).r*0.65+dn(f, 1.1, fp).g*0.35);
+  float st = blot*under*0.6;
+  st = max(st, 0.4*smoothstep(0.74, 0.88, dn(f+vec2(19.0, 41.0), 0.045, fp).r)*smoothstep(0.45, 0.65, dn(f, 0.33, fp).g));
+  // drips: sparse round spots, one chance per 0.32 m cell, densest under the engine bay
+  vec2 dcl = floor(f/0.32), dpp = f/0.32-dcl, dctr = vec2(h21(dcl+3.1), h21(dcl+7.7))*0.6+0.2;
+  float dR = (0.018+0.04*h21(dcl+1.3))/0.32, dd = length(dpp-dctr)/dR;
+  float dEnv = exp(-sq(sx/1.5))*exp(-sq((a.y+2.6)/2.2));
+  float drips = (1.0-smoothstep(0.6, 1.0, dd))*step(h21(dcl+9.2), 0.35*dEnv)*near;
+  drips = max(drips, 0.5*(1.0-smoothstep(0.75, 1.6, dd))*step(h21(dcl+9.2), 0.35*dEnv)*near);
+  c *= 1.0-0.45*st; gl += 0.9*st;
+  c = mix(c, c*0.35, drips*0.85); gl += 1.4*drips;
+  // rubber: main-gear tracks into each stand, sweeping turns, and the taxilane's worn band
   float tl = abs(f.y-330.0);
-  float sx = mod(a.x+18.0, 36.0)-18.0;                                  // stand-local x (stands every 36 m)
-  vec2 ac = vec2(sx-12.0, a.y+62.0); float ar = length(ac);            // arc centre; the taxilane is at a.y = -74
+  vec2 ac = vec2(sx-12.0, a.y+62.0); float ar = length(ac);
   float onArc = (ac.x <= 0.0 && ac.y <= 0.0) ? 1.0 : 0.0, onStr = (a.y > -62.0 && a.y < 1.95) ? 1.0 : 0.0;
+  float tb = dn(vec2(f.x, f.y*0.07), 0.6, fp).g, tb2 = dn(vec2(f.x*0.06, f.y), 0.45, fp).r;
+  float rub = onStr*(exp(-sq((abs(sx)-0.86)/0.11))*0.9+exp(-sq((abs(sx)-1.18)/0.13))*0.7+exp(-sq((abs(sx)-2.0)/0.2))*0.4)*smoothstep(0.3, 0.7, tb);
+  rub = max(rub, onArc*(exp(-sq((ar-11.1)/0.16))+exp(-sq((ar-12.9)/0.16)))*smoothstep(0.3, 0.7, dn(f, 0.31, fp).g)*0.8);
+  rub = max(rub, (exp(-sq((tl-0.95)/0.25))+exp(-sq((tl-1.6)/0.35))*0.8)*smoothstep(0.3, 0.75, tb2));
+  c = mix(c, c*0.55+vec3(0.006), rub*0.7*near); gl += 0.45*rub;
+  // paint (yellow): taxilane centre line, lead-in arc and line, nose-wheel stop bar, apron edge lines, a stand spot.
+  // Tyres and sun wear it off the aggregate tops first, so the scan shows through.
   float lead = min(onArc > 0.5 ? abs(ar-12.0) : 1.0e3, onStr > 0.5 ? abs(sx) : 1.0e3);
-  lead = min(lead, abs(sx) < 0.6 ? abs(a.y-1.95) : 1.0e3);
-  float yd = min(tl, lead);
-  c = mix(c, vec3(0.045), stripe(yd, 0.155, w)*0.5*near);
-  c = mix(c, vec3(0.82,0.62,0.06)*wear, stripe(yd, 0.075, w)*0.92);
+  float yl = max(stripe(min(tl, lead), 0.075, w), stripe(abs(f.y-262.0), 0.075, w));
+  yl = max(yl, stripe(abs(f.y-262.45), 0.075, w));
+  yl = max(yl, (abs(sx) < 0.75 ? 1.0 : 0.0)*stripe(a.y-1.95, 0.15, w));
+  float spot = 1.0-smoothstep(0.42-w, 0.42+w, length(vec2(sx, (a.y-7.6)*1.6)));
+  float wear = 0.35+0.4*smoothstep(0.3, 0.75, n6+0.3*(n7-0.5))+0.35*max(rub, 0.0);
+  float flake = smoothstep(0.6, 0.72, dn(f+vec2(9.0, 2.0), 2.8, fp).g)*near;
+  float pv = max(yl, spot*0.95)*(1.0-wear*smoothstep(0.52, 0.78, hgt))*(1.0-flake*0.8);
+  vec3 paint = mix(vec3(0.44, 0.27, 0.02), vec3(0.55, 0.19, 0.02), spot)*(0.7+0.3*n7);
+  paint = mix(paint, c*2.0, 0.18+0.3*smoothstep(0.4, 0.8, dn(f, 0.19, fp).r));  // grime and tyre rubber over the paint
+  c = mix(c, paint, pv*0.93); gl = mix(gl, 0.85, pv); tilt *= 1.0-0.65*pv;
   // stand corner brackets (white)
   { float bx = abs(sx), by = abs(a.y-0.2);
     float lx = (by > 6.5 && by < 8.05) ? abs(bx-6.5) : 1.0e3, ly = (bx > 5.0 && bx < 6.55) ? abs(by-8.0) : 1.0e3;
-    c = mix(c, vec3(0.80,0.79,0.75)*wear, stripe(min(lx, ly), 0.05, w)*0.85);
-  }
-  float el = min(abs(f.y-262.0), abs(f.y-262.45));
-  c = mix(c, vec3(0.80,0.60,0.07)*wear, stripe(el, 0.075, w)*0.85);
-  // tyre scuffs: polished tracks along the taxilane and sweeping turns onto the stands
-  float trk = dn(vec2(f.x*0.05, f.y), 0.4, fp).r;
-  float band = exp(-sq((tl-1.9)/0.9))*smoothstep(0.35, 0.75, trk);
-  band = max(band, onArc*(exp(-sq((ar-10.1)/0.5))+exp(-sq((ar-13.9)/0.5)))*smoothstep(0.3, 0.7, dn(f, 0.31, fp).g));
-  band = max(band, onStr*exp(-sq((abs(sx)-1.9)/0.45))*smoothstep(0.35, 0.7, dn(vec2(f.x, f.y*0.06), 0.5, fp).g));
-  c = mix(c, c*0.62+vec3(0.012), band*0.75*near); gl += 0.5*band;
-  // wind-blown sand lying in the joints and against the edges
-  float sand = smoothstep(0.62, 0.8, dn(f, 0.013, fp).g)*smoothstep(0.36, 0.5, max(abs(fract((f.x+1.3)/6.096)-0.5), abs(fract((f.y+0.4)/6.096)-0.5)));
-  c = mix(c, vec3(0.60,0.53,0.42), sand*0.35*near);
+    float wv = stripe(min(lx, ly), 0.05, w)*(1.0-wear*smoothstep(0.52, 0.78, hgt));
+    c = mix(c, vec3(0.62, 0.61, 0.58)*(0.75+0.25*n7), wv*0.85); gl = mix(gl, 0.85, wv); }
+  // sealant on top of everything it crosses
+  float sealAge = smoothstep(0.25, 1.0, cs);
+  vec3 sealC = mix(vec3(0.018, 0.017, 0.016), vec3(0.06, 0.055, 0.05), sealAge*0.7)*(0.85+0.3*n7);
+  c = mix(c, sealC, seal*0.96); gl = mix(gl, mix(2.4, 1.2, sealAge), seal); tilt *= 1.0-0.85*seal;
+  c = mix(c, vec3(0.02), crack*0.85);
+  // the sealant band stands a few millimetres proud: its rounded edges catch the low sun
+  { float e = stripe(dmin, hwS+0.006, w)-sealT; float sgn = sign(sdm);
+    vec2 fu = vec2(MJ_FU.x, MJ_FU.y);
+    tilt += fu*sgn*e*0.35*near; }
+  // tie-down collars: a concrete ring with a steel bar, on a 7.6 m grid around the stands
+  { vec2 q = a+vec2(3.81, 3.81), cell = floor(q/7.62), tq = (fract(q/7.62)-0.5)*7.62;
+    float pres = step(0.42, h21(cell*1.7+0.3));
+    float r = length(tq);
+    float coll = (1.0-smoothstep(0.29-w, 0.29+w, r))*pres;
+    float ring = stripe(r-0.105, 0.014, w)*pres, hole = (1.0-smoothstep(0.09-w, 0.09+w, r))*pres;
+    float bar = stripe(tq.y, 0.012, w)*step(r, 0.1)*pres;
+    vec3 conc = vec3(0.30, 0.29, 0.27)*(0.8+0.4*c.g/0.12);
+    c = mix(c, conc, coll*0.9); gl = mix(gl, 0.5, coll);
+    c = mix(c, vec3(0.025), max(ring, hole*0.7)*0.9);
+    c = mix(c, vec3(0.16, 0.085, 0.045), bar*0.9);
+    tilt += normalize(tq+1e-5)*stripe(r-0.29, 0.02, w)*0.25*pres*near; }
+  // slot drain across the apron
+  { float dr = abs(f.y-498.0), drain = 1.0-smoothstep(0.16-w, 0.16+w, dr);
+    c = mix(c, vec3(0.045)*(0.6+0.8*step(0.5, fract(f.x/0.06))*clamp(0.03/max(fp, 1e-3), 0.0, 1.0)), drain*0.92);
+    c *= 1.0-0.14*exp(-dr/1.6)*(0.5+0.5*n6); gl = mix(gl, 0.4, drain); }
+  // wind-blown sand: in the low spots of the surface, along seams and sealant edges, drifted against the apron edges
+  float sandA = smoothstep(0.42, 0.66, dn(f+vec2(5.0, 1.0), 0.06, fp).g)*0.55+0.45*smoothstep(0.7, 0.88, dn(f, 0.014, fp).r);
+  float valley = smoothstep(0.5, 0.3, hgt);
+  float edgeS = stripe(dmin, hwS+0.05, w)*(1.0-seal)*0.6+exp(-min(abs(f.y-251.0), abs(f.y-590.0))/2.5)*0.6;
+  float sand = clamp(sandA*mix(0.25, valley, step(fp, 0.05))*0.75+edgeS*sandA, 0.0, 1.0);
+  c = mix(c, vec3(0.43, 0.35, 0.26)*(0.9+0.2*n7), sand*0.6); gl = mix(gl, 0.25, sand*0.8); tilt *= 1.0-0.5*sand;
+  c *= mix(1.0, aoS, 0.6);
+  Nt = tilt;
   return vec4(c, gl);
 }
 
@@ -331,7 +451,7 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
   float c0 = t5.r, c1 = dtex(duv(4)+vec2(0.016,0.0), 4).r, c2 = dtex(duv(4)+vec2(0.0,0.016), 4).r;
   N.xz += vec2(c0-c1, c0-c2)*(0.9*rk+0.1)*(1.0-m0.r*0.85)*smoothstep(60.0, 4.0, fp)*2.0;
   spec = 0.0;
-  vec2 f = mjField(p);
+  vec2 f = mjField(p), wxz = uOrigin.xz+vRel.xz;
   bool onField = abs(f.x) < 3300.0 && f.y > -700.0 && f.y < 1300.0;
   // airfield ground: graded, compacted dirt between the pavements, with mower / grader lines and vehicle ruts
   if (onField){
@@ -367,16 +487,17 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
       vec3 asph = vec3(0.085,0.082,0.078)*(0.78+0.44*n6)*(0.9+0.2*t5.r);
       asph = mix(asph, vec3(0.16,0.15,0.14), smoothstep(0.55, 0.8, dn(f, 0.04, fp).r)*0.6);     // sun-bleached patches
       vec3 c = asph; float gl = 0.7;
-      if (pm.z > 0.001){ vec4 a = mjApron(f, f-vec2(${SPOT.u.toFixed(1)}, ${SPOT.v.toFixed(1)}), fp, t5.r, n6, n7); c = mix(c, a.rgb, pm.z); gl = mix(gl, a.a, pm.z); }
+      vec2 g7 = dtex(duv(6)+0.37, 6).rg-0.5;
+      vec2 Nt = g7*0.04*smoothstep(0.6, 0.02, fp)+vec2(n6-0.5, t5.g-0.5)*0.012;
+      if (pm.z > 0.001){ vec2 Na; vec4 a = mjApron(f, f-vec2(${SPOT.u.toFixed(1)}, ${SPOT.v.toFixed(1)}), wxz, fp, n6, n7, Na); c = mix(c, a.rgb, pm.z); gl = mix(gl, a.a, pm.z); Nt = mix(Nt, Na, pm.z); }
       if (pm.y > 0.001){ vec4 a = mjTaxiway(f, fp, t5.r, n6, n7); c = mix(c, a.rgb, pm.y); gl = mix(gl, a.a, pm.y); }
       if (pm.x > 0.001){ vec4 a = mjRunway(f, fp, t5.r, n6, n7); c = mix(c, a.rgb, pm.x); gl = mix(gl, a.a, pm.x); }
       alb = mix(alb, c, cov);
-      vec2 g7 = dtex(duv(6)+0.37, 6).rg-0.5;
-      vec3 Np = normalize(vec3(0.0,1.0,0.0)+vec3(g7.x, 0.0, g7.y)*0.04*smoothstep(0.6, 0.02, fp)+vec3(n6-0.5, 0.0, t5.g-0.5)*0.012);
-      N = normalize(mix(N, Np, cov));
+      N = normalize(mix(N, normalize(vec3(Nt.x, 1.0, Nt.y)), cov));
       spec = mix(spec, -gl, cov);
     }
   }
+  if (onField) alb *= acOcclusion(wxz);
 }
 `;
 
