@@ -63,4 +63,10 @@ export async function seek(page, t, idle = 0) {
   await page.evaluate(([tt, ii]) => window.WINS.debug.seek(tt, ii), [t, idle]);
   await settle(page);
 }
+/** Stand at the next gate at or after `from`, as if the film had waited there. Returns its time, or null. */
+export async function hold(page, from = 0, waited = 0) {
+  const at = await page.evaluate(([ff, ww]) => window.WINS.debug.hold(ff, ww), [from, waited]);
+  await settle(page);
+  return at;
+}
 export const settle = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));

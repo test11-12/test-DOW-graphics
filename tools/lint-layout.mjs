@@ -100,11 +100,12 @@ await page.evaluate((edgePx) => {
   };
   const EDGE = edgePx; // design pixels: closer to the plate's frame than this is reported
   const inter = (p, q) => Math.max(0, Math.min(p[2], q[2]) - Math.max(p[0], q[0])) * Math.max(0, Math.min(p[3], q[3]) - Math.max(p[1], q[1]));
-  window.__frame = (t, idle) => {
+  window.__frame = (t, idle, gate) => {
     log.length = 0;
     plates.length = 0;
     backs.length = 0;
-    window.WINS.debug.seek(t, idle);
+    if (gate) window.WINS.debug.hold(t, idle);
+    else window.WINS.debug.seek(t, idle);
     const scene = document.querySelector('.scene:not(.is-leaving)');
     const stage = document.getElementById('stage').getBoundingClientRect();
     const out = [];
@@ -191,9 +192,16 @@ for (const id of ids) {
   const times = [];
   for (let t = 0; t < duration; t += Number(a.step)) times.push([+t.toFixed(2), 0]);
   times.push([duration, 0], [duration, 4], [duration, 60]);
-  for (const [t, idle] of times) {
-    const { texts, tall } = await page.evaluate(([tt, ii]) => window.__frame(tt, ii), [t, idle]);
-    const label = idle ? t + idle : t;
+  // A film standing at a gate, waiting for the viewer, draws things no other moment has.
+  const waits = await page.evaluate(() => {
+    const out = [];
+    for (let from = 0, at; (at = window.WINS.debug.hold(from, 0)) != null; from = at + 0.01) out.push(at);
+    return out;
+  });
+  for (const at of waits) times.push([at, 0.4, true], [at, 2.2, true]);
+  for (const [t, idle, gate] of times) {
+    const { texts, tall } = await page.evaluate(([tt, ii, gg]) => window.__frame(tt, ii, gg), [t, idle, !!gate]);
+    const label = gate ? `gate ${t}` : idle ? t + idle : t;
     if (tall > 1) note(`rail     the instruments are ${tall}px taller than the rail`, label);
     for (const x of texts) {
       if (x.clipped) note(`clipped  ${x.kind}  "${x.str.slice(0, 48)}"`, label);

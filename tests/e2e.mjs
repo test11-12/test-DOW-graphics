@@ -229,6 +229,18 @@ await check('phone width: nothing overflows sideways', async () => {
     ok(over <= 1, `${id} overflows by ${over}px`);
   }
   const gutter = await phone.evaluate(() => document.getElementById('stage').getBoundingClientRect().left);
+  // Held upright, a phone gets the plate alone, filling the frame, not the whole stage in miniature.
+  const plate = await phone.evaluate(() => {
+    const frame = document.querySelector('.stage-frame');
+    const r = frame.getBoundingClientRect();
+    const rail = document.querySelector('.scene:not(.is-leaving) .rail');
+    return { on: frame.classList.contains('is-plate'), ratio: r.width / r.height, railHidden: !rail || getComputedStyle(rail).visibility === 'hidden' };
+  });
+  ok(plate.on && Math.abs(plate.ratio - 872 / 478) < 0.03 && plate.railHidden, `upright phone shows the plate alone (${JSON.stringify(plate)})`);
+  await phone.setViewportSize({ width: 844, height: 390 });
+  await wait(phone, 300);
+  const wide = await phone.evaluate(() => document.querySelector('.stage-frame').classList.contains('is-plate'));
+  ok(!wide, 'turned sideways, the whole stage comes back');
   await phone.close();
   ok(gutter >= 16, `side gutter is ${gutter}px`);
 });

@@ -90,16 +90,28 @@ function sizeCanvas(layer: Layer): void {
 function placeHtml(el: HTMLElement): void {
   el.style.transform = `translate(${view.ox}px,${view.oy}px) scale(${view.scale})`;
 }
+/** The part of the design space every film keeps its plate in, with a little air and
+    room for the plate's title above it. */
+const PLATE = { x: 28, y: 16, w: 872, h: 478 };
+/** A frame narrower than this, in CSS pixels, shows the plate alone. The whole stage at
+    that width would be a postage stamp; the instruments wait off the right-hand edge
+    until the frame is wide enough, which on a phone means turning it sideways. */
+const NARROW = 520;
 function measure(): void {
   if (!s.stage) return;
   const r = s.stage.getBoundingClientRect();
   if (!r.width || !r.height) return;
-  const scale = Math.min(r.width / K.W, r.height / K.H);
+  const plate = r.width < NARROW;
+  // The style sheet gives the frame the plate's proportions, so its height follows and
+  // this runs once more through the resize observer.
+  s.stage.closest('.stage-frame')?.classList.toggle('is-plate', plate);
+  const win = plate ? PLATE : { x: 0, y: 0, w: K.W, h: K.H };
+  const scale = Math.min(r.width / win.w, r.height / win.h);
   view.width = r.width;
   view.height = r.height;
   view.scale = scale;
-  view.ox = (r.width - K.W * scale) / 2;
-  view.oy = (r.height - K.H * scale) / 2;
+  view.ox = (r.width - win.w * scale) / 2 - win.x * scale;
+  view.oy = (r.height - win.h * scale) / 2 - win.y * scale;
   view.x0 = -view.ox / scale;
   view.y0 = -view.oy / scale;
   view.x1 = (r.width - view.ox) / scale;
@@ -434,6 +446,9 @@ export interface Player extends PlayerApi {
   scrubEnd(): void;
   setRate(rate: number): void;
   refresh(): void;
+  /** For tools: stand at the next gate at or after `from`, paused, as if the story had
+      waited there for `waited` seconds. Returns the gate's time, or null if there is none. */
+  hold(from?: number, waited?: number): number | null;
   readonly state: {
     id: string | null;
     t: number;
@@ -529,6 +544,17 @@ export const player: Player = {
   },
   replay() {
     this.glideTo(0, { then: 'play' });
+  },
+  hold(from = 0, waited = 0) {
+    const g = gates().find((x) => x.at >= from - 1e-6);
+    if (!g) return null;
+    this.pause();
+    this.seek(g.at, waited);
+    s.waiting = g;
+    s.gateWait = waited;
+    render(0);
+    emit('state');
+    return g.at;
   },
   seek(t, idle = 0) {
     s.t = clampT(t);

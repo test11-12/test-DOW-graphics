@@ -343,6 +343,8 @@ const ready = Promise.all([first, whenFontsReady()]).then(() => {
       player.pause();
       player.seek(t, idleTime);
     },
+    /** Stand at the next gate at or after `from`, waiting. Returns its time, or null. */
+    hold: (from = 0, waited = 0) => player.hold(from, waited),
     stats: () => player.stats(),
   },
 };

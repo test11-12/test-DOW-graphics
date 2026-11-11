@@ -4,10 +4,11 @@
 //   node tools/shoot.mjs --scene victus-haze                 12 evenly spaced frames of the stage
 //   node tools/shoot.mjs --scene victus-haze --t 0,4.5,9     chosen story times (seconds)
 //   node tools/shoot.mjs --scene victus-haze --page          the whole page instead of the stage
+//   node tools/shoot.mjs --scene fury --gate 2               also each gate, after waiting 2 s
 //   Options: --count 12, --idle 3, --out dir, --width 1440, --height 900, --scale 1
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { ROOT, args, buildSingle, cleanup, open, seek, show } from './lib.mjs';
+import { ROOT, args, buildSingle, cleanup, hold, open, seek, show } from './lib.mjs';
 
 const a = args({ count: 12 });
 if (!a.scene) {
@@ -30,6 +31,15 @@ try {
     const name = `${a.scene}@${t.toFixed(2).padStart(5, '0')}.png`;
     await target.screenshot({ path: join(outDir, name) });
     shots.push({ t, name, caption });
+  }
+  // The states a time alone cannot reach: the film standing at a gate, waiting for the viewer.
+  if (a.gate != null && a.gate !== false) {
+    const waited = Number(a.gate) || 1.5;
+    for (let from = 0, at; (at = await hold(page, from, waited)) != null; from = at + 0.01) {
+      const name = `${a.scene}@gate-${at.toFixed(2).padStart(5, '0')}.png`;
+      await target.screenshot({ path: join(outDir, name) });
+      shots.push({ t: at, name, caption: `waiting at the gate (${waited} s)` });
+    }
   }
   const sheet = await context.newPage();
   const cols = shots.length <= 4 ? 2 : shots.length <= 12 ? 3 : 4;

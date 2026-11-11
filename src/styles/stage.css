@@ -11,6 +11,10 @@
 }
 .stage { position: absolute; inset: 0; }
 @media (max-width: 899px) { .stage-frame { aspect-ratio: 1280 / 520; min-height: 0; } }
+/* A narrow frame shows the plate alone: the player sets this class from the frame's own
+   width, so it holds for an embed in a narrow column as well as for a phone. */
+.stage-frame.is-plate, .wins-motion .stage-frame.is-plate { aspect-ratio: 872 / 478; min-height: 0; }
+.is-plate .rail { visibility: hidden; }
 
 .scene { position: absolute; inset: 0; opacity: 1; transition: opacity .36s var(--ease-in-out), transform .36s var(--ease-in-out); }
 .scene.is-entering { opacity: 0; transform: translateY(6px); }

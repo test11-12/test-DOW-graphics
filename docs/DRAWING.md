@@ -125,7 +125,8 @@ node tools/shoot.mjs --scene fury --count 15 --out out/frames/fury
 
 writes frames named `fury@SS.SS.png` and one contact sheet, `fury-sheet.png`. Add
 `--t 6.8,7.2,7.6` for chosen times, `--idle 6` to see the last frame after it has
-run on, `--page` for the whole page, `--width` and `--height` for the window.
+run on, `--gate 2` to add each gate as it looks after waiting two seconds for the
+viewer, `--page` for the whole page, `--width` and `--height` for the window.
 
 ```bash
 node tools/lint-layout.mjs --scene fury --step 0.25
