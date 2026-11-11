@@ -19,6 +19,15 @@ export const wobble = (t, seed = 0) => (Math.sin(t * 1.0 + seed * 12.9) + Math.s
 // heading unit vector (deg clockwise from north) in world axes (+x east, +z south)
 export const hdgVec = (deg, out = new THREE.Vector3()) => out.set(Math.sin(deg * Math.PI / 180), 0, -Math.cos(deg * Math.PI / 180));
 
+// sample sequences for the offline accumulation (deterministic)
+const fract = x => x - Math.floor(x);
+const R2G = 1.32471795724474602596;   // plastic number: R2 low-discrepancy sequence (k/g, k/g^2)
+const halton = (i, b) => { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; };
+// uniform point on the unit disc from two numbers in [0, 1) (Shirley-Chiu concentric map)
+const disc = (u, v) => { const a = 2 * u - 1, b = 2 * v - 1; if (a === 0 && b === 0) return [0, 0]; let r, th; if (Math.abs(a) > Math.abs(b)) { r = a; th = Math.PI / 4 * (b / a); } else { r = b; th = Math.PI / 2 - Math.PI / 4 * (a / b); } return [r * Math.cos(th), r * Math.sin(th)]; };
+// 0..n-1 in a fixed shuffled order (shutter strata, decorrelated from the other dimensions)
+const shuffled = n => { const p = Array.from({ length: n }, (_, i) => i); let s = (0x9e3779b9 ^ n) >>> 0; for (let i = n - 1; i > 0; i--) { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const j = s % (i + 1); [p[i], p[j]] = [p[j], p[i]]; } return p; };
+
 const fmt = s => { s = Math.max(0, s); const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, '0')}`; };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
 
@@ -46,6 +55,7 @@ export class Film {
     }
     this.quality = quality;
     this.pipe = new Pipeline(this.canvas, { width: W || 1280, height: H || 720, quality });
+    this.W0 = W || 1280; this.H0 = H || 720; this.accum = null;   // output size; accumulation state while renderAccum runs
     if (P.has('prof')) this.pipe.prof = {};
     // a lost graphics context (tab backgrounded on a phone, driver reset) takes every baked table with it: say so, and start clean when it returns
     this.canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); this.playing = false; this.setStatus('Graphics were reset by the browser. Reloading…'); });
@@ -104,17 +114,8 @@ export class Film {
     return c;
   }
 
-  renderFrame(t) {
-    t = clamp(t, 0, this.duration - 1e-4); this.t = t;
-    const pipe = this.pipe, shot = this.shotAt(t), lt = t - shot.t0, dt = 1 / this.fps;
-    if (shot !== this._shot) { this._shot = shot; this.def.onShot && this.def.onShot(shot, this); shot.enter && shot.enter(this); }
-    // floating origin = camera position at this instant
-    const c0 = this.cameraOf(shot, lt, t); this.origin.copy(c0.pos);
-    this.applyShot(shot, lt - dt, t - dt); pipe.snapshotPrev();
-    const c = this.applyShot(shot, lt, t);
-    pipe.origin.copy(this.origin); pipe.camAlt = this.origin.y;
-    if (c.focus) { pipe.shadowFocus.set(c.focus.x - this.origin.x, c.focus.y - this.origin.y, c.focus.z - this.origin.z); pipe.shadowRadius = c.focusRadius ?? 12; }
-    this.def.frame && this.def.frame(t, shot, lt, this, c);
+  // the shot's grade and lens at film time t (shot post over the film's, fades, dev switches)
+  postOf(shot, lt, t) {
     let post = { ...(this.def.post || {}), ...(typeof shot.post === 'function' ? shot.post(lt, t, this) : (shot.post || {})) };
     let fade = post.fade ?? 1;
     if (shot.fadeIn) fade *= smooth(0, shot.fadeIn, lt);
@@ -122,8 +123,95 @@ export class Film {
     fade *= smooth(0, this.def.fadeIn ?? 0.6, t) * (1 - smooth(this.duration - (this.def.fadeOut ?? 1.0), this.duration - 0.05, t));
     post.fade = fade; post.envKey = post.envKey ?? shot.id;
     if (this.off.size) { if (this.off.has('ao')) post.ao = false; if (this.off.has('cirrus')) post.cirrus = null; if (this.off.has('blur')) post.shutter = 0; if (this.off.has('dof')) post.dof = null; if (this.off.has('rays')) post.rays = 0; if (this.off.has('bloom')) post.bloom = 0; if (this.off.has('flare')) post.flare = null; if (this.off.has('ca')) post.ca = 0; if (this.params.get('debug')) post.debug = this.params.get('debug'); }
-    pipe.render(t, Math.floor(t * this.fps + 1e-6), post);
-    this.updateOverlays(t, shot, lt);
+    return post;
+  }
+
+  // sub: one sub-render of renderAccum() (time already jittered; camera, lens and sun jitter below); omitted for a
+  // normal frame
+  renderFrame(t, sub) {
+    t = clamp(t, 0, this.duration - 1e-4); this.t = t;
+    const pipe = this.pipe, shot = this.shotAt(t), lt = t - shot.t0, dt = 1 / this.fps;
+    if (shot !== this._shot) { this._shot = shot; this.def.onShot && this.def.onShot(shot, this); shot.enter && shot.enter(this); }
+    // floating origin = camera position at this instant
+    const c0 = this.cameraOf(shot, lt, t); this.origin.copy(c0.pos);
+    const cp = this.applyShot(shot, lt - dt, t - dt); if (sub) this.subCamera(sub, cp); pipe.snapshotPrev();
+    const c = this.applyShot(shot, lt, t); if (sub) this.subCamera(sub, c);
+    pipe.origin.copy(this.origin); pipe.camAlt = this.origin.y;
+    if (c.focus) { pipe.shadowFocus.set(c.focus.x - this.origin.x, c.focus.y - this.origin.y, c.focus.z - this.origin.z); pipe.shadowRadius = c.focusRadius ?? 12; }
+    if (sub) pipe.placeSun(this.postOf(shot, lt, t));   // passes drawn from def.frame (sea reflection) see this sub-render's sun, not the last one's
+    this.def.frame && this.def.frame(t, shot, lt, this, c);
+    const post = this.postOf(shot, lt, t);
+    if (sub) {
+      if (!sub.plain) { post.shutter = 0; post.dof = null; }     // real shutter and aperture replace the screen-space blurs
+      else if (sub.ss > 1 && post.dof && post.dof.max) post.dof = { ...post.dof, max: post.dof.max * sub.ss };
+      sub.post = post;
+    }
+    pipe.render(t, sub ? sub.frame : Math.floor(t * this.fps + 1e-6), post);
+    if (!sub) this.updateOverlays(t, shot, lt);
+  }
+  // sub-render camera: thin-lens aperture offset (the frustum sheared so the focus plane stays put) plus sub-pixel jitter
+  subCamera(s, c) {
+    const cam = this.pipe.camera, P = this.pipe;
+    if (s.plain) return;
+    let ox = s.px || 0, oy = s.py || 0;
+    if (s.lens) {
+      cam.translateX(s.lens[0]); cam.translateY(s.lens[1]);
+      const k = P.h / (2 * Math.tan(c.fov * Math.PI / 360)) / s.focus;   // px per metre of lens offset, at the focus plane
+      ox -= s.lens[0] * k; oy += s.lens[1] * k;
+    }
+    cam.setViewOffset(P.w, P.h, ox, oy, P.w, P.h);
+  }
+
+  // ---------------------------------------------------------------- offline accumulation (tools: --accum=N --ss=K)
+  // One output frame = the mean of N sub-renders of the shutter interval around t (post.shutter of a frame,
+  // centred, kept inside the shot), each jittered in time (stratified), sub-pixel position (R2), lens position over
+  // the aperture of post.dof (focus plane kept), and the shadow light across the solar disc. Screen-space motion
+  // blur and depth of field are off in the sub-renders; frame-seeded noise keeps the frame's seed; scene-referred
+  // HDR (with bloom, rays, flare) is summed and graded once, grain added once. ss = K renders everything at K x the
+  // size and filters down (Lanczos-2). Deterministic: the same t, N and K give the same image, whatever was rendered
+  // before it (per-shot caches are rebuilt and a discarded warm-up sub-render comes first; N + 1 renders in all).
+  renderAccum(t, o = {}) {
+    const N = Math.max(1, Math.round(+o.accum || 1)), K = Math.max(1, +o.ss || 1), pipe = this.pipe;
+    t = clamp(t, 0, this.duration - 1e-4);
+    pipe.setSupersample(K, this.W0, this.H0);
+    const shot = this.shotAt(t), lt = t - shot.t0, next = this.shots[this.shots.indexOf(shot) + 1];
+    const lo = shot.t0, hi = Math.min(next ? next.t0 : this.duration, this.duration) - 1e-4;
+    const frame = Math.floor(t * this.fps + 1e-6), p0 = this.postOf(shot, lt, t);
+    // o.shutter / o.dof override the shot's (look development: tools/shot.mjs t:{"accum":16,"dof":{"focus":3,"fstop":1}})
+    const shutter = o.shutter ?? p0.shutter ?? 0.5, lens = o.dof !== undefined ? o.dof : p0.dof;
+    const win = N > 1 ? Math.max(0, Math.min(1, shutter)) / this.fps : 0;
+    let a = t - win / 2; a = Math.max(lo, Math.min(a, hi - win));
+    const dof = N > 1 && lens && lens.fstop > 0 && lens.focus > 0 ? lens : null;
+    const perm = shuffled(N), SUN_R = 0.53 / 2 * Math.PI / 180;
+    this.accum = { n: N, ss: K };
+    pipe.accumBegin();
+    let fade = 0;
+    // k = -1: a discarded warm-up of sub-render 0. Some passes read what the previous render left (the sea's
+    // reflection pass runs before the sun, sky and reflection probe are updated; the sea and terrain read the cloud
+    // layer's previous position), so without it the first sample would depend on whatever was rendered before.
+    for (let it = N > 1 ? -1 : 0; it < N; it++) {
+      const k = Math.max(it, 0), sub = { frame, ss: K, plain: N === 1 };   // a single sample is the ordinary frame (screen-space blurs on), supersampled
+      let tk = t;
+      pipe.accum.skip = it < 0;
+      if (N > 1) {
+        tk = Math.max(lo, Math.min(hi, a + win * (perm[k] + 0.5) / N));
+        sub.px = (fract(0.5 + k / R2G) - 0.5) * K; sub.py = (fract(0.5 + k / (R2G * R2G)) - 0.5) * K;   // output pixels -> internal
+        if (dof) {   // aperture diameter = focal length / f-number (focal length on a 24 mm-high sensor, as in the DOF pass)
+          const c = this.cameraOf(shot, tk - shot.t0, tk), f = 0.012 / Math.tan(c.fov * Math.PI / 360), R = f / (2 * dof.fstop), d = disc(halton(k + 1, 2), halton(k + 1, 3));
+          sub.lens = [d[0] * R, d[1] * R]; sub.focus = dof.focus;
+        }
+        const s = disc(halton(k + 1, 5), halton(k + 1, 7));
+        pipe.sunJitter = { dir: [s[0] * SUN_R, s[1] * SUN_R], texel: [halton(k + 1, 11) - 0.5, halton(k + 1, 13) - 0.5] };
+      }
+      this.accum.k = k;
+      this.renderFrame(tk, sub);
+      if (it >= 0) fade += sub.post.fade;
+    }
+    pipe.sunJitter = null;
+    if (pipe.camera.view && pipe.camera.view.enabled) pipe.camera.clearViewOffset();
+    pipe.accumEnd({ ...p0, fade: fade / N });
+    this.accum = null;
+    this.t = t; this.updateOverlays(t, shot, lt);
   }
 
   // ---------------------------------------------------------------- overlays
@@ -238,9 +326,18 @@ export class Film {
 
   // ---------------------------------------------------------------- offline API (tools/render.mjs)
   offlineFrame(t) {
+    if (this.pipe.ss !== 1) this.pipe.setSupersample(1, this.W0, this.H0);   // back from a supersampled render
     this.renderFrame(t);
     const gl = this.pipe.renderer.getContext(), px = new Uint8Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
     return true;
+  }
+  // o: { accum: N sub-renders, ss: K supersampling }; returns timings (ms, wall clock, GPU finished)
+  offlineAccum(t, o) {
+    const t0 = performance.now();
+    this.renderAccum(t, o);
+    const gl = this.pipe.renderer.getContext(), px = new Uint8Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const ms = performance.now() - t0, n = Math.max(1, Math.round(+o.accum || 1)), renders = n > 1 ? n + 1 : 1;   // + the warm-up
+    return { accum: n, ss: Math.max(1, +o.ss || 1), renders, ms: Math.round(ms), msPerSub: Math.round(ms / renders) };
   }
   async audioChunks() {
     const buf = await this.soundReady; if (!buf) return [];
@@ -254,7 +351,8 @@ export function startFilm(def) {
   const film = new Film(def);
   window.FILM = {
     ready: film.ready, duration: def.duration, fps: film.fps, film,
-    renderFrame: t => film.offlineFrame(t),
+    // renderFrame(t) as always; renderFrame(t, { accum: N, ss: K }) accumulates / supersamples (offline quality)
+    renderFrame: (t, o) => o && ((+o.accum || 1) > 1 || (+o.ss || 1) > 1) ? film.offlineAccum(t, o) : film.offlineFrame(t),
     audioChunks: () => film.audioChunks(),
     shots: def.shots.map(s => ({ id: s.id, name: s.name, t0: s.t0, t1: s.t1, note: s.note || '' })),
   };

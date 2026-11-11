@@ -1,8 +1,9 @@
 // Dev helper: render single frames of a built film at given times and save PNGs.
-//   node tools/shot.mjs <film> <outPrefix> [--w=960 --h=540] [--msaa=4] t1[:json] t2[:json] ...
-import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)('playwright');
+//   node tools/shot.mjs <film> <outPrefix> [--w=960 --h=540] [--msaa=4] [--accum=N --ss=K] [--gpu ...] t1[:json] t2[:json] ...
+//   --accum=N: each still is the mean of N jittered sub-renders (motion blur, anti-aliasing, soft sun shadows, lens
+//   depth of field); --ss=K: rendered at K x the size and filtered down; --gpu: WebGL on the real GPU (tools/gpu.mjs)
 import path from 'node:path';
+import { launchBrowser, checkGL } from './gpu.mjs';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -11,8 +12,10 @@ const film = args.shift(), prefix = args.shift();
 const opt = Object.fromEntries(args.filter(a => a.startsWith('--')).map(a => { const s = a.slice(2), i = s.indexOf('='); return i < 0 ? [s, '1'] : [s.slice(0, i), s.slice(i + 1)]; }));
 const times = args.filter(a => !a.startsWith('--'));
 const W = +(opt.w || 960), H = +(opt.h || 540);
-const browser = await chromium.launch({ args: ['--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'] });
+const browser = await launchBrowser(opt, ['--ignore-gpu-blocklist', '--enable-unsafe-swiftshader']);
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
+await checkGL(page, opt);
+const acc = opt.accum || opt.ss ? { ...(opt.accum ? { accum: +opt.accum } : {}), ...(opt.ss ? { ss: +opt.ss } : {}) } : null;
 const logs = [];
 page.on('console', m => { const t = m.text(); if (!/GPU stall|GL Driver Message/.test(t)) logs.push(`[${m.type()}] ${t}`); });
 page.on('pageerror', e => logs.push('[pageerror] ' + e.message));
@@ -22,14 +25,16 @@ await page.goto('file://' + path.join(root, 'dist', `${film}.offline.html`) + '?
 await page.waitForFunction(() => window.FILM && window.FILM.ready, null, { timeout: 900000 });
 await page.evaluate(() => window.FILM.ready);
 console.log('ready in', Date.now() - t0, 'ms');
+if (opt.gpu) await checkGL(page, opt, 'film');
 let i = 0;
 for (const spec of times) {
   const k = spec.indexOf(':');
   const t = parseFloat(k < 0 ? spec : spec.slice(0, k));
-  const o = k < 0 ? {} : JSON.parse(spec.slice(k + 1));
+  const o = { ...(acc || {}), ...(k < 0 ? {} : JSON.parse(spec.slice(k + 1))) };
   const t1 = Date.now();
-  await page.evaluate(([t, o]) => window.FILM.renderFrame(t, o), [t, o]);
+  const res = await page.evaluate(([t, o]) => window.FILM.renderFrame(t, o), [t, o]);
   const ms = Date.now() - t1;
+  if (res && res.accum) console.log(`  accum ${res.accum} ss ${res.ss}: ${res.ms} ms, ${res.renders} sub-renders, ${res.msPerSub} ms each`);
   if (opt.prof) console.log('  prof', JSON.stringify(await page.evaluate(() => { const p = window.FILM.film.pipe.prof; return Object.fromEntries(Object.entries(p).map(([k, v]) => [k, Math.round(v)])); })));
   const out = `${prefix}_${String(i++).padStart(2, '0')}.png`;
   if (opt.canvas) { const b64 = await page.evaluate(() => document.getElementById('view').toDataURL('image/png').split(',')[1]); fs.writeFileSync(out, Buffer.from(b64, 'base64')); }

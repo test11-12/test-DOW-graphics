@@ -621,6 +621,9 @@ ${NOISE}
 uniform sampler2D tColor, tBloom, tDetail, tRays, tFlare;
 uniform vec2 uRes; uniform float uFrame, uExposure, uBloom, uVignette, uGrain, uCA, uLensK, uFade, uSat, uContrast, uSharpen, uRays, uFlare;
 uniform vec3 uWB, uLift, uTint, uBloomTint; uniform int uMode; uniform vec4 uThermal; // gain, level, noise, polarity
+#ifdef SS_FINAL
+uniform float uSharpenPx;
+#endif
 varying vec2 vUv;
 vec3 agxCurve(vec3 x){ vec3 x2=x*x, x4=x2*x2; return 15.5*x4*x2-40.14*x4*x+31.96*x4-6.868*x2*x+0.4298*x2+0.1191*x-0.00232; }
 vec3 agx(vec3 v){
@@ -643,7 +646,11 @@ void main(){
     col = vec3(fetch(uv+dir).r, fetch(uv).g, fetch(uv-dir).b);
   } else col = fetch(uv);
   if (uSharpen > 0.0){
+    #ifdef SS_FINAL
+    vec2 t = uSharpenPx/uRes;    // supersampled: the kernel keeps its size in output pixels
+    #else
     vec2 t = 1.0/uRes;
+    #endif
     vec3 blur = (texture2D(tColor, uv+vec2(t.x,0)).rgb+texture2D(tColor, uv-vec2(t.x,0)).rgb+texture2D(tColor, uv+vec2(0,t.y)).rgb+texture2D(tColor, uv-vec2(0,t.y)).rgb)*0.25;
     col += (texture2D(tColor, uv).rgb-blur)*uSharpen;
   }
@@ -670,6 +677,50 @@ void main(){
     o = o*uTint+uLift*(1.0-o);
   }
   // sensor grain, heavier in the mids and shadows
+  if (uGrain > 0.0){
+    vec2 g = gl_FragCoord.xy/1.6+vec2(hash11(uFrame*0.37)*731.0, hash11(uFrame*0.73+4.1)*557.0);
+    float n = texture2D(tDetail, g/512.0).a + texture2D(tDetail, (g+97.3)/512.0*1.93).a - 1.0;
+    float l = dot(o, vec3(0.3333));
+    o += n*uGrain*(0.35+0.65*(1.0-l));
+  }
+  o *= uFade;
+  #ifndef SS_FINAL
+  o += (hash12(gl_FragCoord.xy+uFrame*3.1)+hash12(gl_FragCoord.xy*1.7+uFrame*5.3)-1.0)/255.0;
+  #endif
+  gl_FragColor = vec4(clamp(o,0.0,1.0), 1.0);
+}`;
+// ---- offline accumulation (Film.renderAccum): sum of the HDR frame (scene, bloom, rays, flare, times exposure)
+// over sub-renders, read back by the final pass once
+const ACCUM_FRAG = /* glsl */`
+precision highp float;
+uniform sampler2D tColor, tBloom, tRays, tFlare, tAcc;
+uniform vec4 uK;              // bloom, rays, flare strength, exposure (this sub-render's weight)
+uniform vec3 uBloomTint; uniform float uFirst;
+varying vec2 vUv;
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec3 c = texture2D(tColor, vUv).rgb + texture2D(tBloom, vUv).rgb*uK.x*uBloomTint + texture2D(tRays, vUv).rgb*uK.y + texture2D(tFlare, vUv).rgb*uK.z;
+  c = max(c, vec3(0.0))*uK.w;
+  gl_FragColor = vec4((uFirst > 0.5 ? vec3(0.0) : texelFetch(tAcc, p, 0).rgb)+c, 1.0);
+}`;
+// supersampled output: Lanczos-2 downsample of the display-referred frame by uK, then the sensor grain, fade and
+// dither that the final pass leaves out at the internal size (same formulas, at output pixels)
+const PRESENT_FRAG = /* glsl */`
+precision highp float;
+${NOISE}
+uniform sampler2D tIn, tDetail; uniform float uK, uGrain, uFade, uFrame;
+float lz(float x){ x = abs(x); if (x >= 2.0) return 0.0; if (x < 1e-4) return 1.0; float a = 3.14159265*x; return 2.0*sin(a)*sin(a*0.5)/(a*a); }
+void main(){
+  ivec2 isz = textureSize(tIn, 0);
+  vec2 c = gl_FragCoord.xy*uK;
+  int r = int(ceil(2.0*uK)); ivec2 ic = ivec2(floor(c));
+  vec3 acc = vec3(0.0); float ws = 0.0;
+  for (int j=-r;j<=r;j++) for (int i=-r;i<=r;i++){
+    ivec2 q = ic+ivec2(i,j); vec2 d = (vec2(q)+0.5-c)/uK;
+    float w = lz(d.x)*lz(d.y); if (w == 0.0) continue;
+    acc += texelFetch(tIn, clamp(q, ivec2(0), isz-1), 0).rgb*w; ws += w;
+  }
+  vec3 o = acc/ws;
   if (uGrain > 0.0){
     vec2 g = gl_FragCoord.xy/1.6+vec2(hash11(uFrame*0.37)*731.0, hash11(uFrame*0.73+4.1)*557.0);
     float n = texture2D(tDetail, g/512.0).a + texture2D(tDetail, (g+97.3)/512.0*1.93).a - 1.0;
@@ -782,6 +833,13 @@ export class Pipeline {
       uWB: { value: new THREE.Vector3(1, 1, 1) }, uLift: { value: new THREE.Vector3(0, 0, 0) }, uTint: { value: new THREE.Vector3(1, 1, 1) }, uBloomTint: { value: new THREE.Vector3(1, 1, 1) },
       uMode: { value: 0 }, uThermal: { value: new THREE.Vector4(2.2, 0.3, 0.06, 0) },
     });
+    // offline accumulation and supersampling (Film.renderAccum); idle unless switched on
+    this.accum = null;       // set between accumBegin() and accumEnd(): render() then accumulates instead of grading
+    this.sunJitter = null;   // { dir:[x,y] rad across the solar disc, texel:[x,y] shadow-map texels } for one sub-render
+    this.ss = 1;             // supersampling factor: internal buffers at ss x the canvas
+    this.pAccum = new Pass(ACCUM_FRAG, { tColor: { value: null }, tBloom: { value: null }, tRays: { value: null }, tFlare: { value: null }, tAcc: { value: null }, uK: { value: new THREE.Vector4() }, uBloomTint: { value: new THREE.Vector3(1, 1, 1) }, uFirst: { value: 1 } });
+    this.pFinalSS = new Pass(FINAL_FRAG, { ...this.pFinal.u, uSharpenPx: { value: 1 } }, { defines: { SS_FINAL: '' } });
+    this.pPresent = new Pass(PRESENT_FRAG, { tIn: { value: null }, tDetail: shared.tDetail, uK: { value: 1 }, uGrain: { value: 0 }, uFade: { value: 1 }, uFrame: shared.uFrame });
 
     // environment probe (image-based lighting for PBR materials)
     this.pmrem = new THREE.PMREMGenerator(r);
@@ -829,7 +887,7 @@ export class Pipeline {
     this.rtRayA = new THREE.WebGLRenderTarget(w4, h4, { ...hf, depthBuffer: false }); this.rtRayB = new THREE.WebGLRenderTarget(w4, h4, { ...hf, depthBuffer: false });
     this.rtFlare = new THREE.WebGLRenderTarget(w4, h4, { ...hf, depthBuffer: false });
     this.bloom = []; this.bloomUp = [];
-    let bw = w, bh = h;
+    let bw = Math.round(w / this.ss), bh = Math.round(h / this.ss);   // supersampled: the same pyramid as at the output size
     for (let i = 0; i < q.bloomLevels; i++) {
       bw = Math.max(2, bw >> 1); bh = Math.max(2, bh >> 1);
       this.bloom.push(new THREE.WebGLRenderTarget(bw, bh, { ...hf, depthBuffer: false }));
@@ -893,16 +951,7 @@ export class Pipeline {
     S.uInvProj.value.copy(cam.projectionMatrixInverse);
     S.uCamRot.value.setFromMatrix4(cam.matrixWorld);
 
-    // sun light + hero shadow frustum
-    const sunC = this.atmo.sunIrradiance(this.camAlt, S.uSunColor.value);
-    const m = Math.max(sunC.r, sunC.g, sunC.b, 1e-6);
-    this.sun.color.setRGB(sunC.r / m, sunC.g / m, sunC.b / m);
-    this.sun.intensity = m * (post.sunScale ?? 1);
-    const sr = this.shadowRadius, sh = this.sun.shadow.camera;
-    this.sun.target.position.copy(this.shadowFocus);
-    this.sun.position.copy(this.shadowFocus).addScaledVector(this.atmo.sunDir, sr * 4);
-    sh.left = -sr; sh.right = sr; sh.top = sr; sh.bottom = -sr; sh.near = 0.5; sh.far = sr * 8; sh.updateProjectionMatrix();
-    this.sun.updateMatrixWorld(); this.sun.target.updateMatrixWorld();
+    this.placeSun(post);
 
     // sky LUT + hemisphere irradiance only when sun / altitude / haze change; IBL when the key changes
     const A = this.atmo.uniforms, sk = `${A.uSunDir.value.x.toFixed(4)},${A.uSunDir.value.y.toFixed(4)},${A.uSunDir.value.z.toFixed(4)},${Math.round(this.camAlt / 25)},${A.uHaze.value},${A.uHazeH.value},${A.uMieG.value},${A.uMS.value}`;
@@ -1068,6 +1117,31 @@ export class Pipeline {
     // 12. lens, tone map, grade
     uf.tColor.value = cur.texture; uf.tBloom.value = up;
     uf.uExposure.value = exposure; uf.uBloom.value = post.bloom ?? 0.06;
+    this.grade(post);
+    if (post.debug === 'scene') uf.tColor.value = sceneTex;
+    else if (post.debug === 'ao') uf.tColor.value = this.rtAO.texture;
+    else if (post.debug === 'vel') uf.tColor.value = this.rtVelFull.texture;
+    else if (post.debug === 'tile') uf.tColor.value = this.rtTileN.texture;
+    if (this.accum) { if (!this.accum.skip) this.accumAdd(); this.mark('final'); return; }
+    this.pFinal.render(r, null);
+    this.mark('final');
+  }
+  // sun light + hero shadow frustum (from camAlt, shadowFocus, shadowRadius; jittered while accumulating)
+  placeSun(post) {
+    const sunC = this.atmo.sunIrradiance(this.camAlt, this.shared.uSunColor.value);
+    const m = Math.max(sunC.r, sunC.g, sunC.b, 1e-6);
+    this.sun.color.setRGB(sunC.r / m, sunC.g / m, sunC.b / m);
+    this.sun.intensity = m * (post.sunScale ?? 1);
+    const sr = this.shadowRadius, sh = this.sun.shadow.camera;
+    this.sun.target.position.copy(this.shadowFocus);
+    this.sun.position.copy(this.shadowFocus).addScaledVector(this.atmo.sunDir, sr * 4);
+    sh.left = -sr; sh.right = sr; sh.top = sr; sh.bottom = -sr; sh.near = 0.5; sh.far = sr * 8; sh.updateProjectionMatrix();
+    if (this.sunJitter) this.jitterSun(sr);
+    this.sun.updateMatrixWorld(); this.sun.target.updateMatrixWorld();
+  }
+  // lens and grade uniforms of the final pass from a shot's post
+  grade(post) {
+    const uf = this.pFinal.u;
     uf.uVignette.value = post.vignette ?? 0.25; uf.uGrain.value = post.grain ?? 0.035; uf.uCA.value = post.ca ?? 0.0012;
     uf.uLensK.value = post.lensK ?? 0; uf.uFade.value = post.fade ?? 1; uf.uSat.value = post.sat ?? 1.12; uf.uContrast.value = post.contrast ?? 1.12;
     uf.uSharpen.value = post.sharpen ?? 0;
@@ -1075,12 +1149,72 @@ export class Pipeline {
     uf.uBloomTint.value.fromArray(post.bloomTint || [1, 1, 1]);
     uf.uMode.value = post.mode === 'thermal' ? 1 : 0;
     if (post.thermal) uf.uThermal.value.fromArray(post.thermal);
-    if (post.debug === 'scene') uf.tColor.value = sceneTex;
-    else if (post.debug === 'ao') uf.tColor.value = this.rtAO.texture;
-    else if (post.debug === 'vel') uf.tColor.value = this.rtVelFull.texture;
-    else if (post.debug === 'tile') uf.tColor.value = this.rtTileN.texture;
-    this.pFinal.render(r, null);
-    this.mark('final');
+  }
+
+  // ---------------------------------------------------------------- offline accumulation and supersampling
+  // Used by Film.renderAccum (tools/render.mjs and tools/shot.mjs with --accum / --ss); none of it runs otherwise.
+  // Supersampling: every internal buffer at k x (w, h); the canvas stays (w, h) and accumEnd() filters down into it.
+  setSupersample(k, w, h) {
+    k = Math.max(1, +k || 1);
+    if (this.ss === k && this.w === Math.round(w * k) && this.h === Math.round(h * k)) return;
+    this.ss = k; this.w = 0;       // the bloom pyramid depends on k: rebuild everything
+    this.setSize(w * k, h * k);
+    if (k > 1) this.renderer.setSize(Math.round(w), Math.round(h), false);
+  }
+  // start a sum of sub-renders: until accumEnd(), render() adds its HDR frame (with bloom, rays, flare and
+  // exposure applied) into a float buffer instead of grading it. The caches that otherwise keep whatever the
+  // first frame of a shot computed (sky table, reflection probe, cloud ambient) are rebuilt for this frame, so an
+  // accumulated frame does not depend on what was rendered before it.
+  accumBegin() {
+    this.skyKey = null; this.envKey = null; if (this.clouds) this.clouds._ambKey = null;
+    const w = this.w, h = this.h;
+    if (!this.rtAcc || this.rtAcc[0].width !== w || this.rtAcc[0].height !== h) {
+      this.rtAcc?.forEach(t => t.dispose());
+      const f32 = this.floatLinear && !!this.renderer.extensions.get('EXT_color_buffer_float');
+      const o = { type: f32 ? THREE.FloatType : THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
+      this.rtAcc = [new THREE.WebGLRenderTarget(w, h, o), new THREE.WebGLRenderTarget(w, h, o)];
+    }
+    this.accum = { n: 0, i: 0 };
+  }
+  accumAdd() {
+    const a = this.accum, u = this.pAccum.u, uf = this.pFinal.u;
+    u.tColor.value = uf.tColor.value; u.tBloom.value = uf.tBloom.value; u.tRays.value = uf.tRays.value; u.tFlare.value = uf.tFlare.value;
+    u.uK.value.set(uf.uBloom.value, uf.uRays.value, uf.uFlare.value, uf.uExposure.value); u.uBloomTint.value.copy(uf.uBloomTint.value);
+    u.tAcc.value = this.rtAcc[a.i].texture; u.uFirst.value = a.n === 0 ? 1 : 0;
+    this.pAccum.render(this.renderer, this.rtAcc[1 - a.i]);
+    a.i = 1 - a.i; a.n++;
+  }
+  // grade and tone-map the mean of the sub-renders once, with `post` (the frame's grade; its fade already averaged
+  // over the shutter), add grain once, and write the canvas (through the downsampling filter when supersampled)
+  accumEnd(post) {
+    const a = this.accum; this.accum = null;
+    if (!a || !a.n) return;
+    const r = this.renderer, uf = this.pFinal.u;
+    this.grade(post);
+    uf.tColor.value = this.rtAcc[a.i].texture; uf.tBloom.value = this.black; uf.uBloom.value = 0;
+    uf.tRays.value = this.black; uf.uRays.value = 0; uf.tFlare.value = this.black; uf.uFlare.value = 0;
+    uf.uExposure.value = 1 / a.n;
+    if (this.ss > 1) {
+      if (!this.rtOut || this.rtOut.width !== this.w || this.rtOut.height !== this.h) {
+        this.rtOut?.dispose();
+        this.rtOut = new THREE.WebGLRenderTarget(this.w, this.h, { type: THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+      }
+      const p = this.pPresent.u; p.uGrain.value = uf.uGrain.value; p.uFade.value = uf.uFade.value; p.uK.value = this.ss;
+      uf.uGrain.value = 0; uf.uFade.value = 1; this.pFinalSS.u.uSharpenPx.value = this.ss;
+      this.pFinalSS.render(r, this.rtOut);
+      p.tIn.value = this.rtOut.texture;
+      this.pPresent.render(r, null);
+    } else this.pFinal.render(r, null);
+  }
+  // one sub-render's shadow light: tilted across the solar disc (0.53 deg) and its shadow-map raster shifted by a
+  // fraction of a texel. Only the hero shadow map moves: the sky, sun disc and baked terrain keep the true sun.
+  jitterSun(sr) {
+    const j = this.sunJitter, d = this.atmo.sunDir, e1 = this._j1 || (this._j1 = new THREE.Vector3()), e2 = this._j2 || (this._j2 = new THREE.Vector3());
+    e1.set(0, 1, 0).cross(d); if (e1.lengthSq() < 1e-6) e1.set(1, 0, 0).cross(d); e1.normalize(); e2.copy(d).cross(e1).normalize();
+    const dx = j.dir?.[0] || 0, dy = j.dir?.[1] || 0, ts = 2 * sr / this.sun.shadow.mapSize.x, tx = (j.texel?.[0] || 0) * ts, ty = (j.texel?.[1] || 0) * ts;
+    const dir = this._v.copy(d).addScaledVector(e1, dx).addScaledVector(e2, dy).normalize();
+    this.sun.target.position.copy(this.shadowFocus).addScaledVector(e1, tx).addScaledVector(e2, ty);
+    this.sun.position.copy(this.sun.target.position).addScaledVector(dir, sr * 4);
   }
 }
 
