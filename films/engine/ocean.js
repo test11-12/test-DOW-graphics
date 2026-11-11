@@ -58,6 +58,7 @@ uniform mat4 uInvProj, uReflVP, uShadowMat; uniform mat3 uCamRot;
 uniform vec4 uWakeRegion; uniform vec3 uOrigin, uSunColor, uWaterCol, uFoamCol, uShadowK; uniform vec2 uRes;
 uniform float uPixAngle, uReflOn, uFogK, uDetailAmp, uGlitter, uThermal, uSparkle, uWhitecap, uSlick; uniform int uShadeWaves;
 uniform vec3 uCloudK;     // cloud layer for reflections and shadows: mid altitude (m), shadow strength, reflection strength
+uniform sampler2D tShore; uniform vec4 uShore;   // shore map (r: 1 inside structures and rock at the waterline, blurred): centre x, z, size (m), strength
 uniform vec2 uPh[NS]; uniform float uSc[NS];
 ${CLOUD_COVER}
 varying vec2 vUv;
@@ -185,6 +186,25 @@ void main(){
     float wc = smoothstep(uWhitecap, uWhitecap+0.16, pinch*uChop+0.22*(wn-0.5)+0.10*(slick-0.5));
     wc *= smoothstep(0.35, 0.6, wn+wc*0.3)*clamp(1.0-fp*0.02, 0.25, 1.0);
     foam = max(foam, wc*0.9);
+  }
+  // shore: lace foam and stirred water hugging whatever stands in the sea, lapping in and out with the swell
+  if (uShore.w > 0.0){
+    vec2 suv = (vW-uShore.xy)/uShore.z+0.5;
+    if (suv.x > 0.002 && suv.y > 0.002 && suv.x < 0.998 && suv.y < 0.998){
+      float sl = clamp(log2(fp/uShore.z*float(textureSize(tShore, 0).x))+0.5, 0.0, 6.0);
+      float s = textureLod(tShore, suv, sl).r;
+      if (s > 0.01){
+        float c1 = dtex(duv(4)*1.7+0.21, 4).b, fb = dtex(duv(3), 3).r;
+        float lace = smoothstep(0.3, 0.56, c1);
+        float lap = 0.5+0.5*sin(uTime*0.9+dot(vW, vec2(0.23, 0.19))+fb*7.0);
+        float n = clamp(lace*0.65+fb*0.5, 0.0, 1.0);
+        n = mix(n, 0.55, clamp(fp*0.5, 0.0, 1.0));
+        float band = smoothstep(0.26+0.24*lap, 0.82, s)*0.8;        // s falls from 1 at the structure to 0 about 2 m out
+        foam = max(foam, smoothstep(1.0-band*1.05, 1.0-band*1.05+0.2, n)*0.85*min(uShore.w, 1.0));
+        churn = max(churn, smoothstep(0.1, 0.75, s)*0.5*min(uShore.w, 1.0));
+        var += s*0.02;
+      }
+    }
   }
   vec3 N = normalize(vec3(-slope.x, 1.0-uChop*pinch*0.6, -slope.y));
   float sigma = sqrt(max(var, 1.0e-5));
@@ -337,6 +357,7 @@ export class Ocean {
       uWaterCol: { value: new THREE.Vector3(0.018, 0.06, 0.066) }, uFoamCol: { value: new THREE.Vector3(0.86, 0.9, 0.92) },
       uPixAngle: { value: 0.001 }, uReflOn: { value: 0 }, uFogK: { value: 0 }, uDetailAmp: { value: 1 }, uGlitter: { value: 1 }, uThermal: { value: 0 }, uChop: mu.uChop,
       uSparkle: { value: 0.8 }, uWhitecap: { value: 0 }, uSlick: { value: 0.6 }, uCloudK: this.cloudK, uShadeWaves: { value: NW },
+      tShore: { value: pipe.black }, uShore: { value: new THREE.Vector4(0, 0, 1, 0) },
       uCov: cl ? cl.cover.uCov : { value: new THREE.Vector4(0, 1, 0, 0) }, uCovHole: cl ? cl.cover.uCovHole : { value: new THREE.Vector4(0, 0, 1, 0) },
       uWA: mu.uWA, uWB: mu.uWB, uCalm: mu.uCalm, uCalmK: mu.uCalmK,
       uPh: { value: Array.from({ length: NS }, () => new THREE.Vector2()) }, uSc: { value: this.scales },
@@ -411,6 +432,9 @@ export class Ocean {
   }
   // sheltered water (a harbour basin): waves scale down to `k` inside r0 and recover by r1
   setShelter(x, z, r0, r1, k) { this.meshUniforms.uCalm.value.set(x, z, r0, r1); this.meshUniforms.uCalmK.value = k; }
+  // shore map: a top-down texture (r: 1 inside structures and rock at the waterline, blurred outwards) covering a
+  // square of `size` metres centred on x, z; the sea draws lace foam and stirred water against it. k: strength
+  setShore(tex, x, z, size, k = 1) { this.uniforms.tShore.value = tex; this.uniforms.uShore.value.set(x, z, size, tex ? k : 0); }
 
   _ribbons(t) {
     const P = this.wPos.array, D = this.wDat.array, I = this.wIdx.array;

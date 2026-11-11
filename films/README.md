@@ -154,7 +154,10 @@ displaced grid depth-only and lights it in one full-screen pass (sea level is wo
 `ocean.update(t, {wake: {x, z, size}, reflect, whitecap, glitter, sparkle, slick, thermal})` once per frame
 after the camera is posed. `ocean.heightAt(x, z, t)` is the same wave sum on the CPU, for hulls riding the
 sea; `ocean.wakes` (track functions) and `ocean.discs` (splash rings) feed the foam map;
-`ocean.setShelter(x, z, r0, r1, k)` calms the water inside a harbour.
+`ocean.setShelter(x, z, r0, r1, k)` calms the water inside a harbour. `ocean.setShore(texture, x, z, size, k)`
+takes a top-down map of what stands in the water (1 inside structures and rock at the waterline, fading
+outwards) and draws lace foam and stirred water against it; `src/corsair_port.js` renders one from the harbour
+models (`port.userData.shoreMap(renderer)`).
 
 **Effects** (`engine/fx.js`): `makePlume` (ray-marched afterburner with shock cells), `makeHeatHaze`,
 `makeShockCone`, `Trail` (stateless particles), `makeGlow`.

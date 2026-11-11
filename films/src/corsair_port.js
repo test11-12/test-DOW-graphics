@@ -2,7 +2,7 @@
 // from assets/corsair/port_*.glb. A generic naval maintenance waterfront standing in for the facility at
 // Bandar Abbas, not a survey of it: same layout and coordinates as the procedural port it replaces.
 //
-// Light baked in Blender for the film's fixed sun (az 80, el 16) rides along with each asset:
+// Light baked in Blender for the film's fixed sun (az 80, el 11) rides along with each asset:
 //   - stones and gravel carry per-vertex occlusion and sun visibility (_AO, _SUN attributes);
 //   - structures carry an occlusion texture whose G channel is sun visibility (material extras: dowlm = 1).
 // Here the sun visibility scales the direct light (static shadows at every range, where the engine's single
@@ -19,7 +19,7 @@ export const PORT = {
   hits: [[-2.2, 41.2], [8.4, 22.5], [-20.2, 26]],
 };
 
-const FILES = ['port_rocks', 'port_rocks_near', 'port_pier', 'port_gantry', 'port_yard'];
+const FILES = ['port_rocks', 'port_rocks_near', 'port_pier', 'port_gantry', 'port_sub', 'port_yard', 'port_sheds', 'port_ground'];
 const NEAR_LOD = 150;   // m: stones within this range of the camera use the detailed version
 
 const VERT_PARS = /* glsl */`
@@ -152,6 +152,50 @@ export async function buildPort(pipe, opts = {}) {
   root.traverse(o => { if (o.isMesh && /^(craft_|buoy_)/.test(o.name)) movers.push({ o, p: o.position.clone(), buoy: o.name.startsWith('buoy'), len: o.name.includes('tug') ? 8 : o.name.includes('launch') ? 5 : 1.1 }); });
   root.userData = {
     PORT, uniforms: U,
+    // Shore map for the sea: where structures and rock stand in the water. The port is drawn from the waterline
+    // downwards, counting faces by which way they point (a ray that starts inside a closed solid leaves through
+    // one more back face than front faces), then grown a little and blurred so foam can fade away from them. Call once after loading.
+    shoreMap(renderer, cx = 2, cz = 96, size = 448, res = 2048) {
+      const half = size / 2, cam = new THREE.OrthographicCamera(-half, half, half, -half, 0.02, 40);
+      cam.position.set(cx, 0, cz); cam.up.set(0, 0, -1); cam.lookAt(cx, -1, cz); cam.updateMatrixWorld(true);
+      const rtA = new THREE.WebGLRenderTarget(res, res, { type: THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false });
+      const rtB = new THREE.WebGLRenderTarget(res, res, { type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: false });
+      const rtC = new THREE.WebGLRenderTarget(res, res, { type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: false, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+      const count = new THREE.ShaderMaterial({ side: THREE.DoubleSide, depthTest: false, depthWrite: false, blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+        vertexShader: 'void main(){ gl_Position = projectionMatrix*modelViewMatrix*vec4(position, 1.0); }', fragmentShader: 'void main(){ gl_FragColor = vec4(gl_FrontFacing ? -1.0 : 1.0); }' });
+      const scene = new THREE.Scene(), parent = root.parent, vis = [];
+      scene.add(root); scene.overrideMaterial = count;
+      root.traverse(o => { if (o.isMesh) { vis.push([o, o.visible, o.frustumCulled]); o.visible = !/_A$/.test(o.name) && !/^(core_|land|beach|ground)/.test(o.name); o.frustumCulled = false; } });
+      const old = renderer.getRenderTarget(), cc = new THREE.Color(); renderer.getClearColor(cc); const ca = renderer.getClearAlpha();
+      renderer.setRenderTarget(rtA); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(scene, cam);
+      for (const [o, v, f] of vis) { o.visible = v; o.frustumCulled = f; }
+      scene.remove(root); if (parent) parent.add(root);
+      // threshold the count and flip v (the camera looks down with north up; the sea wants +z up); grow the solids by
+      // 0.6 m so that piles and single stones count, then blur: the result falls off smoothly over about 2 m
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({ depthTest: false, depthWrite: false,
+        uniforms: { tIn: { value: rtA.texture }, uDir: { value: new THREE.Vector2(1 / res, 0) }, uMode: { value: 0 } },
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: `precision highp float; uniform sampler2D tIn; uniform vec2 uDir; uniform int uMode; varying vec2 vUv;
+          void main(){
+            float m = 0.0, acc = 0.0, w = 0.0;
+            for (int i=-8;i<=8;i++){
+              vec2 q = vUv+uDir*float(i); float v = texture2D(tIn, uMode == 0 ? vec2(q.x, 1.0-q.y) : q).r;
+              if (uMode == 0) v = step(0.5, v);
+              if (uMode < 2){ if (i >= -3 && i <= 3) m = max(m, v); }
+              else { float k = exp(-float(i*i)/22.0); acc += v*k; w += k; }
+            }
+            gl_FragColor = vec4(vec3(uMode < 2 ? m : acc/w), 1.0);
+          }` }));
+      const qs = new THREE.Scene(), qc = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1); qs.add(quad);
+      const QU = quad.material.uniforms, step = (src, dst, mode, dx, dy) => { QU.tIn.value = src.texture; QU.uMode.value = mode; QU.uDir.value.set(dx / res, dy / res); renderer.setRenderTarget(dst); renderer.render(qs, qc); };
+      const rtD = new THREE.WebGLRenderTarget(res, res, { type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: false });
+      step(rtA, rtB, 0, 1, 0); step(rtB, rtD, 1, 0, 1); step(rtD, rtB, 2, 1, 0); step(rtB, rtC, 2, 0, 1);
+      rtD.dispose();
+      renderer.setRenderTarget(old); renderer.setClearColor(cc, ca);
+      rtA.dispose(); rtB.dispose(); count.dispose(); quad.material.dispose(); quad.geometry.dispose();
+      rtC.texture.wrapS = rtC.texture.wrapT = THREE.ClampToEdgeWrapping;
+      return { texture: rtC.texture, x: cx, z: cz, size };
+    },
     // per frame: camera world position (stone LOD per chunk); film time and the ocean (craft and buoys afloat)
     update(cam, t, ocean) {
       for (const p of pairs) {

@@ -13,7 +13,7 @@ import { attitude } from '../engine/geo.js';
 import { Trail } from '../engine/fx.js';
 import { buildCorsair, buildShip } from './corsair_model.js';
 import { buildPort, PORT } from './corsair_port.js';
-import { makeBlast, resolveBlastLight } from './corsair_fx.js';
+import { makeBlast, finishBlasts } from './corsair_fx.js';
 
 const NARRATION = __NARRATION__;
 const SUN = { az: 80, el: +new URLSearchParams(typeof location !== 'undefined' ? location.search : '').get('sunel') || 11 };   // low morning sun, east
@@ -67,6 +67,7 @@ async function build(film) {
   }));
   const port = await buildPort(pipe); pipe.scene.add(port);
   port.traverse(o => { if (o.isMesh) o.layers.set(LAYER.STATIC); });
+  if (!film.off.has('shore')) { const sm = port.userData.shoreMap(pipe.renderer); ocean.setShore(sm.texture, sm.x, sm.z, sm.size, +film.params.get('shorek') || 1); }   // foam where the sea meets pier, quay and rock
   // the coast range north of the city: two ragged ridgelines whose tops stand clear of the haze layer
   const hills = new THREE.Group(); pipe.scene.add(hills);
   for (const [zc, hmax, seed, tone] of [[-27000, 1500, 3.1, 0.2], [-41000, 2400, 7.7, 0.24]]) {
@@ -83,11 +84,10 @@ async function build(film) {
   }
   const ship = buildShip(250); pipe.scene.add(ship); ship.traverse(o => { if (o.isMesh) o.layers.set(LAYER.STATIC); });
   // the three detonations (src/corsair_fx.js); the shock shakes dust off the pier, the finger pier and the gantry
-  const P = PORT.pier, F = PORT.finger, Y = P.y;
-  const dust = [[P.x0, Y - 0.1, PORT.quayZ, P.x0, Y - 0.1, P.z1], [P.x1, Y - 0.1, PORT.quayZ, P.x1, Y - 0.1, P.z1], [P.x0, Y - 0.6, P.z1, P.x1, Y - 0.6, P.z1],
+  const PP = PORT.pier, F = PORT.finger, Y = PP.y;
+  const dust = [[PP.x0, Y - 0.1, PORT.quayZ, PP.x0, Y - 0.1, PP.z1], [PP.x1, Y - 0.1, PORT.quayZ, PP.x1, Y - 0.1, PP.z1], [PP.x0, Y - 0.6, PP.z1, PP.x1, Y - 0.6, PP.z1],
     [F.x0, Y - 0.1, PORT.quayZ, F.x0, Y - 0.1, F.z1], [F.x1, Y - 0.1, PORT.quayZ, F.x1, Y - 0.1, F.z1], [-12.2, 18.2, 21, 5.9, 18.2, 21], [-12.2, 18.2, 35, 5.9, 18.2, 35]];
   const blasts = PORT.hits.map(([x, z], i) => makeBlast(pipe, { x, z, T: HIT[i], ocean, wind: [3.4, 1.1], seed: 17 + i * 31, dust, noise3: clouds.noise.texture }));
-  for (const [x, z, T] of PORT.hits.map((h, i) => [...h, HIT[i]])) for (const k of [0, 1, 2]) ocean.discs.push({ x: x + (k - 1) * 2.5, z: z + 4 + k * 3, t0: T + 0.3 + k * 0.3, dur: 8 + k * 2, r0: 4, r1: 30 + k * 14, k: 1 });
   if (film.off.has('clouds')) CLOUDS.cover = 0;
   W = { clouds, ocean, boats, port, ship, spray, blasts, hills };
   return W;
@@ -131,8 +131,9 @@ function updateSpray(film, i, track, t, on) {
   sp.tail.update(t, O, (tb, out) => at(tb, -3.9, 0, 0.1, out), (tb, out) => { const p = track(tb), r = p.hdg * D2R, k2 = clamp(p.v / 16, 0, 1.2); return out.set(Math.sin(r) * p.v * 0.88, 2.4 * k2, -Math.cos(r) * p.v * 0.88); });
 }
 function updateBlasts(film, t, show) {
-  for (const b of W.blasts) b.update(film, t, show);
-  resolveBlastLight(film);
+  const only = film.params.get('blast');     // dev: ?blast=0 shows one detonation alone
+  W.blasts.forEach((b, i) => b.update(film, t, show && (only === null || +only === i)));
+  finishBlasts(film);
 }
 
 // ------------------------------------------------------------------ grade

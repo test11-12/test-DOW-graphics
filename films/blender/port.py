@@ -9,7 +9,7 @@
 #     yard      quay, apron, land, sheds, containers, crane, tanks, lamps, base buildings, harbour craft, buoys
 #
 # World frame: engine +x east, +y up, +z south == Blender +X, +Z, -Y. Sea level is 0. The film's sun (az 80,
-# el 16) is baked into each object's light: R = occlusion, G = sun visibility (static shadows), used by
+# el 11) is baked into each object's light: R = occlusion, G = sun visibility (static shadows), used by
 # src/corsair_port.js. Sources are cached in /opt/dow-cache; only the exported .glb files are committed.
 import os, sys, math, json, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib'))
@@ -19,7 +19,9 @@ from mathutils import Vector, Matrix, Quaternion, Euler
 import dowlib as d
 
 CACHE = d.bake_dir('harbour')
-SUN_AZ, SUN_EL = 80.0, 16.0
+DRAFT = 'draft' in d.args()          # quarter-size atlases and fewer samples, for judging materials quickly
+HALF = 'half' in d.args()            # half-size atlases, for judging weathering at film distance
+SUN_AZ, SUN_EL = 80.0, 11.0
 PORT = dict(quayY=2.4, quayZ=-22, pier=dict(x0=-19, x1=-11, z1=52, y=2.6), lift=dict(x0=-8, x1=4, z0=2, z1=40, y=1.5),
             sub=dict(x=-2, z0=5.5, z1=34.5, y=3.32), finger=dict(x0=4.6, x1=7.2, z1=44),
             entrance=[[30, 176], [176, 108]], hits=[[-2.2, 41.2], [8.4, 22.5], [-20.2, 26]])
@@ -346,7 +348,15 @@ def quantize_glb(path):
             at = p['attributes']; na = {}
             q = np.clip(np.round((pos - T) / S * 32767), -32767, 32767).astype(np.int16)
             q4 = np.zeros((len(q), 4), np.int16); q4[:, :3] = q
-            na['POSITION'] = acc(view(q4.tobytes(), 8, 34962), 5122, 3, len(q), True, q.min(0) / 32767.0, q.max(0) / 32767.0)
+            light = '_AO' in at and '_SUN' in at
+            if light:      # the baked light rides in the two padding bytes of each position (one 8-byte stride view)
+                l2 = np.zeros((len(q), 2), np.uint8)
+                l2[:, 0] = np.round(np.clip(read(at['_AO'])[:, 0], 0, 1) * 255); l2[:, 1] = np.round(np.clip(read(at['_SUN'])[:, 0], 0, 1) * 255)
+                q4[:, 3] = l2.view(np.int16)[:, 0]
+            pv = view(q4.tobytes(), 8, 34962)
+            na['POSITION'] = acc(pv, 5122, 3, len(q), True, q.min(0) / 32767.0, q.max(0) / 32767.0)
+            if light:
+                na['_AO'] = acc(pv, 5121, 1, len(q), True, off=6); na['_SUN'] = acc(pv, 5121, 1, len(q), True, off=7)
             if 'NORMAL' in at:
                 nn = read(at['NORMAL']) * S; nn /= np.linalg.norm(nn, axis=1, keepdims=True) + 1e-12
                 n4 = np.zeros((len(nn), 4), np.int8); n4[:, :3] = np.round(nn * 127).astype(np.int8)
@@ -357,11 +367,6 @@ def quantize_glb(path):
                     na[k] = acc(view(np.round(uv * 65535).astype(np.uint16).tobytes(), 4, 34962), 5123, 2, len(uv), True)
                 else:
                     na[k] = acc(view(uv.astype(np.float32).tobytes(), 8, 34962), 5126, 2, len(uv))
-            if '_AO' in at and '_SUN' in at:
-                l4 = np.zeros((len(q), 4), np.uint8)
-                l4[:, 0] = np.round(np.clip(read(at['_AO'])[:, 0], 0, 1) * 255); l4[:, 1] = np.round(np.clip(read(at['_SUN'])[:, 0], 0, 1) * 255)
-                vi = view(l4.tobytes(), 4, 34962)
-                na['_AO'] = acc(vi, 5121, 1, len(q), True); na['_SUN'] = acc(vi, 5121, 1, len(q), True, off=1)
             for k in at:
                 if k not in na and k not in ('_AO', '_SUN'):
                     a = read(at[k]); na[k] = acc(view(a.astype(np.float32).tobytes(), None, 34962), 5126, a.shape[1], len(a))
@@ -611,7 +616,7 @@ def stage_rocks():
                 Vw = (np.c_[V, np.ones(len(V))] @ np.array(Mx).T)[:, :3]
                 Vs.append(Vw); Ts.append(T + off); UVs.append(UV); off += len(V)
             ob = mesh_from_arrays(f'rk_{BW[key[0]]["name"]}_{key[1]:02d}_{L}', np.concatenate(Vs), np.concatenate(Ts), np.concatenate(UVs).reshape(-1, 2))
-            d.smooth(ob, 70)
+            d.smooth(ob, 70 if L == 'A' else 180)      # far stones: no split normals (half the vertices)
             (objs_A if L == 'A' else objs_B).append(ob)
     d.log('stones', len(stones), 'chunks', len(chunks), 'near-LOD chunks', len(objs_A),
           'tris A', sum(tris(o) for o in objs_A), 'tris B', sum(tris(o) for o in objs_B))
@@ -649,7 +654,15 @@ def stage_rocks():
     gorm = d.pack_orm(ga, gr, 0.0, 'core_orm'); d.save_png(gorm, os.path.join(CACHE, 'core_orm.png'))
     cmat = d.gltf_material('rock_core', base=gb, orm=gorm, normal=d.image(g['nor_gl'], True), base_color=(0.42, 0.4, 0.38, 1))
     cmat['dow'] = 'rock'
-    for o in objs_A + objs_B: d.set_material(o, rmat)
+    far_maps = {}
+    for k in ('base', 'orm', 'normal'):               # the far breakwater reads its stones from a 1k atlas
+        im = d.image(os.path.join(CACHE, f'rock_{k}.png'), k != 'base')
+        sm = downsample(im, ACOLS * CELL // 2, f'rock_{k}_1k'); d.save_png(sm, os.path.join(CACHE, f'rock_{k}_1k.png'))
+        far_maps[k] = d.image(os.path.join(CACHE, f'rock_{k}_1k.png'), k != 'base')
+    fmat = d.gltf_material('rock_far', base=far_maps['base'], orm=far_maps['orm'], normal=far_maps['normal'])
+    fmat['dow'] = 'rock'
+    for o in objs_A: d.set_material(o, rmat)
+    for o in objs_B: d.set_material(o, fmat)
     for o in cores: d.set_material(o, cmat)
 
     # light: occlusion and sun visibility per vertex; near LOD baked against near stones, far against far
@@ -751,17 +764,17 @@ class Part:
 def ladder(p, x, z0, z1, y0, y1, axis='z', off=0.14):
     """vertical steel ladder on a face: stringers at z0/z1 (or x0/x1), rungs every 0.3 m, standing off `off`"""
     if axis == 'z':
-        for zz in (z0, z1): p.box(x - off - 0.03, x - off + 0.03, y0, y1, zz - 0.008, zz + 0.008)
+        for zz in (z0, z1): p.box(x - off - 0.03, x - off + 0.03, y0, y1, zz - 0.02, zz + 0.02)
         y = y0 + 0.25
         while y < y1 - 0.1: p.cyl((x - off, y, z0), (x - off, y, z1), 0.016, seg=6); y += 0.3
     else:
-        for xx in (z0, z1): p.box(xx - 0.008, xx + 0.008, y0, y1, x - off - 0.03, x - off + 0.03)
+        for xx in (z0, z1): p.box(xx - 0.02, xx + 0.02, y0, y1, x - off - 0.03, x - off + 0.03)
         y = y0 + 0.25
         while y < y1 - 0.1: p.cyl((z0, y, x - off), (z1, y, x - off), 0.016, seg=6); y += 0.3
     return p
 
 
-def railing(p, pts, y0, h=1.05, step=1.9, r=0.024):
+def railing(p, pts, y0, h=1.05, step=1.9, r=0.03):
     """posts every `step` m and two rails along a polyline of (x, z) at deck height y0"""
     for (xa, za), (xb, zb) in zip(pts[:-1], pts[1:]):
         L = math.hypot(xb - xa, zb - za); n = max(1, int(round(L / step)))
@@ -825,18 +838,39 @@ class Masks:
         return ao, ed
 
 
+def lines(nt, coord, period, offset=0.0, width=0.02):
+    """1 on the lines coord = offset + k * period, falling to 0 over `width` metres either side"""
+    f = M(nt, 'FRACT', M(nt, 'DIVIDE', M(nt, 'SUBTRACT', coord, offset - period / 2), period))
+    dist = M(nt, 'MULTIPLY', M(nt, 'ABSOLUTE', M(nt, 'SUBTRACT', f, 0.5)), period)
+    return mr(nt, dist, width, 0.0)
+
+
+def below(nt, z, period, offset=0.0, reach=1.0):
+    """1 just under each line z = offset + k * period, fading to 0 `reach` metres further down (what runs off a joint)"""
+    f = M(nt, 'FRACT', M(nt, 'DIVIDE', M(nt, 'SUBTRACT', z, offset), period))
+    return mr(nt, M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', 1.0, f), period), reach, 0.0)
+
+
 def mat_surface(name, kind, masks, **o):
     """Source material for baking. kind: concrete | steel | galv | rubber | timber | rope | hull | glass.
-    o: tone (rgb multiplier), paint (rgb), tile (m), rust (0..1), growth (bool), wetline (m), streaks"""
+    Options: scan, rustscan, tile (m), tone (rgb multiplier), paint (rgb), fade (0..1 chalking), rust (0..1),
+    wear, streaks, growth (bool) and tide (m), seams: [(axis 'X'|'Y'|'Z', period, offset, zmin, zmax)] plate or
+    formwork joints, fit: (axis, period, offset, ztop, reach) fittings whose rust runs down the face below them,
+    eave: z of the roof edge (stains under it), tiles: (size, cx, cz, radius) hull tiles, scuff (rubber)."""
     mat, bsdf, nodes, links = d.new_material(name)
     nt = mat.node_tree
     tc = d.texcoord(nt); P = tc.outputs['Object']
     ao, edge = masks.sockets(nt)
     cvx = M(nt, 'MULTIPLY', edge, M(nt, 'POWER', ao, 2.0), True)               # convex edges: bevelled and open
     occ = M(nt, 'SUBTRACT', 1.0, ao, True)
-    z = zcoord(nt, P)
+    sp = nt.nodes.new('ShaderNodeSeparateXYZ'); nt.links.new(P, sp.inputs['Vector'])
+    X, Y, z = sp.outputs['X'], sp.outputs['Y'], sp.outputs['Z']
+    geo = nt.nodes.new('ShaderNodeNewGeometry'); sn = nt.nodes.new('ShaderNodeSeparateXYZ'); nt.links.new(geo.outputs['Normal'], sn.inputs['Vector'])
+    up = mr(nt, sn.outputs['Z'], 0.55, 0.9)                                     # faces that hold water and dust
+    wall = M(nt, 'SUBTRACT', 1.0, mr(nt, M(nt, 'ABSOLUTE', sn.outputs['Z']), 0.3, 0.7), True)
     n1 = noise(nt, P, 0.16, 3); n2 = noise(nt, P, 1.4, 6); n3 = noise(nt, P, 5.5, 4)
-    streak = mr(nt, noise(nt, P, 1.0, 5, 0.6, stretch=(2.2, 2.2, 0.09)), 0.55, 0.75)    # gravity streaks
+    streak = mr(nt, noise(nt, P, 1.0, 5, 0.6, stretch=(2.6, 2.6, 0.07)), 0.5, 0.78)     # what gravity draws down a face
+    streak = M(nt, 'MULTIPLY', streak, wall)
     S = o['scan']; tile = o.get('tile', 2.0)
     col = d.tex(nt, S['Diffuse'], P, 'BOX', 0.3, scale=1.0 / tile).outputs['Color']
     rough = gray(nt, d.tex(nt, S['Rough'], P, 'BOX', 0.3, scale=1.0 / tile).outputs['Color']) if 'Rough' in S else V(nt, 0.7)
@@ -844,60 +878,123 @@ def mat_surface(name, kind, masks, **o):
     bump_h = disp; bump_k = o.get('bump', 0.6); metal = V(nt, 0.0)
     tone = o.get('tone', (1, 1, 1))
     base = d.mix_rgb(nt, col, tuple(tone), 1.0, 'MULTIPLY')
-    base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.8, 0.8, 0.8), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', n1, 0.6))       # large-scale tone drift
+    base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.84, 0.83, 0.82), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', n1, 0.6))    # large-scale tone drift
+    # joints: plate seams in steel, formwork and pour joints in concrete
+    seam = None
+    for axis, period, offset, zmin, zmax in o.get('seams', ()):
+        c = {'X': X, 'Y': Y, 'Z': z}[axis]
+        k = lines(nt, c, period, offset, o.get('seamw', 0.02))
+        nrm = {'X': sn.outputs['X'], 'Y': sn.outputs['Y'], 'Z': sn.outputs['Z']}[axis]
+        k = M(nt, 'MULTIPLY', k, M(nt, 'SUBTRACT', 1.0, mr(nt, M(nt, 'ABSOLUTE', nrm), 0.5, 0.9), True))     # not on faces square to the axis
+        k = M(nt, 'MULTIPLY', k, M(nt, 'MULTIPLY', mr(nt, z, zmin - 0.01, zmin), mr(nt, z, zmax + 0.01, zmax)))
+        seam = k if seam is None else M(nt, 'MAXIMUM', seam, k)
+    run = None      # run-off under horizontal joints and under fittings
+    for axis, period, offset, zmin, zmax in o.get('seams', ()):
+        if axis != 'Z': continue
+        k = M(nt, 'MULTIPLY', below(nt, z, period, offset, o.get('runreach', 1.3)), M(nt, 'MULTIPLY', mr(nt, z, zmin - 0.01, zmin), mr(nt, z, zmax + 0.01, zmax)))
+        run = k if run is None else M(nt, 'MAXIMUM', run, k)
+    if 'fit' in o:
+        axis, period, offset, ztop, reach = o['fit']
+        k = M(nt, 'MULTIPLY', lines(nt, {'X': X, 'Y': Y}[axis], period, offset, 0.16), M(nt, 'MULTIPLY', mr(nt, z, ztop - reach, ztop), mr(nt, z, ztop + 0.05, ztop)))
+        run = k if run is None else M(nt, 'MAXIMUM', run, k)
+    if run is not None:
+        run = M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', run, wall), mr(nt, noise(nt, P, 2.2, 4, 0.6, stretch=(3.0, 3.0, 0.1)), 0.35, 0.7))
     if kind in ('steel', 'galv', 'hull'):
         R = o['rustscan']
         rcol = d.tex(nt, R['Diffuse'], P, 'BOX', 0.3, scale=1.0 / 1.6).outputs['Color']
         rrough = gray(nt, d.tex(nt, R['Rough'], P, 'BOX', 0.3, scale=1.0 / 1.6).outputs['Color']) if 'Rough' in R else V(nt, 0.85)
         lum = gray(nt, col)
         if kind == 'galv':
-            paint = d.mix_rgb(nt, (0.48, 0.49, 0.5), (0.66, 0.67, 0.68), M(nt, 'MULTIPLY', lum, 1.4, True))
-            metal = mr(nt, n2, 0.2, 0.8, 0.55, 0.85)
+            paint = d.mix_rgb(nt, (0.40, 0.41, 0.42), (0.58, 0.59, 0.60), M(nt, 'MULTIPLY', lum, 1.4, True))
+            metal = mr(nt, n2, 0.2, 0.8, 0.35, 0.7)
         else:
-            paint = d.mix_rgb(nt, tuple(o['paint']), (0, 0, 0), M(nt, 'SUBTRACT', 1.0, M(nt, 'MULTIPLY', lum, o.get('lumk', 1.8), True), True), 'MIX')
-            paint = d.mix_rgb(nt, tuple(o['paint']), paint, o.get('scanmix', 0.45))
-        # rust: in occluded joints, at convex edges, in streaks below fixings, low near the water
+            pc = tuple(o['paint'])
+            paint = d.mix_rgb(nt, pc, (0, 0, 0), M(nt, 'SUBTRACT', 1.0, M(nt, 'MULTIPLY', lum, o.get('lumk', 1.8), True), True), 'MIX')
+            paint = d.mix_rgb(nt, pc, paint, o.get('scanmix', 0.45))
+            # chalking: sun and salt take the pigment out, most where the weather sits
+            fade = o.get('fade', 0.0)
+            if fade > 0:
+                g = 0.3 * pc[0] + 0.55 * pc[1] + 0.15 * pc[2]
+                chalk = tuple(min(1.0, 0.62 * c + 0.38 * g + 0.05) for c in pc)
+                fk = M(nt, 'MULTIPLY', M(nt, 'ADD', M(nt, 'MULTIPLY', mr(nt, n1, 0.25, 0.8), 0.6), M(nt, 'ADD', M(nt, 'MULTIPLY', up, 0.4), M(nt, 'MULTIPLY', mr(nt, n2, 0.35, 0.75), 0.25))), fade, True)
+                paint = d.mix_rgb(nt, paint, chalk, fk)
+            if 'tiles' in o:          # hull tiles: a faint grid, each tile a slightly different black
+                ts, cx, cz, rad = o['tiles']
+                arc = M(nt, 'MULTIPLY', M(nt, 'ARCTAN2', M(nt, 'SUBTRACT', z, cz), M(nt, 'SUBTRACT', X, cx)), rad)
+                gl = M(nt, 'MAXIMUM', lines(nt, Y, ts, 0.0, 0.012), lines(nt, arc, ts, 0.0, 0.012))
+                cell = nt.nodes.new('ShaderNodeCombineXYZ')
+                nt.links.new(M(nt, 'FLOOR', M(nt, 'DIVIDE', Y, ts)), cell.inputs['X']); nt.links.new(M(nt, 'FLOOR', M(nt, 'DIVIDE', arc, ts)), cell.inputs['Y'])
+                wn = nt.nodes.new('ShaderNodeTexWhiteNoise'); wn.noise_dimensions = '3D'; nt.links.new(cell.outputs['Vector'], wn.inputs['Vector'])
+                paint = d.mix_rgb(nt, paint, d.mix_rgb(nt, paint, (1.5, 1.5, 1.5), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', wn.outputs['Value'], 0.5))
+                paint = d.mix_rgb(nt, paint, d.mix_rgb(nt, paint, (0.55, 0.55, 0.55), 1.0, 'MULTIPLY'), gl)
+                seam = gl if seam is None else M(nt, 'MAXIMUM', seam, gl)
+        # grime: in the joints, along the seams, where water stands
+        dirt = M(nt, 'ADD', M(nt, 'MULTIPLY', M(nt, 'POWER', occ, 1.3), 0.7), M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', up, mr(nt, n2, 0.3, 0.75)), 0.5))
+        if seam is not None: dirt = M(nt, 'ADD', dirt, M(nt, 'MULTIPLY', seam, 0.6))
+        dirt = M(nt, 'ADD', dirt, M(nt, 'MULTIPLY', streak, o.get('streaks', 0.25)))
+        paint = d.mix_rgb(nt, paint, d.mix_rgb(nt, paint, o.get('dirtcol', (0.5, 0.45, 0.38)), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', dirt, o.get('dirt', 0.6), True))
+        # rust: in occluded joints, at convex edges, in the run-off below joints and fittings, low near the water
         rk = o.get('rust', 0.4)
-        rm = M(nt, 'ADD', M(nt, 'MULTIPLY', occ, 1.3), M(nt, 'MULTIPLY', cvx, 0.9))
-        rm = M(nt, 'ADD', rm, M(nt, 'MULTIPLY', streak, 0.45))
+        rm = M(nt, 'ADD', M(nt, 'MULTIPLY', occ, 1.2), M(nt, 'MULTIPLY', cvx, o.get('edgerust', 0.1 if kind == 'galv' else 0.9)))
+        rm = M(nt, 'ADD', rm, M(nt, 'MULTIPLY', streak, 0.3))
+        if run is not None: rm = M(nt, 'ADD', rm, M(nt, 'MULTIPLY', run, o.get('runrust', 1.3)))
+        if seam is not None: rm = M(nt, 'ADD', rm, M(nt, 'MULTIPLY', seam, 0.5))
         rm = M(nt, 'ADD', rm, mr(nt, z, 2.2, 0.6, 0.0, 0.5))
-        rm = mr(nt, M(nt, 'ADD', M(nt, 'MULTIPLY', rm, rk), M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', n2, 0.5), 0.6)), 0.35, 0.6)
+        rm = mr(nt, M(nt, 'ADD', M(nt, 'MULTIPLY', rm, rk), M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', n2, 0.5), 0.45)), 0.3, 0.62)
+        # thin rust wash round the solid rust (stained paint), then the rust itself
+        wash = mr(nt, M(nt, 'ADD', M(nt, 'MULTIPLY', M(nt, 'ADD', M(nt, 'ADD', M(nt, 'MULTIPLY', occ, 1.6), M(nt, 'MULTIPLY', cvx, 0.5)), M(nt, 'MULTIPLY', run if run is not None else streak, 1.8)), rk), M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', n2, 0.5), 0.25)), 0.15, 0.55)
+        paint = d.mix_rgb(nt, paint, d.mix_rgb(nt, paint, (0.7, 0.45, 0.28), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', wash, o.get('wash', 0.5)))
         base = d.mix_rgb(nt, paint, rcol, rm)
-        # worn edges show steel / primer
+        # worn edges show primer
         wear = mr(nt, M(nt, 'MULTIPLY', cvx, M(nt, 'ADD', n3, 0.4)), 0.35, 0.7)
         base = d.mix_rgb(nt, base, o.get('primer', (0.18, 0.09, 0.06)), M(nt, 'MULTIPLY', wear, o.get('wear', 0.6)))
-        rough = d.mix_rgb(nt, M(nt, 'ADD', M(nt, 'MULTIPLY', rough, 0.35), o.get('paintrough', 0.48)), rrough, rm)
+        rough = d.mix_rgb(nt, M(nt, 'ADD', M(nt, 'MULTIPLY', rough, 0.3), o.get('paintrough', 0.5)), rrough, rm)
         rough = gray(nt, rough)
         if kind == 'galv':
             metal = M(nt, 'MULTIPLY', metal, M(nt, 'SUBTRACT', 1.0, rm, True))
-        bump_h = M(nt, 'ADD', M(nt, 'MULTIPLY', disp, 0.3), M(nt, 'MULTIPLY', rm, 0.6)); bump_k = 0.35
+        bump_h = M(nt, 'ADD', M(nt, 'MULTIPLY', disp, o.get('scanbump', 0.3)), M(nt, 'MULTIPLY', rm, 0.6)); bump_k = o.get('bump', 0.35)
+        if seam is not None: bump_h = M(nt, 'SUBTRACT', bump_h, M(nt, 'MULTIPLY', seam, o.get('seamdepth', 1.2)))
     elif kind == 'concrete':
-        # grime in the joints and undersides, bright chipped arrises, gravity streaks of rust and dirt
-        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.42, 0.38, 0.33), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', M(nt, 'POWER', occ, 0.7), 0.9))
-        base = d.mix_rgb(nt, base, (0.62, 0.6, 0.56), M(nt, 'MULTIPLY', mr(nt, M(nt, 'MULTIPLY', cvx, n3), 0.25, 0.55), 0.7))
-        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.55, 0.42, 0.3), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', streak, o.get('streaks', 0.5)))
+        # grime in the joints and undersides, weather on top, bright chipped arrises, gravity streaks of rust and dirt
+        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.5, 0.48, 0.45), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', M(nt, 'POWER', occ, 1.0), 0.8))
+        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.6, 0.57, 0.52), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', up, mr(nt, n2, 0.3, 0.7)), o.get('weather', 0.6)))
+        base = d.mix_rgb(nt, base, (0.62, 0.6, 0.56), M(nt, 'MULTIPLY', mr(nt, M(nt, 'MULTIPLY', cvx, n3), 0.25, 0.55), 0.6))
+        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.55, 0.51, 0.46), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', streak, o.get('streaks', 0.5)))
+        if seam is not None:
+            base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.6, 0.58, 0.55), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', seam, 0.8))
+            bump_h = M(nt, 'SUBTRACT', bump_h, M(nt, 'MULTIPLY', seam, o.get('seamdepth', 0.8)))
+        if run is not None:
+            base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.55, 0.33, 0.18), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', run, o.get('runk', 0.85)))
     elif kind == 'rubber':
         base = d.mix_rgb(nt, (0.018, 0.018, 0.019), (0.05, 0.048, 0.045), mr(nt, n2, 0.3, 0.8))
         base = d.mix_rgb(nt, base, (0.2, 0.19, 0.17), M(nt, 'MULTIPLY', mr(nt, z, 1.6, 3.2), mr(nt, n3, 0.45, 0.8)))   # dust and salt on top
+        # scuffs: pale horizontal rubs where hulls bear, heaviest on the proud edges
+        scuff = mr(nt, noise(nt, P, 3.0, 4, 0.6, stretch=(0.25, 0.25, 4.0)), 0.5, 0.72)
+        base = d.mix_rgb(nt, base, (0.16, 0.155, 0.15), M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', scuff, M(nt, 'ADD', 0.35, cvx, True)), o.get('scuff', 0.8)))
         rough = mr(nt, n2, 0.0, 1.0, 0.72, 0.9); bump_h = n3; bump_k = 0.3
     elif kind == 'rope':
         base = d.mix_rgb(nt, (0.035, 0.034, 0.032), (0.11, 0.1, 0.085), n2); metal = V(nt, 0.5); rough = mr(nt, n2, 0, 1, 0.35, 0.6)
     elif kind == 'glass':
         base = d.mix_rgb(nt, (0.012, 0.014, 0.016), (0.05, 0.05, 0.048), M(nt, 'MULTIPLY', streak, 0.6)); rough = mr(nt, streak, 0, 1, 0.08, 0.35)
-    # height above the sea: damp band, tide line, weed and barnacles below it
+    if 'eave' in o:       # the wall under the roof edge: dust washed down it in streaks
+        ek = M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', mr(nt, z, o['eave'] - 3.5, o['eave'] - 0.2), wall), M(nt, 'ADD', 0.25, M(nt, 'MULTIPLY', streak, 0.75)))
+        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.5, 0.46, 0.4), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', ek, o.get('eavek', 0.7)))
+    # height above the sea: weed and mussels at the water, a barnacle band, wet stone up to the tide mark, salt above it
     if o.get('growth', False):
-        tide = M(nt, 'ADD', o.get('tide', 0.95), M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', n1, 0.5), 0.35))
-        damp = M(nt, 'SUBTRACT', 1.0, mr(nt, M(nt, 'SUBTRACT', z, tide), -0.3, 0.05), True)
-        line = M(nt, 'MULTIPLY', mr(nt, M(nt, 'SUBTRACT', z, tide), -0.05, 0.0), M(nt, 'SUBTRACT', 1.0, mr(nt, M(nt, 'SUBTRACT', z, tide), 0.0, 0.12), True))
-        weedz = M(nt, 'SUBTRACT', 1.0, mr(nt, M(nt, 'ADD', z, M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', n2, 0.5), 0.5)), 0.05, 0.6), True)
-        weed = M(nt, 'MULTIPLY', weedz, mr(nt, M(nt, 'ADD', n2, M(nt, 'MULTIPLY', n3, 0.4)), 0.45, 0.75))
-        barn = M(nt, 'MULTIPLY', mr(nt, voronoi(nt, P, 38.0), 0.18, 0.05), M(nt, 'MULTIPLY', mr(nt, z, -0.6, 0.2), M(nt, 'SUBTRACT', 1.0, mr(nt, z, 0.4, 0.9), True)))
-        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.45, 0.44, 0.42), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', damp, 0.85))
-        base = d.mix_rgb(nt, base, (0.06, 0.055, 0.04), M(nt, 'MULTIPLY', line, 0.6))
-        base = d.mix_rgb(nt, base, d.mix_rgb(nt, (0.025, 0.03, 0.012), (0.07, 0.065, 0.03), n3), M(nt, 'MULTIPLY', weed, 0.95))
-        base = d.mix_rgb(nt, base, (0.42, 0.41, 0.38), M(nt, 'MULTIPLY', barn, 0.8))
-        rough = M(nt, 'ADD', M(nt, 'MULTIPLY', rough, M(nt, 'SUBTRACT', 1.0, M(nt, 'MULTIPLY', damp, 0.6))), M(nt, 'MULTIPLY', damp, 0.2))
-        bump_h = M(nt, 'ADD', bump_h, M(nt, 'ADD', M(nt, 'MULTIPLY', barn, 0.8), M(nt, 'MULTIPLY', weed, 0.25)))
+        zn = M(nt, 'ADD', z, M(nt, 'ADD', M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', n2, 0.5), 0.3), M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', n1, 0.5), 0.25)))
+        tide = o.get('tide', 1.05)
+        wet = M(nt, 'SUBTRACT', 1.0, mr(nt, zn, tide - 0.2, tide + 0.05), True)
+        salt = M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', mr(nt, zn, tide - 0.02, tide + 0.06), M(nt, 'SUBTRACT', 1.0, mr(nt, zn, tide + 0.1, tide + 0.5), True)), mr(nt, n3, 0.3, 0.7))
+        algae = M(nt, 'SUBTRACT', 1.0, mr(nt, zn, 0.12, 0.42), True)
+        barn = M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', mr(nt, zn, 0.05, 0.3), M(nt, 'SUBTRACT', 1.0, mr(nt, zn, 0.55, 0.85), True)), mr(nt, voronoi(nt, P, 16.0), 0.42, 0.12))
+        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.42, 0.41, 0.4), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', wet, 0.9))
+        base = d.mix_rgb(nt, base, (0.66, 0.65, 0.62), M(nt, 'MULTIPLY', salt, 0.3))
+        base = d.mix_rgb(nt, base, d.mix_rgb(nt, (0.012, 0.015, 0.009), (0.035, 0.034, 0.02), n3), M(nt, 'MULTIPLY', algae, 0.94))
+        base = d.mix_rgb(nt, base, d.mix_rgb(nt, (0.2, 0.19, 0.16), (0.4, 0.38, 0.33), n3), M(nt, 'MULTIPLY', barn, 0.8))
+        rough = M(nt, 'ADD', M(nt, 'MULTIPLY', rough, M(nt, 'SUBTRACT', 1.0, M(nt, 'MULTIPLY', wet, 0.65))), M(nt, 'MULTIPLY', wet, 0.2))
+        rough = M(nt, 'ADD', rough, M(nt, 'MULTIPLY', barn, 0.4), True)
+        bump_h = M(nt, 'ADD', bump_h, M(nt, 'ADD', M(nt, 'MULTIPLY', barn, 0.9), M(nt, 'MULTIPLY', algae, 0.2)))
+        if kind in ('steel', 'galv'): metal = M(nt, 'MULTIPLY', metal, M(nt, 'SUBTRACT', 1.0, wet, True))
     links.new(base, bsdf.inputs['Base Color'])
     links.new(rough, bsdf.inputs['Roughness'])
     links.new(metal, bsdf.inputs['Metallic'])
@@ -912,10 +1009,12 @@ def add_sea_plane():
     return ob
 
 
-def bake_group(name, parts, size, materials, lm_div=2, uvscale=None, ao_dist=2.5, sun_samples=24, ao_samples=48, color_samples=2):
+def bake_group(name, parts, size, materials, lm_div=2, uvscale=None, ao_dist=2.5, sun_samples=24, ao_samples=48, color_samples=2, edge_radius=0.035):
     """parts: [(object, material builder(masks) -> material)], all baked into one atlas (UV0).
     Returns images {base, orm, lm, normal} (saved in the cache) and the objects."""
     objs = [o for o, _ in parts]
+    if DRAFT: size //= 4; ao_samples = 12; sun_samples = 8; color_samples = 1
+    if HALF: size //= 2; ao_samples = 24; sun_samples = 12
     for o in objs:
         while o.data.uv_layers: o.data.uv_layers.remove(o.data.uv_layers[0])
         o.data.uv_layers.new(name='UVMap')
@@ -944,7 +1043,7 @@ def bake_group(name, parts, size, materials, lm_div=2, uvscale=None, ao_dist=2.5
     sun = d.new_image(f'{name}_sun', ms, non_color=True, color=(1, 1, 1, 1))
     d.bake(objs, 'SHADOW', sun, samples=sun_samples); d.blur(sun, 0.6)
     emat, ebsdf, en, el = d.new_material(f'{name}_edgemat')
-    em = en.new('ShaderNodeEmission'); el.new(d.edge_mask(emat.node_tree, 0.035, 8), em.inputs['Color'])
+    em = en.new('ShaderNodeEmission'); el.new(d.edge_mask(emat.node_tree, edge_radius, 8), em.inputs['Color'])
     el.new(em.outputs['Emission'], en['Material Output'].inputs['Surface'])
     for o in objs: d.set_material(o, emat)
     edge = d.new_image(f'{name}_edge', ms, non_color=True)
@@ -1087,8 +1186,8 @@ def build_pier_steel():
             win.cyl((xw, Y + 0.62, z + 1.15), (xw, Y + 0.62, z + 1.75), 0.2, seg=14)
             win.box(xe - 0.18 * side, xe + 0.1 * side, Y, Y + 0.65, z - 0.2, z + 0.2)
             win.cyl((xe, Y + 0.55, z - 0.06), (xe, Y + 0.55, z + 0.06), 0.24, seg=16)
-            rope.cyl((xw - side * 0.0, Y + 1.06, z), (xe, Y + 0.79, z), 0.022, seg=6)
-            rope.cyl((xe + side * 0.24, Y + 0.55, z), (xb, LI['y'] - 0.35, z), 0.024, seg=6)
+            rope.cyl((xw - side * 0.0, Y + 1.06, z), (xe, Y + 0.79, z), 0.026, seg=6)
+            rope.cyl((xe + side * 0.24, Y + 0.55, z), (xb, LI['y'] - 0.35, z), 0.028, seg=6)
     out['winch'] = win.obj(bevel=0.015, seg=2)
     out['rope'] = rope.obj()
     # the ship-lift platform: deck plates on longitudinal girders and transverse beams, transfer rails, end buffers
@@ -1124,51 +1223,94 @@ def build_pier_steel():
     return out
 
 
+GSPLICE = [GY + 4.0, GY + 7.4, GY + 10.8]          # bolted splices of the legs (engine y)
+HOOK_Y = SU['y'] + 6.2                              # centre of the lower blocks
+
+
 def build_gantry():
     out = {}
     g = Part('gantry_steel'); y0 = GY
     ytop = y0 + GH
+    bolts = Part('gantry_bolts')
     for x in (GX0, GX1):
         for z in (GZ0, GZ1):
             g.box(x - 0.85, x + 0.85, y0 + 0.18, y0 + 1.0, z - 1.3, z + 1.3)                  # end carriage
             g.box(x - 0.7, x + 0.7, y0 + 1.0, ytop - 0.6, z - 0.7, z + 0.7)                   # leg
-            for k in range(4):                                                               # stiffener rings
-                yy = y0 + 2.5 + k * 3.5; g.box(x - 0.74, x + 0.74, yy, yy + 0.06, z - 0.74, z + 0.74)
+            for yy in GSPLICE:                                                               # bolted flange splice
+                for ya, yb in ((yy - 0.075, yy - 0.012), (yy + 0.012, yy + 0.075)): g.box(x - 0.82, x + 0.82, ya, yb, z - 0.82, z + 0.82)
+                for t in np.linspace(-0.66, 0.66, 6):
+                    for bx, bz in ((x + t, z - 0.76), (x + t, z + 0.76), (x - 0.76, z + t), (x + 0.76, z + t)):
+                        bolts.cyl((bx, yy - 0.115, bz), (bx, yy + 0.115, bz), 0.024, seg=6)
+            g.box(x - 0.86, x + 0.86, y0 + 1.0, y0 + 1.06, z - 0.86, z + 0.86)                # base plate on the carriage
             inward = 1 if x == GX0 else -1
             g.prism([(x + inward * 0.7, ytop - 3.4), (x + inward * 0.7, ytop - 0.6), (x + inward * 3.4, ytop - 0.6)], z - 0.45, z + 0.45)   # knee
     for z in (GZ0, GZ1):
         g.box(GX0 - 1.2, GX1 + 1.2, ytop - 0.6, ytop + 1.3, z - 0.65, z + 0.65)                # portal girder
-        for x in np.linspace(GX0 - 0.6, GX1 + 0.6, 9): g.box(x - 0.02, x + 0.02, ytop - 0.6, ytop + 1.3, z - 0.68, z + 0.68)   # web stiffeners
+        for ya, yb in ((ytop - 0.66, ytop - 0.6), (ytop + 1.3, ytop + 1.36)): g.box(GX0 - 1.2, GX1 + 1.2, ya, yb, z - 0.74, z + 0.74)   # its flanges
+        for x in np.linspace(GX0 - 0.6, GX1 + 0.6, 9): g.box(x - 0.02, x + 0.02, ytop - 0.6, ytop + 1.3, z - 0.7, z + 0.7)   # web stiffeners
     for x in (GX0, GX1):
         g.box(x - 0.5, x + 0.5, ytop - 1.4, ytop - 0.6, GZ0 + 0.7, GZ1 - 0.7)                  # side beam
         g.cyl((x, y0 + 2.4, GZ0 + 0.7), (x, ytop - 1.6, GZ1 - 0.7), 0.3, seg=4, rot=math.pi / 4)
         g.cyl((x, y0 + 2.4, GZ1 - 0.7), (x, ytop - 1.6, GZ0 + 0.7), 0.3, seg=4, rot=math.pi / 4)
         g.box(x - 0.3, x + 0.3, y0 + 8.2, y0 + 8.7, GZ0 + 0.7, GZ1 - 0.7)                     # mid strut
-    g.box(GX0, GX1, ytop - 0.5, ytop + 0.25, (GZ0 + GZ1) / 2 - 0.45, (GZ0 + GZ1) / 2 + 0.45)  # trolley beam
+        # gusset plates where the braces land and where they cross, bolted through
+        ym = (y0 + 2.4 + ytop - 1.6) / 2; zm = (GZ0 + GZ1) / 2
+        for (gy, gz, hy, hz) in ((y0 + 2.6, GZ0 + 1.15, 0.75, 0.6), (y0 + 2.6, GZ1 - 1.15, 0.75, 0.6), (ytop - 1.9, GZ0 + 1.15, 0.6, 0.6), (ytop - 1.9, GZ1 - 1.15, 0.6, 0.6), (ym, zm, 0.7, 0.7)):
+            g.box(x - 0.335, x + 0.335, gy - hy, gy + hy, gz - hz, gz + hz)
+            for by in np.linspace(gy - hy + 0.14, gy + hy - 0.14, 4):
+                for bz in np.linspace(gz - hz + 0.14, gz + hz - 0.14, 3): bolts.cyl((x - 0.365, by, bz), (x + 0.365, by, bz), 0.024, seg=6)
+    # trolley girders along the lift, the cross beam between them, the trolleys
+    TZ = (GZ0 + 3.0, GZ1 - 3.0)
+    for z in TZ:
+        g.box(GX0 + 0.5, GX1 - 0.5, ytop - 0.6, ytop + 0.1, z - 0.3, z + 0.3)
+        for ya, yb in ((ytop - 0.64, ytop - 0.6), (ytop + 0.1, ytop + 0.14)): g.box(GX0 + 0.5, GX1 - 0.5, ya, yb, z - 0.38, z + 0.38)
+    g.box(GX0, GX1, ytop - 0.5, ytop + 0.25, (GZ0 + GZ1) / 2 - 0.45, (GZ0 + GZ1) / 2 + 0.45)  # cross beam
     # machinery house and the driver's cab on top
     mx, mz = (GX0 + GX1) / 2 - 1, (GZ0 + GZ1) / 2
     g.box(mx - 2.6, mx + 2.6, ytop + 1.3, ytop + 3.9, mz - 3.25, mz + 3.25)
     g.box(mx - 2.75, mx + 2.75, ytop + 3.9, ytop + 4.05, mz - 3.4, mz + 3.4)
     g.box(GX1 - 2.9, GX1 + 0.5, ytop + 1.3, ytop + 3.5, GZ0 - 0.6, GZ0 + 2.4)
-    # hook blocks under the trolley beam
-    for x in (mx - 2.5, mx + 2.5):
-        for z in (GZ0 + 3, GZ1 - 3): g.box(x - 0.28, x + 0.28, SU['y'] + 4.6, SU['y'] + 5.5, z - 0.16, z + 0.16)
-    out['gantry'] = g.obj(bevel=0.03, seg=2, angle=30)
-    # rails under the end carriages, handrails on the girders, the access ladder, hoist ropes, festoon cable
-    s = Part('gantry_dark')
+    # hoists: a trolley on each girder, four falls of wire down to a sheave block with its hook
+    s = Part('gantry_dark'); rope = Part('gantry_rope')
+    HX = (mx - 2.5, mx + 2.5)
+    for x in HX:
+        for z in TZ:
+            g.box(x - 0.55, x + 0.55, ytop + 0.14, ytop + 0.6, z - 0.5, z + 0.5)             # trolley frame
+            s.cyl((x - 0.45, ytop + 0.42, z), (x + 0.45, ytop + 0.42, z), 0.2, seg=14)       # rope drum
+            for sx in (-0.46, 0.46):
+                for sz in (-0.42, 0.42): s.cyl((x + sx, ytop + 0.22, z + sz - 0.04), (x + sx, ytop + 0.22, z + sz + 0.04), 0.1, seg=10)   # wheels
+            yb = HOOK_Y
+            plate = [(-0.3, 0.36), (0.3, 0.36), (0.35, -0.04), (0.17, -0.42), (-0.17, -0.42), (-0.35, -0.04)]
+            for za, zb in ((-0.17, -0.13), (0.13, 0.17)): g.prism([(x + px, yb + py) for px, py in plate], z + za, z + zb)
+            s.cyl((x, yb + 0.06, z - 0.12), (x, yb + 0.06, z + 0.12), 0.25, seg=18)          # sheaves
+            s.cyl((x, yb + 0.06, z - 0.2), (x, yb + 0.06, z + 0.2), 0.06, seg=10)            # pin
+            s.cyl((x, yb - 0.3, z), (x, yb - 0.72, z), 0.055, seg=10)                         # shank
+            s.torus((x, yb - 0.9, z), Vector((0, 1, 0)), 0.19, 0.05, 16, 8)                  # hook eye
+            for dx in (-0.25, 0.25):
+                for dz in (-0.06, 0.06): rope.cyl((x + dx, ytop - 0.62, z + dz), (x + dx, yb + 0.06, z + dz), 0.02, seg=6)
+    # rails under the end carriages and their wheels
     for x in (GX0, GX1):
         s.box(x - 0.045, x + 0.045, y0, y0 + 0.13, 8.0, 48.0)
         for z in (GZ0, GZ1):
             for dz in (-0.75, 0.75): s.cyl((x - 0.5, y0 + 0.34, z + dz), (x + 0.5, y0 + 0.34, z + dz), 0.3, seg=18)
-    for x in (mx - 2.5, mx + 2.5):
-        for z in (GZ0 + 3, GZ1 - 3):
-            for dx in (-0.12, 0.12): s.cyl((x + dx, ytop - 0.5, z), (x + dx, SU['y'] + 5.5, z), 0.022, seg=6)
+    # festoon: the trolley's power cable hanging in loops from carriers on a track under the south girder
+    fz = GZ0 + 0.95; fy = ytop - 0.75
+    s.box(GX0 + 0.8, GX1 - 0.8, fy, fy + 0.06, fz - 0.03, fz + 0.03)
+    xs = np.linspace(GX0 + 1.2, GX1 - 1.2, 13)
+    for xa, xb in zip(xs[:-1], xs[1:]):
+        s.box(xa - 0.05, xa + 0.05, fy - 0.14, fy, fz - 0.04, fz + 0.04)
+        sag = 0.55 + 0.25 * math.sin(xa * 1.7)
+        pts = [(xa + (xb - xa) * u, fy - 0.14 - sag * 4 * u * (1 - u), fz) for u in np.linspace(0, 1, 9)]
+        rope.tube(pts, 0.022, seg=6)
+    out['gantry'] = g.obj(bevel=0.03, seg=2, angle=30)
+    out['bolts'] = bolts.obj(bevel=0.0, smooth=30)
     out['dark'] = s.obj(bevel=0.0)
+    out['rope'] = rope.obj()
     hr = Part('gantry_rail')
     for z in (GZ0, GZ1):
-        for dz in (-0.6, 0.6): railing(hr, [(GX0 - 1.1, z + dz), (GX1 + 1.1, z + dz)], ytop + 1.3, h=1.0, step=1.8, r=0.025)
+        for dz in (-0.6, 0.6): railing(hr, [(GX0 - 1.1, z + dz), (GX1 + 1.1, z + dz)], ytop + 1.36, h=1.0, step=1.8, r=0.03)
     ladder(hr, GX1 + 0.7, GZ1 - 0.25, GZ1 + 0.25, y0 + 1.0, ytop + 1.3, off=-0.15)
-    for yy in np.arange(y0 + 3.0, ytop + 1.2, 0.9): hr.torus((GX1 + 1.15, yy, GZ1), Vector((0, 1, 0)), 0.36, 0.015, 16, 4)
+    for yy in np.arange(y0 + 3.0, ytop + 1.2, 0.9): hr.torus((GX1 + 1.15, yy, GZ1), Vector((0, 1, 0)), 0.36, 0.018, 16, 4)
     out['rail'] = hr.obj()
     return out
 
@@ -1245,35 +1387,45 @@ def stage_hero():
     plate = scan('metal_plate_02'); wood = scan('old_planks_02'); grain = scan('asphalt_02', '1k')
     C = lambda name, **k: (lambda m: mat_surface(name, 'concrete', m, **k))
     St = lambda name, **k: (lambda m: mat_surface(name, 'steel', m, rustscan=rust, **k))
+    Yd = PI['y']
+    posts = ('Y', 73.2 / 39, 21.5, Yd, 1.5)                 # railing posts along the pier edges: rust runs down the beam below each
+    form = [('Y', 2.44, 0.0, -3.0, Yd - 0.4), ('X', 2.44, 0.0, -3.0, Yd - 0.4)]      # formwork panel joints
+    yellow = (0.62, 0.40, 0.055)                            # safety yellow, some years in the sun
     mats = dict(
-        deck=C('c_deck', scan=conc, tile=3.0, tone=(0.95, 0.94, 0.92), growth=False, streaks=0.3),
-        beams=C('c_beams', scan=conc2, tile=2.4, tone=(1.05, 1.03, 1.0), growth=True, tide=0.95, streaks=0.7),
-        kerb=St('s_kerb', scan=paint, paint=(0.62, 0.48, 0.07), rust=0.45, lumk=1.2, wear=0.7),
-        piles=C('c_piles', scan=conc2, tile=2.0, tone=(1.0, 0.98, 0.95), growth=True, tide=1.0, streaks=0.6),
+        deck=C('c_deck', scan=conc, tile=3.0, tone=(0.74, 0.72, 0.69), growth=False, streaks=0.15, weather=0.75),
+        beams=C('c_beams', scan=conc2, tile=2.4, tone=(0.82, 0.8, 0.77), growth=True, tide=1.05, streaks=0.45, seams=form, fit=posts, seamdepth=0.6),
+        kerb=St('s_kerb', scan=paint, paint=(0.58, 0.42, 0.07), rust=0.5, lumk=1.2, wear=0.8, fade=0.45, dirt=0.8),
+        piles=C('c_piles', scan=conc2, tile=2.0, tone=(0.8, 0.78, 0.75), growth=True, tide=1.1, streaks=0.5, seams=[('Z', 1.5, 0.95, -3.0, 2.0)], seamdepth=0.5),
         fenders=lambda m: mat_surface('r_fender', 'rubber', m, scan=grain, growth=True, tide=0.9),
-        galv=lambda m: mat_surface('s_galv', 'galv', m, scan=plate, rustscan=rust, rust=0.25, tile=1.2, growth=True, tide=0.8),
+        galv=lambda m: mat_surface('s_galv', 'galv', m, scan=plate, rustscan=rust, rust=0.3, tile=1.2, growth=True, tide=0.8),
         black=St('s_bollard', scan=plate, paint=(0.03, 0.03, 0.03), rust=0.6, lumk=0.6, scanmix=0.3),
-        winch=St('s_winch', scan=paint, paint=(0.11, 0.17, 0.22), rust=0.4, lumk=1.4),
+        winch=St('s_winch', scan=paint, paint=(0.11, 0.17, 0.22), rust=0.4, lumk=1.4, fade=0.4),
         rope=lambda m: mat_surface('s_rope', 'rope', m, scan=grain),
         platform=St('s_platform', scan=plate, paint=(0.06, 0.065, 0.07), rust=0.75, growth=True, tide=1.2, lumk=0.8),
         blocks=St('s_blocks', scan=plate, paint=(0.09, 0.09, 0.09), rust=0.7, growth=False),
         timber=lambda m: mat_surface('t_blocks', 'timber', m, scan=wood, tile=1.6, tone=(0.75, 0.68, 0.6)),
-        gantry=St('s_gantry', scan=paint, paint=(0.72, 0.5, 0.06), rust=0.35, lumk=1.1, wear=0.55, primer=(0.25, 0.1, 0.06)),
+        gantry=St('s_gantry', scan=paint, paint=yellow, rust=0.42, lumk=1.1, scanmix=0.3, wear=0.3, primer=(0.25, 0.1, 0.06), fade=0.5, dirt=0.75, streaks=0.6, wash=0.75,
+                  seams=[('Z', 3.4, GSPLICE[0], GY + 1.1, GY + GH - 0.7), ('X', 2.41, GX0 - 0.6 + 1.205, GY + GH - 0.6, GY + GH + 1.3)], seamw=0.014, seamdepth=0.9, runreach=1.8),
+        bolts=St('s_gbolts', scan=paint, paint=yellow, rust=0.55, lumk=1.0, scanmix=0.3, dirt=0.5),
         dark=St('s_gdark', scan=plate, paint=(0.05, 0.05, 0.05), rust=0.6),
-        rail=St('s_grail', scan=paint, paint=(0.68, 0.46, 0.05), rust=0.3, lumk=1.0),
-        hull=lambda m: mat_surface('h_hull', 'hull', m, scan=plate, rustscan=rust, paint=(0.028, 0.03, 0.032), rust=0.22, lumk=0.5, scanmix=0.25, paintrough=0.62, wear=0.25, primer=(0.12, 0.12, 0.12), growth=True, tide=2.35),
-        sail=lambda m: mat_surface('h_sail', 'hull', m, scan=plate, rustscan=rust, paint=(0.03, 0.032, 0.034), rust=0.18, lumk=0.5, scanmix=0.25, paintrough=0.6, wear=0.3, primer=(0.12, 0.12, 0.12)),
-        stern=lambda m: mat_surface('h_stern', 'hull', m, scan=plate, rustscan=rust, paint=(0.04, 0.04, 0.042), rust=0.3, lumk=0.5, wear=0.4, primer=(0.35, 0.22, 0.12), growth=True, tide=2.35),
+        grope=lambda m: mat_surface('s_grope', 'rope', m, scan=grain),
+        rail=St('s_grail', scan=paint, paint=yellow, rust=0.32, lumk=1.0, fade=0.4),
+        hull=lambda m: mat_surface('h_hull', 'hull', m, scan=plate, rustscan=rust, paint=(0.016, 0.017, 0.019), rust=0.12, lumk=0.5, scanmix=0.2, paintrough=0.66, wear=0.15, primer=(0.1, 0.1, 0.1),
+                                   dirt=0.35, dirtcol=(0.75, 0.72, 0.66), streaks=0.5, wash=0.25, scanbump=0.12, tiles=(0.62, SU['x'], SU['y'], 1.38), seamdepth=0.35),
+        sail=lambda m: mat_surface('h_sail', 'hull', m, scan=plate, rustscan=rust, paint=(0.017, 0.018, 0.02), rust=0.12, lumk=0.5, scanmix=0.2, paintrough=0.64, wear=0.2, primer=(0.1, 0.1, 0.1),
+                                   dirt=0.35, dirtcol=(0.75, 0.72, 0.66), streaks=0.5, wash=0.25, scanbump=0.12),
+        stern=lambda m: mat_surface('h_stern', 'hull', m, scan=plate, rustscan=rust, paint=(0.022, 0.022, 0.024), rust=0.2, lumk=0.5, wear=0.3, primer=(0.3, 0.2, 0.12), dirt=0.4, wash=0.3, scanbump=0.12),
     )
     groups = [
         ('pier_conc', 4096, [(pier['deck'], mats['deck']), (pier['beams'], mats['beams']), (pier['piles'], mats['piles']), (pier['kerb'], mats['kerb']), (pier['fenders'], mats['fenders'])],
          {'pier_deck': 0.55}),
         ('pier_steel', 2048, [(steel['galv'], mats['galv']), (steel['black'], mats['black']), (steel['winch'], mats['winch']), (steel['rope'], mats['rope']),
                               (steel['platform'], mats['platform']), (steel['blocks'], mats['blocks']), (steel['timber'], mats['timber'])], None),
-        ('gantry', 2048, [(gan['gantry'], mats['gantry']), (gan['dark'], mats['dark']), (gan['rail'], mats['rail'])], None),
+        ('gantry', 4096, [(gan['gantry'], mats['gantry']), (gan['bolts'], mats['bolts']), (gan['dark'], mats['dark']), (gan['rope'], mats['grope']), (gan['rail'], mats['rail'])],
+         {'gantry_rail': 0.6, 'gantry_rope': 0.6, 'gantry_dark': 0.7}),
         ('sub', 2048, [(sub['hull'], mats['hull']), (sub['sail'], mats['sail']), (sub['stern'], mats['stern'])], None),
     ]
-    only = set(d.args()[1:])
+    only = set(d.args()[1:]) - {'draft', 'half'} - set(STAGES)
     if 'dry' in only:        # geometry check: flat colours, no bakes
         cols = {'pier_conc': (0.5, 0.49, 0.47, 1), 'pier_steel': (0.25, 0.27, 0.3, 1), 'gantry': (0.75, 0.55, 0.05, 1), 'sub': (0.04, 0.04, 0.045, 1)}
         objs = []
@@ -1282,15 +1434,15 @@ def stage_hero():
             for o, _ in parts: d.set_material(o, m)
             objs.append(join([o for o, _ in parts], name))
             d.log(name, tris(objs[-1]), 'tris')
-        export(d.out_path('corsair', 'port_pier.glb'), objs[:2]); export(d.out_path('corsair', 'port_gantry.glb'), objs[2:])
+        export(d.out_path('corsair', 'port_pier.glb'), objs[:2]); export(d.out_path('corsair', 'port_gantry.glb'), objs[2:3]); export(d.out_path('corsair', 'port_sub.glb'), objs[3:])
         return
     finals = {}
     for name, size, parts, uvs in groups:
         if only and name not in only: continue
-        maps = bake_group(name, parts, size, None, uvscale=uvs)
+        maps = bake_group(name, parts, size, None, uvscale=uvs, edge_radius={'gantry': 0.1, 'pier_steel': 0.05}.get(name, 0.035))
         finals[name] = (maps, [o for o, _ in parts])
     for o in (sea, quay): o.hide_render = True
-    exports = {'port_pier': ['pier_conc', 'pier_steel'], 'port_gantry': ['gantry', 'sub']}
+    exports = {'port_pier': ['pier_conc', 'pier_steel'], 'port_gantry': ['gantry'], 'port_sub': ['sub']}
     for fname, gnames in exports.items():
         objs = []
         for gn in gnames:
@@ -1300,7 +1452,6 @@ def stage_hero():
             for o in parts: d.set_material(o, mat)
             objs.append(join(parts, gn))
         if objs: export(d.out_path('corsair', f'{fname}.glb'), objs)
-    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(CACHE, 'hero.blend'))
 
 
 # ------------------------------------------------------------------ stage: quay, yard, sheds, base, craft
@@ -1347,8 +1498,28 @@ def build_shed(i, x, z, w, dd, h, damaged):
         p['door'].box(dx - dw / 2 + 0.05, dx + dw / 2 - 0.05, Yb, Yb + dh, zb - 0.45, zb - 0.35)          # shutter, recessed
         p['trim'].box(dx - dw / 2 - 0.25, dx + dw / 2 + 0.25, Yb + dh, Yb + dh + 0.6, zb - 0.1, zb + 0.35) # shutter box
         for sx in (dx - dw / 2 - 0.12, dx + dw / 2 + 0.12): p['trim'].box(sx - 0.12, sx + 0.12, Yb, Yb + dh, zb - 0.4, zb + 0.08)
-        p['void'].box(dx - dw / 2, dx + dw / 2, Yb, Yb + dh + 0.6, zb - 0.36, zb - 0.1)                    # the dark reveal
+        p['void'].box(dx - dw / 2, dx + dw / 2, Yb, Yb + dh + 0.6, zb - 0.6, zb - 0.5)                     # behind the shutter
+        p['trim'].box(dx - dw / 2 - 0.3, dx + dw / 2 + 0.3, Yb, Yb + 0.035, zb - 0.5, zb + 0.25)           # steel threshold
+        for sx in (dx - dw / 2 - 0.55, dx + dw / 2 + 0.55): p['trim'].cyl((sx, Yb, zb + 0.5), (sx, Yb + 1.05, zb + 0.5), 0.11, seg=10)   # guard posts
+        for lx in (dx - dw * 0.3, dx + dw * 0.3):                                                         # floodlights over the door
+            p['trim'].box(lx - 0.04, lx + 0.04, Yb + dh + 1.25, Yb + dh + 1.33, zb, zb + 0.45)
+            p['trim'].box(lx - 0.28, lx + 0.28, Yb + dh + 1.1, Yb + dh + 1.3, zb + 0.4, zb + 0.72)
     p['door'].box(xb - 3.4, xb - 2.4, Yb, Yb + 2.2, zb - 0.02, zb + 0.06)                                     # personnel door
+    p['trim'].box(xb - 3.5, xb - 2.3, Yb + 2.2, Yb + 2.3, zb - 0.02, zb + 0.5)                                # its canopy
+    p['trim'].box(xb - 3.48, xb - 3.4, Yb, Yb + 2.2, zb - 0.02, zb + 0.08); p['trim'].box(xb - 2.4, xb - 2.32, Yb, Yb + 2.2, zb - 0.02, zb + 0.08)
+    # louvred vents high on the gables, a row of cowls along the ridge, a service duct and its fan housings on the back wall
+    for gx, sgn in ([(xa, -1)] if damaged else [(xa, -1), (xb, 1)]):
+        for vz in (z - dd * 0.22, z + dd * 0.22):
+            p['door'].box(gx + sgn * 0.01, gx + sgn * 0.07, Yb + h - 2.6, Yb + h - 0.9, vz - 1.3, vz + 1.3)
+            for (a, b, c, e) in ((Yb + h - 2.7, Yb + h - 2.6, vz - 1.4, vz + 1.4), (Yb + h - 0.9, Yb + h - 0.8, vz - 1.4, vz + 1.4)):
+                p['trim'].box(min(gx, gx + sgn * 0.12), max(gx, gx + sgn * 0.12), a, b, c, e)
+            for vz2 in (vz - 1.4, vz + 1.3): p['trim'].box(min(gx, gx + sgn * 0.12), max(gx, gx + sgn * 0.12), Yb + h - 2.7, Yb + h - 0.8, vz2, vz2 + 0.1)
+    for vx in np.linspace(xa + 5, xb - 5, max(2, int(wl / 11))):
+        p['trim'].cyl((vx, Yb + h + rise + 0.2, z), (vx, Yb + h + rise + 0.95, z), 0.42, seg=14)
+        p['trim'].cyl((vx, Yb + h + rise + 0.95, z), (vx, Yb + h + rise + 1.2, z), 0.6, 0.25, seg=14)
+    for vx in np.linspace(xa + 6, xb - 6, max(2, int(wl / 16))):
+        p['trim'].box(vx - 0.7, vx + 0.7, Yb + h * 0.55, Yb + h * 0.55 + 1.2, za - 0.75, za)
+        p['door'].box(vx - 0.55, vx + 0.55, Yb + h * 0.55 + 0.15, Yb + h * 0.55 + 1.05, za - 0.79, za - 0.75)
     p['wall'].box(xa, xb, Yb + 1.1, Yb + h, za, za + t)
     p['wall'].box(xa, xa + t, Yb + 1.1, Yb + h, za, zb)
     if not damaged: p['wall'].box(xb - t, xb, Yb + 1.1, Yb + h, za, zb)
@@ -1533,7 +1704,7 @@ def stage_yard():
     d.reset(samples=8)
     add_sun(); sea = add_sea_plane()
     # occluders from the other groups (for shadows on the quay and the apron)
-    for fn in ('port_pier', 'port_gantry'):
+    for fn in ('port_pier', 'port_gantry', 'port_sub'):
         p = d.out_path('corsair', f'{fn}.glb')
         if os.path.exists(p):
             try:
@@ -1554,8 +1725,9 @@ def stage_yard():
     groups = []
     # quay
     groups.append(('quay', 4096, [
-        (yard['quay_top'].obj(bevel=0.03), C('q_top', scan=S_conc, tile=4.0, tone=(1.0, 0.98, 0.95), streaks=0.2)),
-        (yard['quay_wall'].obj(bevel=0.04), C('q_wall', scan=S_wall, tile=2.6, growth=True, tide=1.0, streaks=0.8)),
+        (yard['quay_top'].obj(bevel=0.03), C('q_top', scan=S_conc, tile=4.0, tone=(0.8, 0.78, 0.75), streaks=0.2, weather=0.7, seams=[('X', 6.0, 0.0, QY - 0.5, QY + 0.1), ('Y', 6.0, 1.0, QY - 0.5, QY + 0.1)], seamw=0.03)),
+        (yard['quay_wall'].obj(bevel=0.04), C('q_wall', scan=S_wall, tile=2.6, tone=(0.82, 0.8, 0.77), growth=True, tide=1.05, streaks=0.55, seams=[('X', 2.44, 0.0, -3.0, QY), ('Z', 1.22, 0.78, -3.0, QY - 0.45)], seamdepth=0.6,
+                                               fit=('X', 14.0, -130.0, QY - 0.4, 1.6))),
         (yard['quay_fenders'].obj(bevel=0.05, seg=2), lambda m: mat_surface('q_fender', 'rubber', m, scan=S_grain, growth=True, tide=0.9)),
         (yard['quay_bollards'].obj(bevel=0.01), St('q_bollard', scan=S_plate, paint=(0.03, 0.03, 0.03), rust=0.6, lumk=0.6, scanmix=0.3)),
         (yard['quay_ladders'].obj(), G('q_ladder', rust=0.4, growth=True, tide=0.8)),
@@ -1569,8 +1741,10 @@ def stage_yard():
     for i, (x, z, w, dd, h, wc, rc, bc, nd, dmg) in enumerate(SHEDS):
         s = sheds[i]
         sp += [(s['plinth'].obj(bevel=0.02), C(f'sh{i}_plinth', scan=S_wall, tile=2.5, streaks=0.6)),
-               (s['wall'].obj(bevel=0.0), St(f'sh{i}_wall', scan=S_clad, tile=2.0, paint=wc, rust=0.22, lumk=0.9, scanmix=0.55, wear=0.2, bump=0.9, bumpdist=0.04)),
-               (s['roof'].obj(bevel=0.0), St(f'sh{i}_roof', scan=S_clad, tile=2.0, paint=rc, rust=0.32, lumk=0.9, scanmix=0.55, wear=0.2, bump=0.9, bumpdist=0.04)),
+               (s['wall'].obj(bevel=0.0), St(f'sh{i}_wall', scan=S_clad, tile=2.0, paint=wc, rust=0.24, lumk=0.9, scanmix=0.55, wear=0.2, bump=0.9, bumpdist=0.04, fade=0.35, eave=QY + h, dirt=0.6,
+                                           seams=[('Z', 1.5, QY + 1.1 + 0.9, QY + 1.3, QY + h - 0.3)], seamw=0.035, seamdepth=0.25, runreach=0.7)),
+               (s['roof'].obj(bevel=0.0), St(f'sh{i}_roof', scan=S_clad, tile=2.0, paint=rc, rust=0.34, lumk=0.9, scanmix=0.55, wear=0.2, bump=0.9, bumpdist=0.04, fade=0.5, dirt=0.5,
+                                           seams=[('Y', 1.6, -z + 0.8, QY, QY + 60)], seamw=0.04, seamdepth=0.25)),
                (s['door'].obj(bevel=0.01), St(f'sh{i}_door', scan=S_shut, tile=2.0, paint=tuple(c * 0.85 for c in rc), rust=0.3, lumk=1.0, scanmix=0.6)),
                (s['trim'].obj(bevel=0.01), G(f'sh{i}_trim', rust=0.35)),
                (s['void'].obj(), lambda m: mat_surface('void', 'glass', m, scan=S_grain))]
@@ -1598,7 +1772,7 @@ def stage_yard():
         ob = bu.obj(); ob['export'] = bu.name; misc.append((ob, f_dark))
     groups.append(('yard', 2048, misc, None))
     # base buildings
-    groups.append(('town', 2048, [(yard['town_walls'].obj(), C('town_wall', scan=S_plast, tile=4.0, tone=(1.0, 0.93, 0.82), streaks=0.6)),
+    groups.append(('town', 1024, [(yard['town_walls'].obj(), C('town_wall', scan=S_plast, tile=4.0, tone=(1.0, 0.93, 0.82), streaks=0.6)),
                                   (yard['town_roofs'].obj(), C('town_roof', scan=S_conc, tile=5.0, tone=(0.95, 0.93, 0.9), streaks=0.2))], None))
     # ground: dry earth with gravel, the base's roads, tyre tracks, oil stains
     def ground(m):
@@ -1620,33 +1794,36 @@ def stage_yard():
         b3 = d.mix_rgb(nt, b2, d.mix_rgb(nt, asp, (0.45, 0.45, 0.46), 1.0, 'MULTIPLY'), road)
         nt.links.new(b3, bsdf.inputs['Base Color'])
         return mat
-    groups.append(('ground', 4096, [(near, ground)], None))
-    only = set(d.args()[1:])
+    groups.append(('ground', 2048, [(near, ground)], None))
+    only = set(d.args()[1:]) - {'draft', 'half'} - set(STAGES)
     if 'dry' in only:
         objs = []
         for name, size, parts, uvs in groups:
             m = d.gltf_material(name, base_color=(0.5, 0.48, 0.45, 1), roughness=0.8)
             for o, _ in parts: d.set_material(o, m)
-            sep = {}
+            sep = {}; rest = []
             for o, _ in parts:
                 if o.get('export'): sep.setdefault(o['export'], []).append(o)
+                else: rest.append(o)
             for en, lst in sep.items(): objs.append(join(lst, en))
-            objs.append(join([o for o, _ in parts if not o.get('export')], name)); d.log(name, tris(objs[-1]), 'tris')
+            objs.append(join(rest, name)); d.log(name, tris(objs[-1]), 'tris')
         export(d.out_path('corsair', 'port_yard.glb'), objs)
         return
-    finals = []
+    FILE = {'quay': 'port_yard', 'yard': 'port_yard', 'town': 'port_yard', 'sheds': 'port_sheds', 'ground': 'port_ground'}     # every .glb under 12 MB
+    files = {}
     for name, size, parts, uvs in groups:
+        finals = files.setdefault(FILE[name], [])
         if only and name not in only: continue
         maps = bake_group(name, parts, size, None, uvscale=uvs)
         mat = final_material(name, maps)
         objs = [o for o, _ in parts]
         for o in objs: d.set_material(o, mat)
         # objects that move in the film (craft, buoys riding the swell) stay separate, the rest is one mesh
-        sep = {}
+        sep = {}; rest = []
         for o in objs:
             if o.get('export'): sep.setdefault(o['export'], []).append(o)
+            else: rest.append(o)
         for en, lst in sep.items(): finals.append(join(lst, en))
-        rest = [o for o in objs if not o.get('export')]
         if rest: finals.append(join(rest, name))
     for o in bpy.data.objects:
         if o.get('occluder'): o.hide_render = True
@@ -1673,8 +1850,9 @@ def stage_yard():
         ob = mesh_from_arrays('beach', V, F)
         uvl = ob.data.uv_layers.new(name='UVMap'); loops = np.array([l.vertex_index for l in ob.data.loops]); uvl.data.foreach_set('uv', np.array(UV, np.float32)[loops].ravel())
         d.smooth(ob, 80); d.set_material(ob, smat); far.append(ob)
-    finals += far
-    export(d.out_path('corsair', 'port_yard.glb'), finals)
+    files.setdefault('port_ground', []).extend(far)
+    for fname, objs in files.items():
+        if objs and not (only and fname == 'port_ground' and 'ground' not in only): export(d.out_path('corsair', f'{fname}.glb'), objs)
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(CACHE, 'yard.blend'))
 
 
