@@ -116,18 +116,24 @@ void main(){
 const ENV_FRAG = /* glsl */`
 precision highp float;
 ${ATMOSPHERE}
-uniform float uCamAlt; uniform vec3 uGroundAlb;
+uniform float uCamAlt; uniform vec3 uGroundAlb; uniform vec2 uDeck;   // cloud deck below the camera: top altitude (m), brightness (0 = none)
 varying vec3 vDir;
 void main(){
   vec3 rd = normalize(vDir);
   vec3 ro = vec3(0.0, RG+uCamAlt, 0.0);
   float b = dot(ro,rd), c = dot(ro,ro)-RG*RG, disc = b*b-c;
   float tG = (disc>0.0 && b<0.0) ? (-b-sqrt(disc)) : -1.0;
+  float tD = -1.0;
+  if (uDeck.y > 0.0 && uCamAlt > uDeck.x && b < 0.0){ float Rd = RG+uDeck.x, dd = b*b-(dot(ro,ro)-Rd*Rd); if (dd > 0.0) tD = -b-sqrt(dd); }
   vec3 LR, LM, LMS, T;
-  atmoIntegrate(ro, rd, tG>0.0 ? tG : 1.0e9, 0.5, 14, LR, LM, LMS, T);
+  atmoIntegrate(ro, rd, tD>0.0 ? tD : (tG>0.0 ? tG : 1.0e9), 0.5, 14, LR, LM, LMS, T);
   float cv = dot(rd,uSunDir);
   vec3 col = LR*phaseR(cv)+LM*min(phaseM(cv),1.5)+LMS;
-  if (tG>0.0){
+  if (tD>0.0){        // a bright, softly lit cloud floor
+    vec3 p = ro+rd*tD; float mu = dot(normalize(p), uSunDir);
+    vec3 E = uSunE*exp(-sunTau(RG+uDeck.x, max(mu, 0.02)))*(0.2+0.8*max(mu, 0.0)) + uSunE*0.07*smoothstep(-0.1,0.2,uSunDir.y);
+    col += T*mix(uGroundAlb*0.6, vec3(1.0), 0.75)*uDeck.y*E*0.3183;
+  } else if (tG>0.0){
     vec3 p = ro+rd*tG; float mu = max(dot(normalize(p), uSunDir), 0.0);
     vec3 E = uSunE*exp(-sunTau(RG, mu))*mu + uSunE*0.06*smoothstep(-0.1,0.2,uSunDir.y);
     col += T*uGroundAlb*E*0.3183;
@@ -723,11 +729,11 @@ export class Pipeline {
     this.envScene = new THREE.Scene();
     const envMat = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthTest: false, depthWrite: false,
-      uniforms: { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb },
+      uniforms: { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb, uDeck: { value: new THREE.Vector2(0, 0) } },
       vertexShader: `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
       fragmentShader: ENV_FRAG,
     });
-    this.envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat));
+    this.envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat)); this.envDeck = envMat.uniforms.uDeck.value;
     this.envRT = null; this.envKey = '';
     this.setSize(opts.width || 1280, opts.height || 720);
   }
@@ -842,6 +848,10 @@ export class Pipeline {
     // sky LUT + hemisphere irradiance only when sun / altitude / haze change; IBL when the key changes
     const A = this.atmo.uniforms, sk = `${A.uSunDir.value.x.toFixed(4)},${A.uSunDir.value.y.toFixed(4)},${A.uSunDir.value.z.toFixed(4)},${Math.round(this.camAlt / 25)},${A.uHaze.value},${A.uHazeH.value},${A.uMieG.value},${A.uMS.value}`;
     if (sk !== this.skyKey) { this.skyKey = sk; this.pSky.render(r, this.rtSky); this.pAmbient.render(r, this.rtAmbient); }
+    { // reflections: a cloud deck under the camera brightens the lower half of what metal sees
+      const dk = post.envDeck ?? (this.clouds && post.clouds ? { alt: this.clouds.top - 350, k: 0.6 * Math.min(1, (post.clouds.cover ?? 0.35) * 1.5) } : null);
+      this.envDeck.set(dk ? dk.alt : 0, dk ? dk.k : 0);
+    }
     this.updateEnvironment(post.envKey ?? 'default');
     // aerial-perspective froxels follow the camera every frame
     this.pAp.u.uWhich.value = 0; this.pAp.render(r, this.rtApI);
