@@ -111,7 +111,9 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   blender/qh_paint.py`) paints the skin as a function of the surface: clean satin aluminium whose sheets differ by a
   percent or two in tone and by brushing direction (KHR_materials_anisotropy), crisp joints, flush fastener rows,
   access panels, the darker lower-fuselage alloy, a faint heat tint aft, and the markings. Weathering is kept
-  minimal on purpose: the real aircraft is clean. The GLB carries the nodes `gear` (landing gear, open doors, wells)
+  minimal on purpose: the real aircraft is clean. The fin's wing mark and the horse head are traced from the 4K
+  photograph (`blender/qh_marks/`, made by `qh_marks/trace.py`); the lettering is Barlow Semi Condensed Bold (OFL,
+  fetched from the npm registry like the other cached sources), sized and placed with the matched-camera overlay. The GLB carries the nodes `gear` (landing gear, open doors, wells)
   and `ab_glow` (afterburner surfaces whose emissive the film drives); only the two anisotropic skins keep stored
   tangents, which keeps the file near 10 MB.
 - `src/lookdev.js` is a turntable for checking any packed asset under the films' sky and grade:
@@ -119,6 +121,10 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   orbits once; `--q` passes any URL parameters to the page). For photo comparisons: `el`/`az` (sun), `gc` (ground
   colour, e.g. `c4c0b6` pale concrete), `ga` (ground albedo the sky model reflects), `origin=1` with
   `--cam=x,y,z,lookx,looky,lookz,fov` in model coordinates, `pitch`, `roll`, `emis=0`.
+- What bare metal reflects is the environment probe (`engine/pipeline.js`): the sky, the ground or a cloud deck below
+  the camera, and, when a shot's post sets `envOver: { base, cover, gain }`, the underside of a broken cloud layer
+  overhead; `envDesat` (0..1) takes some saturation out of the clear sky there. Without them a polished skin in shade
+  mirrors a clear single-scattering sky and turns saturated blue under a cloudy sky.
 
 Photoscanned materials and models come from [Poly Haven](https://polyhaven.com) and
 [ambientCG](https://ambientcg.com), both CC0.

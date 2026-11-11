@@ -94,8 +94,10 @@ def build():
     boom = G.tag(G.build_boom(C['wing']), 15)
     dors = G.tag(G.build_dorsal_fairing(C['wing']), 16)
     adb = G.tag(G.build_airdata_boom(C['wing']), 17)
+    # ventral blades only: the 4K side photograph shows nothing standing on the upper fuselage (the dark dots seen
+    # from above at s 3.5 and 4.4 are flush features, painted)
     blades = [G.tag(G.build_blade(f'blade{i}', s, a, C['wing'], h=h), 18) for i, (s, a, h) in enumerate(
-        ((5.45, 0.62, 0.10), (5.45, -0.62, 0.10), (4.25, 0.55, 0.08), (4.25, -0.55, 0.08), (6.6, 3.14159, 0.16), (11.2, 3.14159, 0.12)))]
+        ((6.6, 3.14159, 0.16), (11.2, 3.14159, 0.12)))]
     nozzle, liner, holder = G.build_nozzle(C['hot'], C['glow'])
     # --- gear (all of it hangs under the 'gear' node)
     gparts = G.build_gear(C['gear'])

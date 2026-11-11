@@ -211,6 +211,10 @@ const SUN_GAP = (() => { const az = SUN.az * Math.PI / 180, d = (5200 - FIELD_AL
 const GROUND_CLOUDS = { ...CLOUDS, hole: SUN_GAP };
 const GROUND_POST = { clouds: GROUND_CLOUDS, exposure: 0.22, contrast: 1.22, sat: 1.04, wb: [0.985, 1.0, 1.05], aerial: 0.9, grain: 0.04, bloom: 0.08, cirrus: { alt: 13300, cover: 0.42, opacity: 0.5, scale: 1.2, wind: [0.004, 0.001] } };
 const AIR_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.32, sat: 1.24, wb: [1.05, 1.0, 0.93], aerial: 0.82, grain: 0.035, bloom: 0.06, cirrus: { alt: 14200, cover: 0.38, opacity: 0.45, scale: 1.4, wind: [0.003, 0.001] } };
+// what the bare metal reflects (engine env probe): the broken cloud layer overhead (thin cirrus at altitude), and a clear
+// sky no more saturated than the one on screen
+Object.assign(GROUND_POST, { envOver: { base: 4300, cover: 0.5 }, envDesat: 0.3 });
+Object.assign(AIR_POST, { envOver: { base: 14200, cover: 0.2, gain: 1.5 }, envDesat: 0.3 });
 
 const shots = [
   { id: 's01', name: 'First light', t0: 0, t1: 6.5, terrain: 'ground', note: 'Wide and low from the scrub beside the runway, pushing in: the jet against the sunrise, light shafts through the cloud.',

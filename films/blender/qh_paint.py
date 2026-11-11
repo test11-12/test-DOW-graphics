@@ -65,12 +65,16 @@ def acg(asset, res='2K'):
     return out
 
 
-def font(weight=700):
-    """Saira (SIL OFL) from the npm registry, cached: the closest open face to the Hermeus wordmark lettering."""
-    base = os.path.join(CACHE, 'fonts', 'saira')
-    f = os.path.join(base, 'package', 'files', f'saira-latin-{weight}-normal.woff')
+LETTERING = 'barlow-semi-condensed'
+
+
+def font(weight=700, family=LETTERING):
+    """A fontsource face (SIL OFL) from the npm registry, cached. Barlow Semi Condensed Bold is the closest open face
+    to the photographed lettering (narrow letters, widely tracked, stems about a fifth of the cap height)."""
+    base = os.path.join(CACHE, 'fonts', family)
+    f = os.path.join(base, 'package', 'files', f'{family}-latin-{weight}-normal.woff')
     if not os.path.exists(f):
-        tgz = fetch('https://registry.npmjs.org/@fontsource/saira/-/saira-5.3.0.tgz', os.path.join(CACHE, 'fonts', 'saira-5.3.0.tgz'))
+        tgz = fetch(f'https://registry.npmjs.org/@fontsource/{family}/-/{family}-5.3.0.tgz', os.path.join(CACHE, 'fonts', f'{family}-5.3.0.tgz'))
         with tarfile.open(tgz) as t:
             t.extractall(base)
     return f
@@ -282,7 +286,15 @@ def bez(p0, p1, p2, p3, n=24):
     return ((1 - t) ** 3 * p0 + 3 * (1 - t) ** 2 * t * p1 + 3 * (1 - t) * t ** 2 * p2 + t ** 3 * p3).tolist()
 
 
-def horse_mark(W, H):
+MARKS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'qh_marks')
+
+
+def traced(name, W, H):
+    """Artwork traced from the released photographs (qh_marks/trace.py), resampled to W x H (mode L)."""
+    return Image.open(os.path.join(MARKS, name)).convert('L').resize((W, H), Image.LANCZOS)
+
+
+def horse_mark_drawn(W, H):
     """The horse-head mark beside the wordmark, traced from the starboard-side photo: head at the right facing
     forward, a long crest streak with two barbs, a second mane streak, a bold neck stroke and the jaw ending in
     the muzzle. Unit box -> pixels (box aspect about 3.0 : 1)."""
@@ -312,7 +324,18 @@ def horse_mark(W, H):
     return im.resize((W, H), Image.LANCZOS)
 
 
+def horse_mark(W, H):
+    """The horse head beside the wordmark, traced from the 4K side photograph (starboard: head forward, at image right)."""
+    return traced('horse.png', W, H)
+
+
 def wing_mark(W, H):
+    """The fin's wing mark, traced from the 4K side photograph (starboard side: a long top feather sweeping up and
+    aft to a point, hooking down at the front into a tail, three feathers tucked under it)."""
+    return traced('fin_wing.png', W, H)
+
+
+def wing_mark_drawn(W, H):
     """Hermeus wing mark as painted on the fin's starboard side (traced from the tail photo): a bold top feather from
     a point at upper left that wraps round the right side and comes down to a point at lower right, with three
     shorter feathers tucked under it."""
@@ -360,62 +383,80 @@ def us_flag(W, H, union_left=True):
 
 
 def seal(W):
-    """Round dark-navy unit badge as photographed (white rim, ring band, light emblem); no legible text."""
-    im = Image.new('RGB', (W, W), (0, 0, 0)); g = ImageDraw.Draw(im)
-    al = Image.new('L', (W, W), 0); ga = ImageDraw.Draw(al)
-    c = W / 2
-    navy = (11, 14, 26)
-    ga.ellipse([0, 0, W - 1, W - 1], fill=255)
-    g.ellipse([0, 0, W - 1, W - 1], fill=(222, 224, 226))
-    r1 = W * 0.47
-    g.ellipse([c - r1, c - r1, c + r1, c + r1], fill=navy)
-    # lettering band: short light ticks in two arcs (reads as small text at film distances, says nothing)
+    """Round dark unit seal as photographed: a near-black disc with a pale metal rim, a band of small light lettering
+    (drawn as illegible marks: no text is reproduced), three small stars each side, a thin pale inner circle and a
+    muted grey emblem. Returns (linear rgb, alpha)."""
+    S = 3
+    Ws = W * S
+    im = Image.new('RGB', (Ws, Ws), (0, 0, 0)); g = ImageDraw.Draw(im)
+    al = Image.new('L', (Ws, Ws), 0); ga = ImageDraw.Draw(al)
+    c = Ws / 2
+    field = (13, 15, 22)
+    ga.ellipse([0, 0, Ws - 1, Ws - 1], fill=255)
+    g.ellipse([0, 0, Ws - 1, Ws - 1], fill=(214, 215, 214))                      # pale rim
+    r1 = Ws * 0.468
+    g.ellipse([c - r1, c - r1, c + r1, c + r1], fill=field)
     rng = np.random.default_rng(7)
-    for arc0, arc1 in ((-2.55, -0.6), (0.75, 2.4)):
-        for a in np.linspace(arc0, arc1, 34):
-            w = W * (0.012 + 0.008 * rng.random()); h = W * 0.045
-            x, y = c + math.cos(a) * W * 0.40, c + math.sin(a) * W * 0.40
+    for arc0, arc1 in ((-2.62, -0.52), (0.62, 2.52)):                              # lettering band: fine light marks
+        for a in np.linspace(arc0, arc1, 46):
+            if rng.random() < 0.12:
+                continue                                                           # word gaps
+            w = Ws * (0.006 + 0.008 * rng.random()); h = Ws * (0.026 + 0.010 * rng.random())
+            x, y = c + math.cos(a) * Ws * 0.405, c + math.sin(a) * Ws * 0.405
             ca, sa = math.cos(a + math.pi / 2), math.sin(a + math.pi / 2)
             pts = [(x + ca * dx - sa * dy, y + sa * dx + ca * dy) for dx, dy in ((-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2))]
-            g.polygon(pts, fill=(150, 154, 162))
-    r2 = W * 0.335
-    g.ellipse([c - r2, c - r2, c + r2, c + r2], outline=(120, 124, 134), width=max(2, int(W * 0.008)))
-    # emblem: a stylised bird with spread wings over a small shield, light grey
-    lg = (176, 180, 188)
+            g.polygon(pts, fill=(128, 130, 134))
+    for side in (-1, 1):                                                           # three small stars each side
+        for a in (-0.22, 0.0, 0.22):
+            x, y = c + side * math.cos(a) * Ws * 0.405, c + math.sin(a) * Ws * 0.405
+            rr = Ws * 0.016
+            pts = [(x + rr * (1 if k % 2 == 0 else 0.45) * math.cos(-math.pi / 2 + k * math.pi / 5), y + rr * (1 if k % 2 == 0 else 0.45) * math.sin(-math.pi / 2 + k * math.pi / 5)) for k in range(10)]
+            g.polygon(pts, fill=(170, 172, 176))
+    r2 = Ws * 0.345
+    g.ellipse([c - r2, c - r2, c + r2, c + r2], outline=(150, 153, 160), width=max(2, int(Ws * 0.009)))
+    # emblem: spread wings over crossed shafts, muted grey, finely drawn
+    lg = (92, 95, 102)
     for sgn in (-1, 1):
-        wing = [(c, c - W * 0.03)] + [(c + sgn * W * (0.05 + 0.2 * t), c - W * (0.04 + 0.11 * math.sin(t * 2.6))) for t in np.linspace(0, 1, 12)] + \
-               [(c + sgn * W * (0.25 - 0.18 * t), c - W * (0.0 - 0.03 * t)) for t in np.linspace(0, 1, 8)]
-        g.polygon(wing, fill=lg)
-    g.ellipse([c - W * 0.04, c - W * 0.13, c + W * 0.04, c - W * 0.05], fill=lg)
-    g.polygon([(c - W * 0.07, c - W * 0.01), (c + W * 0.07, c - W * 0.01), (c + W * 0.06, c + W * 0.09), (c, c + W * 0.15), (c - W * 0.06, c + W * 0.09)], fill=lg)
-    g.polygon([(c - W * 0.04, c + W * 0.01), (c + W * 0.04, c + W * 0.01), (c + W * 0.035, c + W * 0.08), (c, c + W * 0.12), (c - W * 0.035, c + W * 0.08)], fill=navy)
-    for k in range(-2, 3):
-        g.line([(c + k * W * 0.05, c + W * 0.17), (c + k * W * 0.08, c + W * 0.24)], fill=lg, width=max(2, int(W * 0.012)))
+        for k in range(5):                                                         # five primaries per wing
+            t0 = 0.05 + 0.045 * k
+            p = [(c + sgn * Ws * 0.03, c - Ws * 0.02), (c + sgn * Ws * (0.10 + t0), c - Ws * (0.13 - 0.018 * k)),
+                 (c + sgn * Ws * (0.12 + t0), c - Ws * (0.115 - 0.018 * k)), (c + sgn * Ws * 0.05, c + Ws * 0.0)]
+            g.polygon(p, fill=lg)
+    g.ellipse([c - Ws * 0.03, c - Ws * 0.11, c + Ws * 0.03, c - Ws * 0.05], fill=lg)
+    g.polygon([(c - Ws * 0.05, c - Ws * 0.03), (c + Ws * 0.05, c - Ws * 0.03), (c + Ws * 0.045, c + Ws * 0.06), (c, c + Ws * 0.10), (c - Ws * 0.045, c + Ws * 0.06)], fill=lg)
+    for sgn in (-1, 1):
+        g.line([(c - sgn * Ws * 0.17, c + Ws * 0.02), (c + sgn * Ws * 0.17, c + Ws * 0.20)], fill=lg, width=max(2, int(Ws * 0.010)))
+    im = im.resize((W, W), Image.LANCZOS); al = al.resize((W, W), Image.LANCZOS)
     rgb = srgb_to_lin(np.asarray(im, np.float32) / 255.0)
     return rgb, np.asarray(al, np.float32) / 255.0
 
 
-def text_mask(text, h_m, weight=700, track=0.02, squeeze=1.0, width_m=None):
-    """Text rendered at DECAL_PX_PER_M with cap height ~ h_m; returns (mask array, width_m)."""
-    px = int(h_m * DECAL_PX_PER_M / 0.70)
-    f = ImageFont.truetype(font(weight), px)
-    bbox = [f.getbbox(ch) for ch in text]
+def text_mask(text, h_m, weight=700, track=0.02, squeeze=1.0, width_m=None, family=LETTERING):
+    """Text with cap height h_m (metres), rendered at DECAL_PX_PER_M. With width_m, the letter spacing is set so the
+    run spans exactly width_m (letters keep their own proportions). Returns (mask array, width_m, top_offset_m): the
+    image top may sit above the cap line when a glyph rises above it; top_offset_m is the cap line's offset from the
+    image top (0 for caps-only text)."""
+    big = 600
+    f = ImageFont.truetype(font(weight, family), big)
+    hb = Image.new('L', (big * 2, big * 2), 0); ImageDraw.Draw(hb).text((big // 2, big // 2), 'H', font=f, fill=255)
+    bb = hb.getbbox(); cap_px = bb[3] - bb[1]; cap_top = bb[1] - big // 2
+    k = h_m * DECAL_PX_PER_M / cap_px                      # final px per big px
     adv = [f.getlength(ch) for ch in text]
-    W = int(sum(adv) + track * px * len(text) + px)
-    im = Image.new('L', (W, int(px * 1.3)), 0); g = ImageDraw.Draw(im)
-    x = 0.0
+    ink0 = f.getbbox(text[0])[0]; ink1 = adv[-1] - f.getbbox(text[-1])[2]
+    natural = sum(adv) - ink0 - ink1
+    extra = ((width_m * DECAL_PX_PER_M / k) - natural) / max(len(text) - 1, 1) if width_m else track * big
+    Wb = int(natural + extra * (len(text) - 1) + 4); Hb = int(big * 1.4)
+    im = Image.new('L', (Wb, Hb), 0); g = ImageDraw.Draw(im)
+    x = -ink0 + 2
     for ch, a in zip(text, adv):
         g.text((x, 0), ch, font=f, fill=255)
-        x += a + track * px
-    bb = im.getbbox()
-    im = im.crop(bb)
-    if squeeze != 1.0:
-        im = im.resize((int(im.width * squeeze), im.height), Image.LANCZOS)
-    hpx = im.height
-    scale = h_m * DECAL_PX_PER_M / hpx
-    wpx = int(width_m * DECAL_PX_PER_M) if width_m else max(1, int(im.width * scale))
-    im = im.resize((wpx, max(1, int(hpx * scale))), Image.LANCZOS)
-    return np.asarray(im, np.float32) / 255.0, im.width / DECAL_PX_PER_M
+        x += a + extra
+    top = cap_top
+    ib = im.getbbox(); y0 = min(ib[1], top); y1 = ib[3]
+    im = im.crop((0, y0, Wb, y1))
+    W = max(1, int(round(im.width * k))); H = max(1, int(round(im.height * k)))
+    im = im.resize((W, H), Image.LANCZOS)
+    return np.asarray(im, np.float32) / 255.0, W / DECAL_PX_PER_M, (top - y0) * k / DECAL_PX_PER_M
 
 
 class Decal:
@@ -563,12 +604,15 @@ class Skin:
         br = self.brush.sample(u, v, ang, offu * 0.3, offv * 0.5)
         scr = self.scratch.sample(u, v, r1 * 6.28, offu * 0.2, offv * 0.9)
         lum = tone * (1 + 0.003 * np.clip(mot, -2, 2))
-        col = np.stack([lum * (1 + warm), lum * (1 + warm * 0.3), lum * (1 - warm * 0.8)], 1) * np.array([0.992, 0.995, 1.0], np.float32)
+        col = np.stack([lum * (1 + warm), lum * (1 + warm * 0.3), lum * (1 - warm * 0.8)], 1) * np.array([1.0, 0.996, 0.988], np.float32)
         rr = rough * (1 + 0.006 * np.clip(mot, -2, 2)) + 0.012 * np.clip(br, -2, 2) + 0.005 * np.clip(scr, 0, 2)
         if lower is not None:
+            # the lower-fuselage alloy as photographed: a darker, warmer grey (F0 like titanium's), one even tone with
+            # barely any sheet-to-sheet change, a slightly softer sheen
             lo = lower[:, None]
-            col = col * (1 - lo) + col * np.array([0.66, 0.648, 0.632], np.float32) * lo
-            rr = rr + 0.05 * lower
+            low = np.array([0.505, 0.468, 0.438], np.float32) * (1 + (r1 - 0.5) * 0.008)[:, None] * (1 + 0.002 * np.clip(mot, -2, 2))[:, None]
+            col = col * (1 - lo) + low * lo
+            rr = rr * (1 - lower) + (0.52 + 0.004 * np.clip(mot, -2, 2) + 0.006 * np.clip(br, -2, 2)) * lower
         L.base[:] = col
         L.rough[:] = np.clip(rr, 0.12, 0.7)
         L.metal[:] = 1.0
@@ -577,6 +621,8 @@ class Skin:
         c, s = np.cos(ang), np.sin(ang)
         L.adir[:] = across_dir * c[:, None] + along_dir * s[:, None]
         L.astr[:] = 0.32 + 0.10 * r6
+        if lower is not None:
+            L.astr[:] *= (1 - 0.6 * lower)
         # the occlusion itself goes to the ORM map; enclosed corners are only a touch duller
         g = np.clip(1 - ao, 0, 1) ** 1.5
         L.base *= (1 - 0.035 * g)[:, None]
@@ -605,6 +651,7 @@ class Skin:
 
 
 SKIN_TEXEL = 0.0019
+BLACK = np.array([0.006, 0.006, 0.0065], np.float32)   # markings as black metal: F0 under 1 %, no diffuse, so full sun does not grey them
 
 
 def paint_fuselage(S, OUTS, skin, ff, decals):
@@ -626,7 +673,7 @@ def paint_fuselage(S, OUTS, skin, ff, decals):
     across = np.cross(N, along)
     # lower fuselage: the darker, warmer alloy below the waterline joint (a crisp sheet edge)
     lower = sstep(-0.003, 0.003, a - ff.lookup(s, np.full_like(s, math.radians(WATERLINE))))
-    skin.metal(L, s, a, panel, ao, along, across, 0.90, lower=lower)
+    skin.metal(L, s, a, panel, ao, along, across, 0.90, lower=lower, cross_frac=0.0, tone_var=0.022)
     # oil canning: each bay between rivet lines pillows slightly
     rows_s = sorted(FRAMES + INNER)
     s0, s1, js = bracket(rows_s, s)
@@ -715,21 +762,22 @@ def fus_decals(ff):
     """Markings as photographed: wordmark + horse (horse forward, facing the nose, both sides), unit badge,
     EXPERIMENTAL, four flush ports per side, the dorsal antenna patch."""
     out = []
-    black = hexlin('#1b1b1c')                    # painted as black metal: F0 ~ 1 %, no diffuse, so full sun does not grey it
+    black = BLACK
     # wordmark, measured on the 4K side view: 1.86 m long, cap height 0.175 m as projected (0.20 m along the skin at
-    # the 50 deg line), upright, widely tracked; the horse mark 0.71 x 0.21 m starts 0.078 m ahead of the last letter
+    # the 50 deg line), upright, widely tracked; the horse mark (traced) 0.70 x 0.20 m as projected starts 0.078 m
+    # ahead of the last letter
     TH = 0.202
-    tm, tw = text_mask('QUARTERHORSE', TH, 700, track=0.055, width_m=1.86)
-    HW, HH = 0.71, 0.238
+    tm, tw, ttop = text_mask('QUARTERHORSE', TH, 700, width_m=1.86)
+    HW, HH = 0.71, 0.232
     hm = np.asarray(horse_mark(int(HW * DECAL_PX_PER_M), int(HH * DECAL_PX_PER_M)), np.float32) / 255.0
-    T = Decal(None, tm, tw, TH)
+    T = Decal(None, tm, tw, tm.shape[0] / DECAL_PX_PER_M)
     Hs = Decal(None, hm, HW, HH)
     Hp = Decal(None, hm[:, ::-1].copy(), HW, HH)
     s_txt_aft, s_txt_fwd = 5.79, 5.79 - tw       # text spans s from ~3.93 to 5.79 (matched-camera overlay)
     s_h_aft, s_h_fwd = s_txt_fwd - 0.078, s_txt_fwd - 0.078 - HW
     phi_c = 50.0                                  # centre around-angle of the wordmark band
 
-    def paint_coat(L, m, alpha, col=black, rough=0.62, thick=0.00006):
+    def paint_coat(L, m, alpha, col=black, rough=0.55, thick=0.00006):
         sub_a = alpha
         over_m(L, m, sub_a, col, rough, metal=1.0)
         L.h[m] += thick * sub_a
@@ -741,7 +789,7 @@ def fus_decals(ff):
             return
         ss, aa, sd = s[m], a[m], side[m]
         ac = ff.arc_at(ss, phi_c)
-        y = aa - ac + TH / 2                       # image y down = increasing arc from the top
+        y = aa - ac + TH / 2 + ttop                # image y down = increasing arc from the top
         # starboard: image x runs forward (decreasing s); port: aft (increasing s)
         xt = np.where(sd < 0, s_txt_aft - ss, ss - s_txt_fwd)
         _, at = T.sample(xt, y)
@@ -753,18 +801,18 @@ def fus_decals(ff):
         paint_coat(L, m, np.maximum(at, ah))
     out.append(wordmark)
 
-    SEAL_S = 1.73                                 # badge centre station (matched-camera overlay)
-    srgb, salpha = seal(int(0.49 * DECAL_PX_PER_M))
-    SD = Decal(srgb, salpha, 0.49, 0.49)
+    SEAL_S, SEAL_D = 1.67, 0.545                  # badge centre station and diameter (matched-camera overlay)
+    srgb, salpha = seal(int(SEAL_D * DECAL_PX_PER_M))
+    SD = Decal(srgb, salpha, SEAL_D, SEAL_D)
 
     def badge(L, s, a, side, deg):
-        m = (deg > 70) & (deg < 112) & (s > SEAL_S - 0.30) & (s < SEAL_S + 0.30)
+        m = (deg > 66) & (deg < 114) & (s > SEAL_S - 0.31) & (s < SEAL_S + 0.31)
         if not m.any():
             return
         ss, aa, sd = s[m], a[m], side[m]
         ac = ff.arc_at(ss, 88.0)
-        x = np.where(sd < 0, SEAL_S + 0.245 - ss, ss - (SEAL_S - 0.245))
-        rgb, al = SD.sample(x, aa - ac + 0.245)
+        x = np.where(sd < 0, SEAL_S + SEAL_D / 2 - ss, ss - (SEAL_S - SEAL_D / 2))
+        rgb, al = SD.sample(x, aa - ac + SEAL_D / 2)
         over_m(L, m, al, rgb, 0.5)
         # the dark field as 'black metal' like the lettering (no dielectric sheen to grey it in the sun); the pale ring
         # and emblem stay ordinary paint
@@ -776,18 +824,18 @@ def fus_decals(ff):
         L.astr[m] *= (1 - al)
     out.append(badge)
 
-    em, ew = text_mask('EXPERIMENTAL', 0.084, 700, track=0.03, width_m=0.59)
-    ED = Decal(None, em, ew, 0.084)
+    em, ew, etop = text_mask('EXPERIMENTAL', 0.088, 700, width_m=0.627)
+    ED = Decal(None, em, ew, em.shape[0] / DECAL_PX_PER_M)
 
     def experimental(L, s, a, side, deg):
-        m = (deg > 52) & (deg < 84) & (s > 0.4) & (s < 1.45)
+        m = (deg > 52) & (deg < 86) & (s > 0.4) & (s < 1.45)
         if not m.any():
             return
         ss, aa, sd = s[m], a[m], side[m]
         ac = ff.arc_at(ss, 68.0)
-        s_fwd, s_aft = 0.63, 0.63 + ew
+        s_aft = 1.205; s_fwd = s_aft - ew
         x = np.where(sd < 0, s_aft - ss, ss - s_fwd)
-        _, al = ED.sample(x, aa - ac + 0.042)
+        _, al = ED.sample(x, aa - ac + 0.027 + etop)
         paint_coat(L, m, al)
     out.append(experimental)
 
@@ -807,8 +855,10 @@ def fus_decals(ff):
             lines = np.maximum(np.exp(-((r - 0.085) / lw) ** 2), np.exp(-((r - 0.057) / lw) ** 2))
             hexm = sstep(hexr + 0.002, hexr - 0.002, r)
             hexl = np.exp(-((r - hexr) / lw) ** 2)
-            over_m(L, m, band, np.array([0.80, 0.80, 0.79], np.float32), 0.50, metal=1.0)   # bead-blasted ring
-            over_m(L, m, hexm, np.array([0.93, 0.93, 0.92], np.float32), 0.38, metal=1.0)   # pale insert
+            # the photographs show these as pale, near-white rings round a pale hex insert: bead-blasted and coated,
+            # so mostly diffuse rather than mirror metal
+            over_m(L, m, band, srgb_to_lin(np.array([0.80, 0.80, 0.78], np.float32)), 0.55, metal=0.15)
+            over_m(L, m, hexm, srgb_to_lin(np.array([0.70, 0.70, 0.69], np.float32)), 0.45, metal=0.3)
             over_m(L, m, np.maximum(lines, hexl) * 0.8, np.array([0.12, 0.12, 0.125], np.float32), 0.5, metal=0.3)
             L.h[m] += -0.0002 * np.maximum(lines, hexl)
             L.astr[m] *= (1 - np.maximum(band, hexm))
@@ -816,7 +866,8 @@ def fus_decals(ff):
 
     def vents(L, s, a, side, deg):
         # small flush features seen on the photos: an aft-facing slot, drains, a round flush antenna
-        for (sc, pc, kind) in ((1.30, 112.0, 'slot'), (2.34, 103.0, 'drain'), (2.39, 106.0, 'drain'), (3.42, 125.0, 'round'), (6.0, 129.0, 'drain'), (4.25, 128.0, 'slot')):
+        for (sc, pc, kind) in ((1.30, 112.0, 'slot'), (2.34, 103.0, 'drain'), (2.39, 106.0, 'drain'), (3.42, 125.0, 'round'), (6.0, 129.0, 'drain'), (4.25, 128.0, 'slot'),
+                               (3.50, 44.0, 'dot'), (4.43, 44.0, 'dot')):
             m = (np.abs(s - sc) < 0.1) & (np.abs(deg - pc) < 10)
             if not m.any():
                 continue
@@ -827,6 +878,10 @@ def fus_decals(ff):
                 q = sstep(0.004, 0.0, np.maximum(np.abs(dx) - 0.035, 0) + np.maximum(np.abs(dy) - 0.006, 0))
                 over_m(L, m, q, np.array([0.02, 0.02, 0.02], np.float32), 0.6, metal=0.0)
                 L.h[m] -= 0.0008 * q
+            elif kind == 'dot':          # small dark flush fitting (seen from above in the overhead photographs)
+                q = sstep(0.016, 0.012, np.hypot(dx, dy))
+                over_m(L, m, q, np.array([0.025, 0.025, 0.027], np.float32), 0.5, metal=0.0)
+                L.h[m] -= 0.0003 * q
             elif kind == 'drain':
                 q = sstep(0.006, 0.003, np.hypot(dx, dy))
                 over_m(L, m, q, np.array([0.03, 0.03, 0.03], np.float32), 0.6, metal=0.0)
@@ -994,17 +1049,20 @@ def paint_wing_set(S, OUTS, skin):
         skin.rivets(L, zc, dh + 0.085, 0.03, 0.0022, 93, strength=(~rud).astype(np.float32))
         skin.rivets(L, zc, dh - 0.03, 0.03, 0.0021, 94, strength=rud.astype(np.float32))
         # markings: wing mark (feathers trail aft on both sides) and the flag (union forward on both sides)
-        wm = np.asarray(wing_mark(int(1.14 * DECAL_PX_PER_M), int(0.87 * DECAL_PX_PER_M)), np.float32) / 255.0
-        WS, WP = Decal(None, wm, 1.14, 0.87), Decal(None, wm[:, ::-1].copy(), 1.14, 0.87)
-        s_fwd, s_aft, z_top = 12.86, 14.00, 2.43
-        m = (s > s_fwd - 0.05) & (s < s_aft + 0.05) & (z > 1.55) & (z < 2.52)
+        # traced artwork in the box the matched-camera overlay gives it: 1.19 x 0.89 m, aft edge at s 14.00, top at z 2.43
+        WMW, WMH = 1.19, 0.89
+        wm = np.asarray(wing_mark(int(WMW * DECAL_PX_PER_M), int(WMH * DECAL_PX_PER_M)), np.float32) / 255.0
+        WS, WP = Decal(None, wm, WMW, WMH), Decal(None, wm[:, ::-1].copy(), WMW, WMH)
+        s_aft, z_top = 14.00, 2.43
+        s_fwd = s_aft - WMW
+        m = (s > s_fwd - 0.05) & (s < s_aft + 0.05) & (z > z_top - WMH - 0.05) & (z < z_top + 0.05)
         if m.any():
             ss, zz, sdm = s[m], z[m], sd[m]
             # starboard: image x runs forward (image left = aft); port: image x runs aft (mirrored artwork)
             _, a_s = WS.sample(s_aft - ss, z_top - zz)
             _, a_p = WP.sample(ss - s_fwd, z_top - zz)
             al = np.where(sdm < 0, a_s, a_p)
-            over_m(L, m, al, hexlin('#1b1b1c'), 0.62, metal=1.0)
+            over_m(L, m, al, BLACK, 0.55, metal=1.0)
             L.h[m] += 0.00007 * al; L.astr[m] *= (1 - al)
         fw, fh = 0.55, 0.31
         fs_f, fz_t = 12.17, 1.625
@@ -1051,15 +1109,15 @@ def paint_wing_set(S, OUTS, skin):
         skin.seam(L, dzb, strength=sideface.astype(np.float32) * (s > 10.5))
         skin.rivets(L, s, dzb - 0.012, 0.026, 0.0022, 103, strength=sideface.astype(np.float32) * (s > 10.5))
         # N21QH: both sides, reads left to right from outside
-        rm, rw = text_mask('N21QH', 0.225, 600, track=0.04, width_m=0.66)
-        R = Decal(None, rm, rw, 0.225)
+        rm, rw, rtop = text_mask('N21QH', 0.205, 700, width_m=0.62)
+        R = Decal(None, rm, rw, rm.shape[0] / DECAL_PX_PER_M)
         s_c, z_c = 11.75, 1.015
         m = sideface & (np.abs(s - s_c) < rw / 2 + 0.05) & (np.abs(z - z_c) < 0.15)
         if m.any():
             ss, zz, sdm = s[m], z[m], sd[m]
             x = np.where(sdm < 0, (s_c + rw / 2) - ss, ss - (s_c - rw / 2))
-            _, al = R.sample(x, (z_c + 0.1125) - zz)
-            over_m(L, m, al, hexlin('#1b1b1c'), 0.62, metal=1.0)
+            _, al = R.sample(x, (z_c + 0.1025 + rtop) - zz)
+            over_m(L, m, al, BLACK, 0.55, metal=1.0)
             L.h[m] += 0.00007 * al; L.astr[m] *= (1 - al)
         # exhaust soot and heat on the boom's underside above the nozzle
         under = sstep(-0.2, -0.8, N[:, 2])
@@ -1080,7 +1138,7 @@ def paint_wing_set(S, OUTS, skin):
         L.rough[:] = rough * (0.92 + 0.16 * nz)
         L.metal[:] = metal
         if pidv == 17:   # the tip and the vanes darker, a heat-blued collar band
-            tip = sstep(-1.28, -1.40, X0 - P[:, 0])
+            tip = sstep(-1.38, -1.50, X0 - P[:, 0])
             L.base *= (1 - 0.35 * tip)[:, None]
         g = np.clip(1 - ao, 0, 1)
         L.base *= (1 - 0.15 * g)[:, None]
@@ -1205,10 +1263,19 @@ def paint_gear(S, OUTS, skin):
         L.rough[ty] = L.rough[ty] * (1 - dust) + 0.95 * dust
     hub = pid == 51
     if hub.any():
-        L.base[hub] = srgb_to_lin(np.array([0.74, 0.74, 0.72], np.float32)) * (0.9 + 0.15 * nz[hub])[:, None]
-        L.rough[hub] = 0.38
+        L.base[hub] = srgb_to_lin(np.array([0.80, 0.80, 0.78], np.float32)) * (0.93 + 0.10 * nz[hub])[:, None]
+        L.rough[hub] = 0.40
         bd = np.clip(1 - ao[hub], 0, 1)
-        over_m(L, hub, 0.35 * bd + 0.06 * nz2[hub], np.array([0.12, 0.10, 0.08], np.float32), 0.6)   # brake dust
+        over_m(L, hub, 0.30 * bd + 0.05 * nz2[hub], np.array([0.12, 0.10, 0.08], np.float32), 0.6)   # brake dust
+        # the open middle of the wheel (cap and its three lobes) reads as a dark three-lobed hole in the pale disc
+        main = np.abs(P[hub, 1]) > 0.5
+        wc = np.where(main, GROUND - MAIN_DROP + MAIN_WHEEL['r'], GROUND + NOSE_WHEEL['r'])
+        sx = np.where(main, X(MAIN_WHEEL['s']), X(NOSE_WHEEL['s']))
+        Rw = np.where(main, MAIN_WHEEL['r'], NOSE_WHEEL['r'])
+        rad = np.hypot(P[hub, 0] - sx, P[hub, 2] - wc) / Rw
+        th = np.arctan2(P[hub, 2] - wc, P[hub, 0] - sx)
+        lobe_r = 0.185 * (1 + 0.24 * np.cos(3 * th - math.pi / 2))
+        over_m(L, hub, sstep(lobe_r + 0.012, lobe_r - 0.012, rad), np.array([0.025, 0.024, 0.023], np.float32), 0.55)
     chrome = pid == 54
     if chrome.any():
         L.base[chrome] = 0.92; L.metal[chrome] = 1.0
@@ -1234,8 +1301,11 @@ def paint_gear(S, OUTS, skin):
         panel = (np.abs(P[dout, 1]) > 0.6).astype(np.int64) * 4 + (P[dout, 1] > 0) + 12000
         # the doors are flat sheet that faces the low sun square-on: a duller, greyer finish than the skin (as in the
         # photos), a hinge strip, and bold screw rows keep a surface in them instead of a clipped white card
-        skin.metal(sub, sd, zd, panel, ao[dout], along, across, 0.50)
-        sub.rough += 0.20
+        # a smoother sheet than the skin: it mirrors the ground and sky with the waviness of thin skin, so it never
+        # reads as a flat white card in low sun (the photographed doors are bright below, darker above)
+        skin.metal(sub, sd, zd, panel, ao[dout], along, across, 0.28, tone_var=0.05)
+        sub.rough[:] = 0.36 + 0.10 * fbm(sd, zd, 0.35, 3, seed=78)
+        sub.astr *= 0.5
         sub.h += 0.0005 * np.sin(sd * 2 * math.pi / 0.42) * np.sin(zd * 2 * math.pi / 0.36) + 0.0003 * (fbm(sd, zd, 0.5, 3, seed=77) - 0.5)
         for key, (s0d, s1d, z0d, z1d) in (('n', DOORS['nose'][:4]), ('m', DOORS['main'][:4])):
             m = (sd > s0d - 0.02) & (sd < s1d + 0.02)
@@ -1254,7 +1324,7 @@ def paint_gear(S, OUTS, skin):
                 disc = np.maximum(disc, np.maximum(h2, r2))
             hinge = line_profile(zd - (z0d - 0.05), 0.004)                 # the hinge strip's lower edge
             edge_d = sstep(0.014, 0.0, dmin)
-            dk = np.clip(0.5 * disc + 0.6 * hinge + 0.3 * edge_d, 0, 0.8)
+            dk = np.clip(0.35 * disc + 0.5 * hinge + 0.3 * edge_d, 0, 0.7)
             sub.base[m] *= (1 - dk[m])[:, None]
             sub.rough[m] += 0.1 * disc[m]
             sub.h[m] += -0.0004 * disc[m] - 0.0006 * hinge[m]

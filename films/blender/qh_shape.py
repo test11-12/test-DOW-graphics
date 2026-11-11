@@ -219,10 +219,10 @@ NF = 16
 
 
 NOSE_WHEEL = dict(s=4.47, y=0.0, r=0.200, w=0.127)
-MAIN_WHEEL = dict(s=9.40, y=1.15, r=0.305, w=0.190)
+MAIN_WHEEL = dict(s=9.53, y=1.15, r=0.305, w=0.190)   # s re-measured on the matched 4K side view (wheel and door 0.13 m aft)
 
 
-DOORS = dict(nose=(4.56, 5.755, -0.60, -1.13, 0.255), main=(8.02, 9.51, -0.20, -0.80, 1.30))
+DOORS = dict(nose=(4.56, 5.755, -0.60, -1.13, 0.255), main=(8.10, 9.66, -0.20, -0.80, 1.30))
 
 
 

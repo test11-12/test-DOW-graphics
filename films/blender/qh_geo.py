@@ -599,18 +599,19 @@ def build_dorsal_fairing(coll):
 
 
 def build_airdata_boom(coll):
-    """Air-data boom as photographed (side view and overhead): a 47 mm tube leaving the nose of the black dorsal
-    fairing, stepping down to 30 mm just ahead of the inlet lip, alpha and beta vanes 0.9 m ahead of the lip, a
-    fine probe to 1.45 m ahead."""
+    """Air-data boom as photographed (side view and overhead): a 54 mm tube leaving the nose of the black dorsal
+    fairing, stepping down to 32 mm just ahead of the inlet lip, alpha and beta vanes 1.13 m ahead of the lip, a fine
+    probe to 1.55 m ahead (measured on the overhead photograph against the wing-tip stations: 113 px from the lip at
+    14.0 mm/px, less 2 % for the boom standing a metre above the wing tips)."""
     zc = ADB_Z
     parts = [tube('adb_root', (X(0.86), 0, zc), (X(-0.07), 0, zc), 0.027, 0.027, seg=24, coll=coll, caps=True, bevel=0.003),
              tube('adb_step', (X(-0.06), 0, zc), (X(-0.13), 0, zc), 0.027, 0.016, seg=24, coll=coll, caps=False),
-             tube('adb_mid', (X(-0.12), 0, zc), (X(-1.26), 0, zc), 0.016, 0.014, seg=20, coll=coll, caps=True, bevel=0.002),
-             tube('adb_tip', (X(-1.26), 0, zc), (X(-1.45), 0, zc), 0.014, 0.004, seg=20, coll=coll, caps=True, bevel=0.002),
-             tube('adb_collar', (X(-0.86), 0, zc), (X(-0.94), 0, zc), 0.020, seg=20, coll=coll, bevel=0.004)]
+             tube('adb_mid', (X(-0.12), 0, zc), (X(-1.36), 0, zc), 0.016, 0.014, seg=20, coll=coll, caps=True, bevel=0.002),
+             tube('adb_tip', (X(-1.36), 0, zc), (X(-1.55), 0, zc), 0.014, 0.004, seg=20, coll=coll, caps=True, bevel=0.002),
+             tube('adb_collar', (X(-1.09), 0, zc), (X(-1.17), 0, zc), 0.020, seg=20, coll=coll, bevel=0.004)]
     for k, (dy, dz) in enumerate(((1, 0), (-1, 0), (0, 1), (0, -1))):
         out = Vector((0, dy, dz))
-        base = Vector((X(-0.90), 0, zc)) + out * 0.017
+        base = Vector((X(-1.13), 0, zc)) + out * 0.017
         parts.append(tube(f'vane_shaft{k}', base, base + out * 0.030, 0.0035, seg=10, coll=coll, bevel=0.001))
         v0 = base + out * 0.030
         pts = [v0 + Vector((0.012, 0, 0)), v0 + out * 0.070 + Vector((-0.018, 0, 0)), v0 + out * 0.070 + Vector((-0.050, 0, 0)), v0 + Vector((-0.038, 0, 0))]
@@ -779,8 +780,8 @@ def wheel_hub(name, c, axis, R, W, coll, holes=10):
     for k in range(holes):
         a = k / holes * 2 * math.pi
         big = k % 2 == 0
-        rr = (0.031 if big else 0.017) * sc
-        rad = R * (0.405 if big else 0.43)
+        rr = ((0.031 if big else 0.017) if holes < 12 else (0.024 if big else 0.020)) * sc
+        rad = R * ((0.405 if big else 0.43) if holes < 12 else 0.42)
         cutters.append(tube(f'{name}_cut{k}', Vector((xo - 0.04, rad * math.cos(a), rad * math.sin(a))), Vector((xo + 0.05, rad * math.cos(a), rad * math.sin(a))), rr, seg=20, coll=coll))
     cut = join(cutters, name + '_cutters')
     m = web.modifiers.new('holes', 'BOOLEAN'); m.operation = 'DIFFERENCE'; m.object = cut; m.solver = 'EXACT'
@@ -796,6 +797,22 @@ def wheel_hub(name, c, axis, R, W, coll, holes=10):
         tag(o, 51)
     ob = join(parts, name)
     orient(ob, c, axis)
+    return ob
+
+
+def toothed_disc(name, c, axis, R, t, teeth, depth, coll, r_in=0.0):
+    """Brake rotor / torque plate: a disc of thickness t about local X with `teeth` square notches round its rim."""
+    seg = teeth * 8
+
+    def rf(th, x, r):
+        if r < R - 1e-6:
+            return np.full_like(th, r)
+        ph = (th * teeth / (2 * math.pi)) % 1.0
+        return r - depth * ((ph > 0.12) & (ph < 0.50)).astype(float)
+    prof = [(-t / 2, r_in), (-t / 2, R * 0.7), (-t / 2, R), (t / 2, R), (t / 2, R * 0.7), (t / 2, r_in)]
+    ob = local_lathe(name, prof, seg, coll, rfun=rf, facing=None)
+    orient(ob, c, axis)
+    sharp_edges(ob, 40)
     return ob
 
 
@@ -832,6 +849,8 @@ def build_gear(coll):
         out.append(wheel_hub(f'main_hub{sy}', cM, (0, sy, 0), mw['r'], mw['w'], coll, holes=12))
         bc = cM + Vector((0, -sy * 0.035, 0))
         out.append(tube(f'main_brake{sy}', bc + Vector((0, -sy * 0.045, 0)), bc + Vector((0, sy * 0.03, 0)), 0.15, seg=40, coll=coll, bevel=0.006))
+        # the toothed brake torque plate between the wheel and the strut (the 'sprocket' in the side photograph)
+        out.append(toothed_disc(f'main_brake_rotor{sy}', cM + Vector((0, -sy * 0.108, 0)), (0, sy, 0), 0.158, 0.022, 18, 0.022, coll, r_in=0.03))
         out.append(box(f'main_caliper{sy}', bc + Vector((0.0, -sy * 0.055, 0.13)), (0.12, 0.05, 0.07), coll, bevel=0.01))
         ox = X(mw['s'] + 0.06)
         yo = sy * (mw['y'] - 0.15)
@@ -847,9 +866,12 @@ def build_gear(coll):
         t0 = topM + (botM - topM) * 0.45 + Vector((0.075, 0, 0))
         kn = topM + (botM - topM) * 0.72 + Vector((0.21, 0, 0))
         t1 = botM + Vector((0.07, 0, -0.02))
-        out.append(bar(f'main_tl_up{sy}', t0, kn, 0.034, 0.05, up=(0, 1, 0), coll=coll, bevel=0.008))
-        out.append(bar(f'main_tl_lo{sy}', kn, t1, 0.034, 0.05, up=(0, 1, 0), coll=coll, bevel=0.008))
-        out.append(tube(f'main_tl_pin{sy}', kn + Vector((0, -0.035, 0)), kn + Vector((0, 0.035, 0)), 0.014, seg=12, coll=coll, bevel=0.002))
+        # torque links: a chunky scissor on the front of the strut, the apex pin and its lug standing proud
+        out.append(bar(f'main_tl_up{sy}', t0, kn, 0.05, 0.072, up=(0, 1, 0), coll=coll, bevel=0.01))
+        out.append(bar(f'main_tl_lo{sy}', kn, t1, 0.05, 0.072, up=(0, 1, 0), coll=coll, bevel=0.01))
+        out.append(tube(f'main_tl_pin{sy}', kn + Vector((0, -0.045, 0)), kn + Vector((0, 0.045, 0)), 0.02, seg=14, coll=coll, bevel=0.003))
+        for kk, pp in (('a', t0), ('b', t1)):
+            out.append(tube(f'main_tl_pin{kk}{sy}', pp + Vector((0, -0.04, 0)), pp + Vector((0, 0.04, 0)), 0.016, seg=12, coll=coll, bevel=0.003))
         db0 = topM + (botM - topM) * 0.32
         for dy in (-0.05, 0.05):
             out.append(tube(f'main_drag{sy}{dy}', db0 + Vector((0, dy, 0)), Vector((X(mw['s'] - 0.75), yo + dy * 1.6, -0.16)), 0.024, seg=14, coll=coll, bevel=0.004))
@@ -906,9 +928,9 @@ def build_doors(coll):
     s0, s1, z0, z1, yy = DOORS['main']
     for sy in (1, -1):
         out.append(curved_door(f'main_door{sy}', s0, s1, z0, z1, sy * yy, sy, coll, bulge=0.012, thick=0.024))
-        for s in (8.30, 8.75, 9.20):
+        for s in (8.40, 8.86, 9.33):
             out.append(bar(f'main_door_rib{sy}{s}', (X(s), sy * (yy - 0.03), z0 - 0.05), (X(s), sy * (yy - 0.03), z1 + 0.06), 0.02, 0.035, up=(0, sy, 0), coll=coll, bevel=0.003))
-        for s in (8.20, 9.30):
+        for s in (8.30, 9.44):
             out.append(bar(f'main_door_arm{sy}{s}', (X(s), sy * (yy - 0.02), z0 - 0.03), (X(s), sy * 1.05, -0.03), 0.022, 0.014, up=(1, 0, 0), coll=coll, bevel=0.002))
     return out
 
@@ -934,7 +956,7 @@ def build_wells(coll, N=FUS_N):
     out.append(ob)
     for sy in (1, -1):
         ys = np.linspace(0.70, 1.29, 8)
-        ss = np.linspace(7.83, 9.55, 12)
+        ss = np.linspace(7.93, 9.70, 12)
         V = np.array([(X0 - s, sy * y, float(wing_surface_z(np.array([s]), y, upper=False)[0]) - 0.003) for s in ss for y in ys])
         F = grid_faces(len(ss), len(ys))
         ob = mesh_object(f'main_well{sy}', V, F, coll, True, uv_loops=np.array([(X0 - V[vi][0], V[vi][1]) for f in F for vi in f]))
