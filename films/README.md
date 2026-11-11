@@ -107,6 +107,13 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   `node tools/shot.mjs lookdev <prefix> --q="glb=quarterhorse/quarterhorse.glb&el=10&dist=20" t` (t from 0 to 12
   orbits once; `--q` passes any URL parameters to the page).
 
+- `blender/ground_tex.py` writes the tiling ground material sets in `assets/shared/tex/ground/` (albedo,
+  a grey two-up x|y normal, packed occlusion / roughness / height) that the terrain's material layers read.
+- `blender/scrub.py [--film=NAME --sun=AZ,EL]` bakes the desert scrub: each scanned plant rendered in Cycles
+  from 16 azimuths under the film's own sun, as two light groups (sun, sky) that the film relights, plus a
+  top-down shadow and occlusion decal per plant. It writes `assets/<film>/tex/scrub_*.webp` and
+  `src/scrub_atlas_<film>.js`; `src/scrub.js` draws them (see "Scrub" below). Re-bake when a film's sun moves.
+
 Photoscanned materials and models come from [Poly Haven](https://polyhaven.com) and
 [ambientCG](https://ambientcg.com), both CC0.
 
@@ -148,6 +155,25 @@ full-screen pass lights it. In `shadeTerrain`, sample the shared detail texture 
 `spec < 0` marks pavement (glossy low-sun lobe, sky sheen at grazing angles). Anything drawn over the
 terrain with alpha below 1 (for example dark shadow streaks under plants) lets that much less terrain
 light through.
+
+*Photoscanned layers* (optional): `recipe.layers = [{ name, albedo, normal, orm, scale, rotate, detail }]`
+(texture paths under `assets/`, `scale` in metres per tile) are packed into two texture arrays; a recipe
+without `layers` renders exactly as before. In `shadeTerrain` (inside `#ifdef TERRAIN_LAYERS`):
+`Surf s = layerSample(L_NAME)` samples a layer hex-tiled (no repetition, footprint-correct, fading to the
+layer's mean far away); `layerSampleST(L_NAME, st, dx, dy, angle)` samples it in a mapping of your own (per
+slab, per plank); `surfBlendH(a, b, t, soft)` blends two surfaces by height; `surfApply(s, k, alb, N)`
+writes one into the outputs and switches the pixel to the layered lighting (cavity occlusion, GGX, sky
+reflection, relief under a low sun kept energy-neutral). `layerMeanAlbedo(L_NAME)` lets a recipe regrade a scan
+to a target colour or use it as a multiplier over its own painted surface. `layerAniso` / `layerAnisoB` set
+the anisotropy of the two arrays (albedo + height; normal + roughness + occlusion); `detail: [k, strength]`
+lays the scan over itself k times finer (k a whole number) where the camera magnifies it.
+
+**Scrub** (`src/scrub.js`): `await buildScrub(pipe, { atlas, terrain, clouds, field })` returns
+`{ group, update(camera, film) }`. Plants are impostors relit from the baked sun and sky light groups, with
+baked ground-shadow decals; nothing is stored per plant. A field (`{ pitch, cell, bounds, glsl }`, GLSL
+`scrubDensity`, `scrubSpecies`, `scrubDrawn`) says where plants grow; the film's terrain recipe includes the
+same GLSL so the ground's tone stands in for plants too small to draw. Film 1: `SCRUB_FIELD_NM` (in
+`scrub.js`); film 2: `src/scrub_mojave.js`.
 
 **Sea** (`engine/ocean.js`): `new Ocean(pipe, {clouds, sea: {wind, amp, long, chop, spread}})` draws a
 displaced grid depth-only and lights it in one full-screen pass (sea level is world y = 0). Call

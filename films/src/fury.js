@@ -10,9 +10,12 @@ import { Terrain } from '../engine/terrain.js';
 import { CloudLayer } from '../engine/clouds.js';
 import { attitude } from '../engine/geo.js';
 import { makePlume, makeHeatHaze, makeGlow } from '../engine/fx.js';
-import { MOJAVE_TERRAIN, FIELD_ALT, RWY_HDG, SPOT } from './terrain_mojave.js';
+import { MOJAVE_TERRAIN, MOJAVE_LAYERS, FIELD_ALT, RWY_HDG, SPOT } from './terrain_mojave.js';
 import { buildFury, buildAmraam, FURY } from './fury_model.js';
 import { buildRamp, buildFieldFar, buildScrub, fieldXZ } from './edwards_field.js';
+import { buildScrub as buildScrubImpostors } from './scrub.js';
+import { SCRUB_FIELD_MOJAVE } from './scrub_mojave.js';
+import { SCRUB_ATLAS } from './scrub_atlas_fury.js';
 import { makeMissileTrail } from './fury_fx.js';
 
 const NARRATION = __NARRATION__;
@@ -77,12 +80,14 @@ async function build(film) {
   const nearRes = film.quality.lowTerrain ? 1024 : (+film.params.get('nres') || 4096);
   const clouds = new CloudLayer(pipe, { base: 4300, top: 6100, div: +film.params.get('cdiv') || 3 });
   const cs = clouds.terrainShadow();
-  const terrain = new Terrain(pipe, { ...MOJAVE_TERRAIN, uniforms: { ...cs.uniforms }, defines: cs.defines, near: { ...MOJAVE_TERRAIN.near, res: nearRes }, far: { ...MOJAVE_TERRAIN.far, res: film.quality.lowTerrain ? 1024 : 2048 } });
+  const scans = !film.off.has('scans');   // photoscanned ground layers and impostor scrub (off=scans: the procedural ground and scrub as before)
+  const terrain = new Terrain(pipe, { ...MOJAVE_TERRAIN, ...(scans ? { layers: MOJAVE_LAYERS, layerAniso: 8, layerAnisoB: 4 } : {}), uniforms: { ...cs.uniforms }, defines: cs.defines, near: { ...MOJAVE_TERRAIN.near, res: nearRes }, far: { ...MOJAVE_TERRAIN.far, res: film.quality.lowTerrain ? 1024 : 2048 } });
   lap('clouds+terrain ctor');
   // airfield dressing (group origin = runway midpoint)
   const field = new THREE.Group(); field.name = 'field';
   const sunDir = pipe.atmo.sunDir;
-  const far = buildFieldFar(pipe, sunDir), scrub = buildScrub(pipe, sunDir), ramp = buildRamp(FURY);
+  const scrubI = scans && SCRUB_ATLAS.plants.length ? await buildScrubImpostors(pipe, { atlas: SCRUB_ATLAS, terrain, clouds, field: SCRUB_FIELD_MOJAVE }) : null;
+  const far = buildFieldFar(pipe, sunDir), scrub = scrubI ? scrubI.group : buildScrub(pipe, sunDir), ramp = buildRamp(FURY);
   ramp.position.set(PARK.p.x, 0, PARK.p.z); attitude(PARK.hdg, 0, 0, ramp.quaternion);
   field.add(far, scrub, ramp); pipe.scene.add(field);
   lap('field');
@@ -103,7 +108,8 @@ async function build(film) {
   const trail = makeMissileTrail(pipe, clouds.noise.texture, K); pipe.scene.add(trail);
   if (film.off.has('clouds')) for (const c of [CLOUDS, GROUND_CLOUDS]) { c.cover = 0; c.shadow = 0; }
   lap('missile');
-  W = { terrain, clouds, field, far, scrub, ramp, ac, haze, nav, msl, plume, glow, mhaze, lamp, trail, sunDir };
+  await terrain.ready;
+  W = { terrain, clouds, field, far, scrub, scrubI, ramp, ac, haze, nav, msl, plume, glow, mhaze, lamp, trail, sunDir };
   return W;
 }
 
@@ -366,7 +372,8 @@ startFilm({
   frame(t, shot, lt, film, c) {
     W.terrain.update(shot.terrain);
     W.scrub.visible = shot.id === 's04' && !film.off.has('scrub');
-    if (W.scrub.visible) { // thin the scrub out with distance: plants under about a pixel are skipped
+    if (W.scrub.visible && W.scrubI) W.scrubI.update(film.pipe.camera, film);
+    else if (W.scrub.visible) { // thin the scrub out with distance: plants under about a pixel are skipped
       const pxPerM = film.pipe.h / (2 * Math.tan(c.fov * Math.PI / 360));
       for (const im of W.scrub.children) {
         const u = im.userData, d = Math.hypot(u.cx - c.pos.x, u.cz - c.pos.z, FIELD_ALT - c.pos.y);

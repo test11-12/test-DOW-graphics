@@ -9,10 +9,11 @@ import { SCRUB_FIELD } from './scrub.js';
 export const FIELD_ALT = 1401.0;
 const TEX = 'shared/tex/ground/';
 const layer = (name, scale, o = {}) => ({ name, scale, albedo: `${TEX}${name}_albedo.webp`, normal: `${TEX}${name}_normal.webp`, orm: `${TEX}${name}_orm.webp`, ...o });
-// scale = the scan's real size (m); rotate 0 for the directional broom finish (mapped per slab by the recipe)
+// scale = the scan's real size (m); rotate 0 for the directional broom finish (mapped per slab by the recipe);
+// detail: grain laid over a magnified scan (the materials a camera stands on)
 const layers = [
-  layer('concrete_broom', 2.5, { rotate: 0 }), layer('concrete_worn', 3.0, { rotate: 0 }), layer('asphalt', 4.04),
-  layer('soil', 4.0), layer('soil_fine', 2.48), layer('gravel', 3.0), layer('caliche', 2.1),
+  layer('concrete_broom', 2.5, { rotate: 0, detail: [5, 0.8] }), layer('concrete_worn', 3.0, { rotate: 0, detail: [5, 0.8] }), layer('asphalt', 4.04),
+  layer('soil', 2.0, { detail: [4, 1] }), layer('soil_fine', 2.48, { detail: [5, 1] }), layer('gravel', 3.0), layer('caliche', 2.1),
 ];
 
 const height = /* glsl */`
@@ -145,31 +146,35 @@ float nmPaint(vec2 q, float w){
 vec4 nmRunway(vec2 q, float fp, float n5, float n6, float n7){
   float ax = abs(q.x), az = abs(q.y), w = max(fp*0.6, 0.012);
   float pave = rwBox(-30.5, 30.5, q.x, w)*rwBox(-1830.0, 1830.0, q.y, w);
-  float shoulder = rwBox(-38.5, 38.5, q.x, w)*rwBox(-1838.0, 1838.0, q.y, w);
+  float shoulder = rwBox(-33.0, 33.0, q.x, w)*rwBox(-1838.0, 1838.0, q.y, w);
   if (shoulder <= 0.001) return vec4(0.0);
   vec2 s = q/7.62, f = abs(fract(s)-0.5), id = floor(s);
   float jw = max(fp/7.62, 0.0015);
   float joint = smoothstep(0.5-0.003-jw, 0.5-jw*0.3, max(f.x,f.y))*clamp(0.012/jw, 0.0, 1.0);
   float tone = 0.9+0.2*fract(sin(dot(id, vec2(12.9898,78.233)))*43758.5453);
   tone = mix(1.0, tone, clamp(4.0/max(fp,0.01), 0.0, 1.0));
+#ifdef TERRAIN_LAYERS
+  vec3 c = vec3(0.44,0.41,0.36)*mix(1.0, 0.93+0.13*fract(sin(id.x*12.9898)*43758.5453), clamp(4.0/max(fp,0.01), 0.0, 1.0))*(0.94+0.08*n5);
+#else
   vec3 c = vec3(0.47,0.46,0.43)*tone*(0.8+0.25*n5)*(0.9+0.2*n6)*(0.92+0.16*n7);
+#endif
   c = mix(c, vec3(0.15,0.14,0.13), joint*0.8);
   float tz = smoothstep(1790.0,1500.0,az)*smoothstep(900.0,1300.0,az);
   float streak = textureLod(tDetail, vec2(q.x*0.35, q.y*0.004), clamp(log2(fp*0.35*512.0), 0.0, 7.0)).r;
   float track = exp(-pow((ax-3.1)/1.5, 2.0))+0.35*exp(-pow(ax/1.1, 2.0));   // main-gear and nose-gear wheel tracks
   c = mix(c, vec3(0.07), tz*track*smoothstep(0.25,0.8,streak)*0.42);
   c = mix(c, vec3(0.84,0.83,0.78)*(0.5+0.5*n6), nmPaint(q, w)*0.92);
-  vec3 asph = vec3(0.075,0.073,0.07)*(0.8+0.4*n6);
+  vec3 asph = vec3(0.33,0.30,0.255)*(0.85+0.3*n6);   // weathered, sand-dusted shoulder
   return vec4(mix(asph, c, pave), shoulder);
 }
 #ifdef TERRAIN_LAYERS
 // ---------------------------------------------------------------- close range: photoscanned materials
 ${SCRUB_FIELD}
 const vec3 Y3 = vec3(0.2126, 0.7152, 0.0722);
-// target mean albedos (linear), from the real site: pale bleached concrete, reddish-brown basin soil
-const vec3 NM_CONC = vec3(0.37, 0.355, 0.33), NM_ASPH = vec3(0.13, 0.125, 0.12), NM_SOIL = vec3(0.26, 0.195, 0.15),
-           NM_FINE = vec3(0.30, 0.225, 0.17), NM_GRAVEL = vec3(0.25, 0.215, 0.18), NM_CALICHE = vec3(0.48, 0.44, 0.38),
-           NM_DUST = vec3(0.34, 0.26, 0.195), NM_PAINT = vec3(0.72, 0.71, 0.67);
+// target mean albedos (linear), from photographs of the real field: pale grey-tan concrete, red-brown basin soil
+const vec3 NM_CONC = vec3(0.45, 0.42, 0.37), NM_SHLD = vec3(0.34, 0.315, 0.275), NM_SOIL = vec3(0.275, 0.185, 0.128),
+           NM_FINE = vec3(0.335, 0.235, 0.16), NM_GRAVEL = vec3(0.30, 0.235, 0.185), NM_CALICHE = vec3(0.47, 0.41, 0.33),
+           NM_DUST = vec3(0.36, 0.265, 0.185), NM_PAINT = vec3(0.76, 0.75, 0.71);
 // a scan regraded: its mean goes to target, its own variation kept (desaturated to sat)
 vec3 nmGrade(vec3 a, int k, vec3 target, float sat){
   vec3 m = layerMeanAlbedo(k);
@@ -179,80 +184,101 @@ vec3 nmGrade(vec3 a, int k, vec3 target, float sat){
 float nmRough(float r, float lo, float hi){ return mix(lo, hi, clamp(r, 0.0, 1.0)); }
 // how much of this pixel the photoscanned near field owns: the levelled airfield, out to about a metre per pixel
 float nmNearW(vec2 q, float fp){ return (1.0-smoothstep(1250.0, 1650.0, abs(q.x)))*(1.0-smoothstep(2500.0, 3100.0, abs(q.y)))*(1.0-smoothstep(0.55, 1.5, fp)); }
-// desert ground: soil with patches of fine sand, lag gravel and pale caliche; the graded strip and the service track
-Surf nmGround(vec2 q, float wash){
-  float m11 = dtex(duv(11)+0.37, 11).g, m4 = dtex(duv(4)+0.11, 4).r, m4b = dtex(duv(4)+0.53, 4).g, m5 = dtex(duv(5)+0.5, 5).r;
+// the runway's paved edge (m from the centre line): concrete to 30.5, a narrow shoulder beyond
+const float NM_PAVE = 30.5, NM_SHOULDER = 33.0;
+// Unpaved ground and the paved shoulder share three hex-tiled sample sites (a base scan, drifted fines over it, stones
+// or crust standing proud of both); which scans they read depends on where the pixel is. Materials meet by height
+// (stones stand proud of sand), not by a fade.
+//   ground: red-brown soil with small stones, drifts of fine sand, lag gravel and pale caliche; the bladed strip
+//           beside the pavement; the service track
+//   shoulder: pale weathered asphalt, sand drifting onto it from the strip, a sealed joint against the concrete
+Surf nmGround(vec2 q, float fp, float wash, bool shoulder){
+  float m11 = dtex(duv(11)+0.37, 11).g, m5 = dtex(duv(5)+0.5, 5).r;
+  vec4 t4 = dtex(duv(4)+0.11, 4); float m4 = t4.r, m4b = t4.b;
   float ax = abs(q.x);
-  float graded = 1.0-smoothstep(43.0, 54.0, ax+(m5-0.5)*6.0);                  // compacted fill beside the shoulders
-  float wF = max(smoothstep(0.47, 0.64, m11*0.65+m5*0.35), wash);
-  float wG = max(smoothstep(0.58, 0.7, m4*0.7+m5*0.3), graded*0.8);
-  float wC = max(smoothstep(0.64, 0.75, m4b*0.6+m11*0.4)*0.85, graded*0.3);
+  float graded = 1.0-smoothstep(41.0, 47.0, ax+(m4-0.5)*5.0+(m5-0.5)*1.5);   // bladed, compacted strip beside the pavement
+  float wF = max(smoothstep(0.5, 0.68, m11*0.6+m4b*0.4), wash);
+  float wG = smoothstep(0.6, 0.72, m4*0.7+m5*0.3)*(1.0-graded)+0.3*graded*smoothstep(0.45, 0.8, m5);
+  float wC = smoothstep(0.66, 0.78, m4b*0.55+m11*0.45)*0.9*(1.0-graded)*smoothstep(60.0, 140.0, ax);
+  wF = max(wF*(1.0-graded), smoothstep(0.0, 0.5, graded));   // the strip is bladed fines (one scan), stones scattered on it
   float tr = abs(q.x+58.0), ruts = 0.0;                                          // service track west of the runway
-  if (tr < 5.5 && abs(q.y) < 2200.0){
-    float tk = 1.0-smoothstep(2.9, 4.7, tr+(m5-0.5)*0.9);
-    ruts = exp(-pow((tr-0.85)/0.3, 2.0))*tk;
-    wF = max(wF, tk); wG = mix(wG, 0.6*smoothstep(0.5, 0.0, tr), tk); wC *= 1.0-tk;
+  if (tr < 6.5 && abs(q.y) < 2200.0){
+    float tk = 1.0-smoothstep(2.7, 4.6, tr+(m5-0.5)*1.4+(m4-0.5)*0.8);
+    ruts = exp(-pow((tr-0.85)/0.28, 2.0))*tk;
+    wF = max(wF, tk); wG = mix(wG, 0.55*smoothstep(0.45, 0.0, tr)+0.5*smoothstep(2.2, 3.4, tr), tk); wC *= 1.0-tk;
   }
-  // patches overlap little: caliche over gravel over fine sand over soil, at most two scans at a pixel
-  wG *= 1.0-wC; wF *= 1.0-max(wC, wG);
-  Surf g;
-  if (wF > 0.98){ g = layerSample(L_SOIL_FINE); g.alb = nmGrade(g.alb, L_SOIL_FINE, NM_FINE, 0.75); wF = 0.0; }
-  else { g = layerSample(L_SOIL); g.alb = nmGrade(g.alb, L_SOIL, NM_SOIL, 0.8); }
-  if (wF > 0.02){ Surf f = layerSample(L_SOIL_FINE); f.alb = nmGrade(f.alb, L_SOIL_FINE, NM_FINE, 0.75); g = surfBlendH(g, f, wF, 0.3); }
-  if (wG > 0.02){ Surf v = layerSample(L_GRAVEL); v.alb = nmGrade(v.alb, L_GRAVEL, NM_GRAVEL, 0.8); g = surfBlendH(g, v, wG, 0.18); }
-  if (wC > 0.02){ Surf c = layerSample(L_CALICHE); c.alb = nmGrade(c.alb, L_CALICHE, NM_CALICHE, 0.7); g = surfBlendH(g, c, wC, 0.25); }
-  g.rough = nmRough(g.rough, 0.84, 0.98);
-  g.alb *= (1.0-0.16*ruts)*(0.93+0.14*m5); g.d *= 1.0-0.6*ruts; g.rough = mix(g.rough, 0.8, ruts);   // ruts: packed, tyre-smoothed
+  wG *= 1.0-wC; wF *= 1.0-wC;
+  float axs = max(ax, abs(q.y)-1830.0+NM_PAVE);
+  float drift = smoothstep(31.9, 33.2, axs+(m5-0.5)*1.2+(dtex(duv(6)+0.13, 6).r-0.5)*0.3);
+  // base: asphalt on the shoulder; soil, or fine sand alone where it has taken over
+  bool fines = wF > 0.985;
+  int kb = shoulder ? L_ASPHALT : (fines ? L_SOIL_FINE : L_SOIL);
+  Surf g = layerSample(kb);
+  g.alb = nmGrade(g.alb, kb, shoulder ? NM_SHLD : (fines ? NM_FINE : NM_SOIL), shoulder ? 0.5 : 0.82);
+  g.rough = shoulder ? nmRough(g.rough, 0.82, 0.97) : g.rough;
+  // drifted fines over it
+  float wf = shoulder ? drift*0.9 : (fines ? 0.0 : wF);
+  if (wf > 0.015){ Surf f = layerSample(L_SOIL_FINE); f.alb = nmGrade(f.alb, L_SOIL_FINE, NM_FINE, 0.8); g = surfBlendH(g, f, wf, shoulder ? 0.16 : 0.22); }
+  if (shoulder){
+    float j = lineAA(abs(ax-NM_PAVE), 0.012, fp); g.alb = mix(g.alb, vec3(0.045), j*0.85);
+    return g;
+  }
+  // lag gravel, or caliche crust where that leads
+  float wp = max(wG, wC);
+  if (wp > 0.015){
+    bool cal = wC > wG; int kp = cal ? L_CALICHE : L_GRAVEL;
+    Surf v = layerSample(kp); v.alb = nmGrade(v.alb, kp, cal ? NM_CALICHE : NM_GRAVEL, cal ? 0.7 : 0.8); g = surfBlendH(g, v, wp, cal ? 0.2 : 0.14);
+  }
+  g.rough = nmRough(g.rough, 0.86, 0.98);
+  g.alb *= (0.95+0.1*m4)*(1.0-0.1*graded);                                       // the bladed strip is a shade darker (damp fines)
+  g.alb *= 1.0-0.14*ruts; g.d *= 1.0-0.55*ruts; g.rough = mix(g.rough, 0.8, ruts);   // ruts: packed, tyre-smoothed
   return g;
 }
-// runway concrete: 7.6 m slabs, each its own pour (offset, finish, tone); the broom grain runs across the runway
+// runway concrete: paving lanes 7.6 m wide, each lane its own pour and tone, each slab its own stretch of the scans;
+// the broom grain runs across the runway
 Surf nmConcrete(vec2 q){
   vec2 id = floor(q/vec2(7.625, 7.62));
-  vec4 r = lRand(ivec2(id)+ivec2(4099, 2741));
+  vec4 r = lRand(ivec2(id)+ivec2(4099, 2741)), rl = lRand(ivec2(int(id.x)+977, 31));
   vec2 fx = lFootX(), fy = lFootY();
   Surf b = layerSampleST(L_CONCRETE_BROOM, vec2(q.y, q.x)/2.5+r.xy*13.0, vec2(-fx.y, fx.x)/2.5, vec2(-fy.y, fy.x)/2.5, 1.5707963);
   Surf w = layerSampleST(L_CONCRETE_WORN, vec2(q.x, -q.y)/3.0+r.zw*11.0, fx/3.0, fy/3.0, 0.0);
-  b.alb = nmGrade(b.alb, L_CONCRETE_BROOM, NM_CONC, 0.3); w.alb = nmGrade(w.alb, L_CONCRETE_WORN, NM_CONC, 0.4);
-  Surf c = surfBlendH(b, w, 0.15+0.6*r.z, 0.35);
-  c.alb *= 0.93+0.14*r.w; c.rough = nmRough(c.rough, 0.74, 0.95);
+  b.alb = nmGrade(b.alb, L_CONCRETE_BROOM, NM_CONC, 0.35); w.alb = nmGrade(w.alb, L_CONCRETE_WORN, NM_CONC, 0.45);
+  Surf c = surfBlendH(b, w, 0.25+0.5*rl.z, 0.4);
+  float m4 = dtex(duv(4)+0.23, 4).b;
+  c.alb *= (0.93+0.13*rl.w)*(0.975+0.05*r.w)*(0.97+0.06*m4); c.rough = nmRough(c.rough, 0.78, 0.95);
+  c.d *= 0.8;
   return c;
 }
-// sealed joints, sand in the joints, dust from the edges, oil spots, tyre rubber, worn paint
+// joints (sealed between lanes, sawn across them), dust from the edges, tyre rubber, worn paint
 void nmRunwayDetail(vec2 q, float fp, inout Surf c){
   float ax = abs(q.x), az = abs(q.y);
   vec2 fl = fract(q/vec2(7.625, 7.62)), dj = min(fl, 1.0-fl)*vec2(7.625, 7.62);
-  // each joint antialiased with the pixel's extent across it (longitudinal joints: x, transverse joints: z)
+  // each joint antialiased with the pixel's extent across it (lane joints: x, sawn joints: z)
   vec2 fxz = max(abs(gGx), abs(gGy))*1000.0;
-  float wob = dtex(duv(6)+0.71, 6).r, n5 = dtex(duv(5)+0.2, 5).g, sw = 0.006+0.017*smoothstep(0.5, 0.85, wob), dw = 0.03+0.06*wob;
-  float seal = max(lineAA(dj.x, sw, fxz.x), lineAA(dj.y, sw, fxz.y));
-  float sand = max(lineAA(dj.x, dw, fxz.x), lineAA(dj.y, dw, fxz.y))*(0.3+0.7*smoothstep(0.3, 0.7, n5));
+  vec4 n6 = dtex(duv(6)+0.71, 6); float n5 = dtex(duv(5)+0.2, 5).g;
+  float jx = dj.x+(n6.r-0.5)*0.004, jz = dj.y+(n6.g-0.5)*0.003;
+  float seal = lineAA(jx, 0.011, fxz.x);                                         // poured sealant between paving lanes
+  float sawn = lineAA(jz, 0.0045, fxz.y)*(0.55+0.45*smoothstep(0.3, 0.6, n5));   // sawn contraction joints, part filled with dust
+  // fines, sealant smear and old water stains along the joints: what makes them read from a distance
+  float damp = max(lineAA(jx, 0.06, fxz.x)*(0.7+0.6*n6.b), 0.5*lineAA(jz, 0.035, fxz.y));
   float tz = smoothstep(1815.0, 1560.0, az)*smoothstep(700.0, 1250.0, az);
-  float trackW = exp(-pow((ax-2.9)/1.5, 2.0))+0.3*exp(-pow(ax/0.8, 2.0));
-  float streak = textureLod(tDetail, vec2(q.x*0.35, q.y*0.004), clamp(log2(fp*0.35*512.0), 0.0, 7.0)).r;
-  float rub = (tz*0.55+0.08)*trackW*smoothstep(0.3, 0.85, streak);
-  float dust = smoothstep(22.0, 30.5, ax)*(0.35+0.65*dtex(duv(5)+0.61, 5).g)+0.22*smoothstep(0.55, 0.85, dtex(duv(4)+0.37, 4).g);
-  dust = clamp(dust*(1.25-c.h), 0.0, 1.0);
-  float oil = smoothstep(0.12, 0.04, dtex(duv(5)+0.77, 5).b)*smoothstep(0.62, 0.8, dtex(duv(4)+0.91, 4).r)*(1.0-smoothstep(4.0, 14.0, ax));
-  c.alb = mix(c.alb, NM_DUST, dust*0.42);
-  c.alb = mix(c.alb, NM_DUST*1.05, sand*0.5);
-  c.alb *= 1.0-0.4*oil; c.rough = mix(c.rough, 0.45, oil*0.6);
+  float trackW = exp(-pow((ax-2.9)/1.4, 2.0))+0.25*exp(-pow(ax/0.7, 2.0));
+  float streak = textureLod(tDetail, vec2(q.x*0.42, q.y*0.0035), clamp(log2(fp*0.42*512.0), 0.0, 7.0)).r;
+  float rub = (tz*0.6+0.05)*trackW*smoothstep(0.35, 0.8, streak);
+  float dust = smoothstep(24.0, 30.5, ax)*(0.3+0.7*dtex(duv(5)+0.61, 5).g)+0.12*smoothstep(0.6, 0.85, dtex(duv(4)+0.37, 4).g);
+  dust = clamp(dust*(1.3-c.h), 0.0, 1.0);
+  c.alb *= 1.0-0.2*damp;
+  c.alb = mix(c.alb, NM_DUST, dust*0.38);
   float pnt = nmPaint(q, max(fp*0.5, 0.004));
   if (pnt > 0.0){   // worn off the high spots first and along the tyre tracks; dusty
     float wn = dtex(duv(6)+0.29, 6).g;
-    float pc = pnt*mix(1.0, smoothstep(0.15, 0.5, 1.15-c.h+(wn-0.5)*0.6-rub*1.5), 0.55);
-    c.alb = mix(c.alb, mix(NM_PAINT*(0.88+0.12*wn), NM_DUST*1.6, dust*0.3), pc);
-    c.rough = mix(c.rough, 0.5, pc); c.d *= 1.0-0.55*pc; c.ao = mix(c.ao, 1.0, pc*0.5);
+    float pc = pnt*mix(1.0, smoothstep(0.1, 0.45, 1.15-c.h+(wn-0.5)*0.5-rub*1.5), 0.5);
+    c.alb = mix(c.alb, mix(NM_PAINT*(0.9+0.1*wn), NM_DUST*1.6, dust*0.3), pc);
+    c.rough = mix(c.rough, 0.55, pc); c.d *= 1.0-0.5*pc; c.ao = mix(c.ao, 1.0, pc*0.5);
   }
-  c.alb = mix(c.alb, vec3(0.03), rub*0.6); c.rough = mix(c.rough, 0.6, rub);
-  c.alb = mix(c.alb, vec3(0.032, 0.03, 0.028), seal*0.92); c.rough = mix(c.rough, 0.42, seal); c.ao *= 1.0-0.35*seal;
-}
-// bleached asphalt shoulders, sand drifting onto their outer edge, a sealed joint against the concrete
-Surf nmShoulder(vec2 q, float fp){
-  Surf a = layerSample(L_ASPHALT); a.alb = nmGrade(a.alb, L_ASPHALT, NM_ASPH, 0.5); a.rough = nmRough(a.rough, 0.8, 0.97);
-  float ax = abs(q.x), drift = smoothstep(34.5, 38.8, ax+(dtex(duv(5)+0.44, 5).r-0.5)*2.4);
-  if (drift > 0.01){ Surf s = layerSample(L_SOIL_FINE); s.alb = nmGrade(s.alb, L_SOIL_FINE, NM_FINE, 0.75); a = surfBlendH(a, s, drift*0.85, 0.2); }
-  float j = lineAA(abs(ax-30.5), 0.01, fp); a.alb = mix(a.alb, vec3(0.03), j*0.8);
-  return a;
+  c.alb = mix(c.alb, vec3(0.035), rub*0.6); c.rough = mix(c.rough, 0.62, rub);
+  c.alb = mix(c.alb, vec3(0.10, 0.09, 0.08), sawn*0.75); c.ao *= 1.0-0.3*sawn;
+  c.alb = mix(c.alb, vec3(0.045, 0.042, 0.04), seal*0.9); c.rough = mix(c.rough, 0.5, seal); c.ao *= 1.0-0.3*seal; c.d *= 1.0-0.7*seal;
 }
 // the near field over the procedural ground; wash: the procedural wash channels (sand)
 void nmNear(vec2 p, float fp, float dist, float wash, inout vec3 N, inout vec3 alb, inout float spec){
@@ -260,22 +286,27 @@ void nmNear(vec2 p, float fp, float dist, float wash, inout vec3 N, inout vec3 a
   float wL = nmNearW(q, fp);
   if (wL <= 0.0) return;
   float w = max(fp*0.4, 0.004);
-  float edge = 38.5+(dtex(duv(5)+0.83, 5).g-0.5)*0.5;
-  float wPave = rwBox(-30.5, 30.5, q.x, w)*rwBox(-1830.0, 1830.0, q.y, w);
+  float edge = NM_SHOULDER+(dtex(duv(5)+0.83, 5).g-0.5)*0.7+(dtex(duv(6)+0.55, 6).g-0.5)*0.12;
+  float wPave = rwBox(-NM_PAVE, NM_PAVE, q.x, w)*rwBox(-1830.0, 1830.0, q.y, w);
   float wSh = rwBox(-edge, edge, q.x, w)*rwBox(-1838.0, 1838.0, q.y, w)*(1.0-wPave);
   float wGr = max(1.0-wPave-wSh, 0.0);
-  Surf s = Surf(vec3(0.0), 0.5, vec2(0.0), 0.9, 1.0); float acc = 0.0;
-  if (wGr > 0.001){
-    s = nmGround(q, wash); acc = wGr;
-    // plants too small to draw: their cover darkens the ground; seen at a grazing angle they hide most of it
+  Surf s = Surf(vec3(0.0), 0.5, vec2(0.0), 0.9, 1.0);
+  if (wPave < 0.999){
+    // the shoulder's outer edge lies under drifted sand on both sides, so the two need no cross-fade
+    s = nmGround(q, fp, wash, wSh > wGr);
+    // plants too small to draw: their cover tints the ground (straw where grass leads, olive where shrubs do); seen
+    // at a grazing angle they hide most of it
     float lam = scrubDensity(q)*(1.0-scrubDrawn(dist*uPixAngle))/(SCRUB_PITCH*SCRUB_PITCH);
-    vec3 V = -normalize(vRel);
-    float cover = 1.0-exp(-lam*0.35/max(V.y, 0.004));
-    float back = smoothstep(-0.3, 0.8, dot(normalize(-V.xz), normalize(uSunDir.xz)));   // looking into the sun: silhouettes
-    s.alb = mix(s.alb, mix(vec3(0.16, 0.155, 0.1), vec3(0.045, 0.05, 0.035), back), cover); s.d *= 1.0-cover;
+    if (lam > 0.0){
+      vec3 V = -normalize(vRel);
+      float gr = scrubGrassy(q)*0.86;
+      float cover = 1.0-exp(-lam*mix(0.9, 0.5, gr)/max(V.y, 0.03));
+      float back = smoothstep(-0.3, 0.8, dot(normalize(-V.xz), normalize(uSunDir.xz)));   // looking into the sun: silhouettes
+      vec3 veg = mix(mix(vec3(0.12, 0.125, 0.075), vec3(0.34, 0.25, 0.15), gr), mix(vec3(0.04, 0.045, 0.03), vec3(0.2, 0.15, 0.09), gr), back);
+      s.alb = mix(s.alb, veg, cover); s.d *= 1.0-cover;
+    }
   }
-  if (wSh > 0.001){ Surf a = nmShoulder(q, fp); if (acc > 0.0) s = surfMix(a, s, acc/(acc+wSh)); else s = a; acc += wSh; }
-  if (wPave > 0.001){ Surf c = nmConcrete(q); nmRunwayDetail(q, fp, c); if (acc > 0.0) s = surfMix(c, s, acc/(acc+wPave)); else s = c; }
+  if (wPave > 0.001){ Surf c = nmConcrete(q); nmRunwayDetail(q, fp, c); if (wPave < 0.999) s = surfMix(s, c, wPave); else s = c; }
   vec3 al = alb, Nl = N;
   surfApply(s, 1.0, al, Nl);
   alb = mix(alb, al, wL); N = normalize(mix(N, Nl, wL)); tW = wL;
@@ -291,10 +322,10 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
     float w1 = abs(dtex(duv(7)+warp*2.6*uScale[7], 7).r-0.5), w2 = abs(dtex(duv(8)+warp*2.6*uScale[8]+0.3, 8).g-0.5);
     float wash = max(lineAA(w1, 0.006, fk*0.02), 0.6*lineAA(w2, 0.012, fk*0.09));
     float c0 = dtex(duv(4), 4).r, c1 = dtex(duv(4)+vec2(0.016,0.0), 4).r, c2 = dtex(duv(4)+vec2(0.0,0.016), 4).r;
-    N.xz += vec2(c0-c1, c0-c2)*0.2*smoothstep(60.0, 4.0, fp);
+    N.xz += vec2(c0-c1, c0-c2)*0.08*smoothstep(60.0, 4.0, fp)*smoothstep(40.0, 70.0, abs(p.x)*1000.0);
     if (abs(p.x) < 0.045 && abs(p.y) < 1.85) N = normalize(mix(N, vec3(0.0, 1.0, 0.0), 0.9));
     alb = vec3(0.3); spec = 0.0;
-    nmNear(p, fp, dist, wash, N, alb, spec);
+    if (uDebug != 7) nmNear(p, fp, dist, wash, N, alb, spec);   // (uDebug 7: profiling switch)
     return;
   }
 #else
@@ -309,7 +340,7 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
   soil *= mix(1.0, 0.9+0.2*t5.r, smoothstep(40.0, 4.0, fp))*mix(1.0, 0.92+0.16*n6, smoothstep(4.0, 0.3, fp));
 #ifdef TERRAIN_LAYERS
   // around the airfield the basin soil is the photoscanned near field's soil, so the two meet without a seam
-  soil = mix(soil, vec3(0.27, 0.205, 0.158)*(0.84+0.32*n3)*(0.93+0.14*n4), (1.0-smoothstep(2.5, 7.0, length(p*vec2(1.0, 0.55))))*0.85);
+  soil = mix(soil, vec3(0.285, 0.195, 0.135)*(0.84+0.32*n3)*(0.93+0.14*n4), (1.0-smoothstep(2.5, 7.0, length(p*vec2(1.0, 0.55))))*0.85);
 #endif
   // bedrock with bedding picked out by height
   vec3 rock = mix(vec3(0.27,0.225,0.19), vec3(0.37,0.32,0.275), n2);
@@ -332,7 +363,15 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
   float patch1 = smoothstep(0.3,0.72, dtex(duv(9)+0.2, 9).r);
   float dots = (1.0-smoothstep(0.16,0.33, t5.b))*step(0.35, dtex(duv(11), 11).g);
   float vv = mix(dots*(0.5+0.5*patch1), 0.30+0.32*patch1, smoothstep(2.5, 18.0, fp));
-  alb = mix(alb, vec3(0.105,0.115,0.07), m1.g*vv*0.74);
+  float vcov = m1.g*vv*0.74;
+#ifdef TERRAIN_LAYERS
+  { // around the field, plants seen at a grazing angle hide the ground, as the drawn plants do nearer the camera
+    float vy = max(-normalize(vRel).y, 0.02), kk = 1.0-smoothstep(9.0, 16.0, length(p*vec2(1.0, 0.7)));
+    float clump = 0.5+1.0*smoothstep(0.3, 0.7, n4);   // shrubs gather in clumps a few metres across, bare ground between
+    vcov = max(vcov, 0.9*kk*smoothstep(0.0, 0.25, m1.g)*(1.0-exp(-0.16*clump/vy)));
+  }
+#endif
+  alb = mix(alb, vec3(0.105,0.115,0.07), vcov);
   alb = mix(alb, vec3(0.08,0.13,0.05), m1.b*(0.5+0.4*n4));
   // lava, gypsum / alkali
   alb = mix(alb, vec3(0.05,0.045,0.042)*(0.7+0.6*n4), m0.g);
@@ -390,7 +429,7 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
 `;
 
 export const NM_TERRAIN = {
-  height, mask, shade, scales, groundAlt: FIELD_ALT, layers,
+  height, mask, shade, scales, groundAlt: FIELD_ALT, layers, layerAniso: 8, layerAnisoB: 4,
   near: { center: [40, 8], extent: 128, res: 4096 },
   far: { center: [20, 0], extent: 1100, res: 2048 },
 };

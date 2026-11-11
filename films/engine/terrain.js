@@ -15,6 +15,10 @@ import { loadTexture } from './assets.js';
 // as tall (left half x, right half y); orm R occlusion, G roughness, A height (0..1).
 // All layers are packed at load into two texture arrays (A: albedo + height, B: normal xy + roughness + occlusion),
 // so any number of layers costs two samplers.
+// Optional per layer: detail = [k, strength]: where the camera is close enough to magnify the scan (a texel wider than
+// a pixel), the same scan, k times finer, is laid over it as grain (albedo contrast and relief), so the ground a metre
+// from the lens stays crisp. Recipe-wide: layerSize (array resolution, default 1024), layerAniso (albedo + height
+// array, default 2), layerAnisoB (normal + roughness + occlusion array, default 1).
 const HEXS = 3.4641016151377544;   // 2*sqrt(3): hex cells are about 0.58 texture tiles across
 const LAYERS_GLSL = names => /* glsl */`
 #define TERRAIN_LAYERS 1
@@ -25,6 +29,7 @@ uniform vec4 uLayerK[${names.length}];   // x: texture tiles per metre, y: rando
 uniform vec4 uLayerP[${names.length}];   // xy: camera position in the skewed hex lattice (fraction), zw: texture phase at the lattice anchor
 uniform ivec2 uLayerI[${names.length}];  // integer lattice anchor, so the per-cell random transforms stay fixed to the world
 uniform vec4 uLayerMA[${names.length}], uLayerMB[${names.length}];   // each layer's mean (albedo + height, normal + roughness + occlusion)
+uniform vec4 uLayerD[${names.length}];    // x: detail scale (0: none), y: strength, z: texels per tile
 // Lighting inputs a recipe sets through surfApply(); tRough < 0 keeps the default terrain lighting.
 float tRough = -1.0, tAO = 1.0, tF0 = 0.03, tFp = 1.0, tW = 0.0;   // tW: weight of the layered lighting (fade it out where the recipe hands over to its own far-field look)
 // A sampled surface. d: slope perturbation in world (x, z), added to the normal as N += vec3(d.x, 0.0, d.y).
@@ -52,13 +57,27 @@ vec2 lSlope(vec2 nt, mat2 R, int k){ vec2 n = (nt-uLayerMB[k].xy)*2.0; float nz 
 float lRoughAt(float r, float tilesPerPx){ return mix(r, max(r, 0.93), smoothstep(0.004, 0.06, tilesPerPx)); }
 // occlusion relative to the layer's mean: local cavity contrast only (a recipe sets the overall tone by its grade)
 float lAO(float ao, int k){ return clamp(ao/max(uLayerMB[k].a, 0.3), 0.0, 1.0); }
+// grain for a magnified scan: the same layer, uLayerD[k].x times finer, as albedo contrast and extra relief
+void lDetail(int k, vec2 st, vec2 dx, vec2 dy, mat2 R, inout Surf s){
+  vec4 D = uLayerD[k];
+  float m = D.y*(1.0-smoothstep(0.45, 1.3, max(length(dx), length(dy))*D.z));   // texels per pixel: under one means magnified
+  if (D.x <= 0.0 || m <= 0.0) return;
+  vec3 c = vec3(st*D.x+vec2(0.37, 0.71), float(k));
+  vec4 a = textureGrad(tLayerA, c, dx*D.x, dy*D.x), b = textureGrad(tLayerB, c, dx*D.x, dy*D.x);
+  float l = dot(a.rgb, vec3(0.2126, 0.7152, 0.0722))/max(dot(uLayerMA[k].rgb, vec3(0.2126, 0.7152, 0.0722)), 1e-3);
+  s.alb *= mix(1.0, clamp(l, 0.6, 1.5), m*0.7);
+  s.d += lSlope(b.xy, R, k)*m*0.6;
+  s.ao *= mix(1.0, lAO(b.a, k), m*0.5);
+}
 // layer k in a mapping of the caller's own: st in texture tiles, dx / dy its footprint per pixel, ang the rotation of
 // st relative to world (x, -z) (for per-slab offsets, directional finishes, ...). No hex tiling.
 Surf layerSampleST(int k, vec2 st, vec2 dx, vec2 dy, float ang){
   float cs = cos(ang), sn = sin(ang); mat2 R = mat2(cs, sn, -sn, cs);
   vec3 c = vec3(st, float(k));
   vec4 a = textureGrad(tLayerA, c, dx, dy), b = textureGrad(tLayerB, c, dx, dy);
-  Surf s; s.alb = a.rgb; s.h = a.a; s.d = lSlope(b.xy, R, k); s.rough = lRoughAt(b.b, tFp*uLayerK[k].x); s.ao = lAO(b.a, k); return s;
+  Surf s; s.alb = a.rgb; s.h = a.a; s.d = lSlope(b.xy, R, k); s.rough = lRoughAt(b.b, tFp*uLayerK[k].x); s.ao = lAO(b.a, k);
+  lDetail(k, st, dx, dy, R, s);
+  return s;
 }
 // metres-per-pixel footprint axes of this pixel in world (x, -z), for building dx / dy of layerSampleST
 vec2 lFootX(){ return vec2(gGx.x, -gGx.y)*1000.0; }
@@ -80,10 +99,10 @@ Surf layerSample(int k){
   vec3 bw = vec3(-tz*s2, sg-f.y*s2, sg-f.x*s2);
   vec2 V[3]; V[0] = b0+vec2(sg); V[1] = b0+vec2(sg, 1.0-sg); V[2] = b0+vec2(1.0-sg, sg);
   vec2 uL = vec2(sk.x, 0.5*sk.x+0.8660254*sk.y)/${HEXS.toFixed(10)};
-  vec4 A[3], B[3]; mat2 R[3]; vec3 W = pow(bw, vec3(K.z));
+  vec4 A[3], B[3]; mat2 R[3]; vec3 W = pow(bw, vec3(K.z)); W /= W.x+W.y+W.z;
   for (int i=0;i<3;i++){
     A[i] = vec4(0.0); B[i] = vec4(0.5, 0.5, 0.0, 1.0); R[i] = mat2(1.0);
-    if (W[i] < 0.002) continue;                          // deep inside another cell: skip the taps
+    if (W[i] < 0.03) continue;                           // well inside another cell: skip the taps
     vec4 r = lRand(ivec2(V[i])+uLayerI[k]);
     float ang = (r.x*2.0-1.0)*3.14159265*K.y, cs = cos(ang), sn = sin(ang);
     R[i] = mat2(cs, sn, -sn, cs);
@@ -92,13 +111,14 @@ Surf layerSample(int k){
     A[i] = textureGrad(tLayerA, st, R[i]*dX, R[i]*dY);
     B[i] = nrm ? textureGrad(tLayerB, st, R[i]*dX, R[i]*dY) : uLayerMB[k];
   }
-  W *= exp2(K.w*(vec3(A[0].a, A[1].a, A[2].a)-0.5));
+  W = max(W-0.03, 0.0)*exp2(K.w*(vec3(A[0].a, A[1].a, A[2].a)-0.5));   // (the largest of the three is at least a third)
   W /= W.x+W.y+W.z;
   Surf s;
   s.alb = A[0].rgb*W.x+A[1].rgb*W.y+A[2].rgb*W.z; s.h = A[0].a*W.x+A[1].a*W.y+A[2].a*W.z;
   s.d = nrm ? (lSlope(B[0].xy, R[0], k)*W.x+lSlope(B[1].xy, R[1], k)*W.y+lSlope(B[2].xy, R[2], k)*W.z)*(1.0-smoothstep(0.025, 0.05, tpp)) : vec2(0.0);
   s.rough = lRoughAt(B[0].b*W.x+B[1].b*W.y+B[2].b*W.z, tpp); s.ao = lAO(B[0].a*W.x+B[1].a*W.y+B[2].a*W.z, k);
   if (far > 0.0) s = surfMix(s, layerMean(k), far);
+  else lDetail(k, uL+P.zw, dX, dY, mat2(1.0), s);
   return s;
 }
 // write a surface into shadeTerrain's outputs; k scales the normal detail. Switches the pixel to the layered lighting.
@@ -273,7 +293,7 @@ float terrainSunShadow(vec2 wxz, float h){ return 1.0; }
 void main(){
   vec4 sc = texture2D(tScene, vUv);
   float cov = 1.0-sc.a;
-  if (cov <= 0.004){ gl_FragColor = vec4(sc.rgb, 1.0); return; }
+  if (cov <= 0.004 || uDebug == 8){ gl_FragColor = vec4(sc.rgb, 1.0); return; }   // (uDebug 8: profiling switch)
   float d = texture2D(tDepth, vUv).x;
   if (d >= 0.999999){ gl_FragColor = sc; return; }   // this sample sees sky: the atmosphere pass fills what is uncovered
   if (cov < 0.996){ // silhouette pixel: use the farthest non-sky neighbour as the ground depth
@@ -311,7 +331,7 @@ void main(){
   else { m0 = mix(textureLod(tM0Far, uf, lf), textureLod(tM0Near, un, ln), bn); m1 = mix(textureLod(tM1Far, uf, lf), textureLod(tM1Near, un, ln), bn); }
   vec3 alb; float spec = 0.0;
 #ifdef TERRAIN_LAYERS
-  tFp = fp;
+  tFp = fp; vec3 tN0 = N;
 #endif
   shadeTerrain(w*0.001, h0, N, lap, m0, m1, fp, dist, alb, spec);
   N = normalize(N);
@@ -331,17 +351,24 @@ void main(){
   }
 #ifdef TERRAIN_LAYERS
   if (tW > 0.0 && tRough >= 0.0){ // photoscanned layers: cavity occlusion and micro-shadowing, GGX specular, rough sky reflection
-    float msh = mix(1.0, smoothstep(0.15, 0.95, tAO), 0.55*(1.0-nl));   // cavities lose a grazing sun first
-    vec3 cl = alb*0.3183*(uSunGround*max(on,0.0)*sh*msh + amb*ao*tAO*(0.55+0.45*N.y));
+    // Relief under a low sun: a normal map lets every sun-facing facet collect light as if nothing stood in front of
+    // it, so rough ground comes out brighter than a smooth slab beside it, and its broad swells turn into blotches.
+    // The gain over the unperturbed surface is compressed (mean about 1: what the facing facets gain, their neighbours'
+    // shadows take back).
+    float nl0 = max(dot(tN0, uSunDir), 1e-3), gn = nl/nl0, nlc = nl0*gn/(0.5+0.5*gn);
+    float sc2 = dot(uSunDir, V)-nlc*nv, tc = sc2 > 0.0 ? max(nlc, nv) : 1.0;
+    float onc = nlc*(0.84+0.30*sc2/max(tc, 0.05));
+    float msh = mix(1.0, smoothstep(0.15, 0.95, tAO), 0.55*(1.0-nlc));   // cavities lose a grazing sun first
+    vec3 cl = alb*0.3183*(uSunGround*max(onc,0.0)*sh*msh + amb*ao*tAO*(0.55+0.45*N.y));
     vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0), vh = max(dot(V,Hh),0.0);
     float a = max(tRough*tRough, 0.03), a2 = a*a, dd = nh*nh*(a2-1.0)+1.0, D = a2/(3.14159*dd*dd);
     float nv2 = max(nv, 0.03);
     // Smith visibility, capped: clods and pebbles shadow and mask far more than a microfacet height field at grazing
     // angles, so rough ground keeps a soft forward sheen instead of a mirror-like glare
-    float Vis = min(0.5/(nl*sqrt(nv2*nv2*(1.0-a2)+a2)+nv2*sqrt(nl*nl*(1.0-a2)+a2)+1e-4), mix(4.0, 0.9, smoothstep(0.55, 0.9, tRough)));
-    cl += uSunGround*sh*msh*tAO*D*Vis*(tF0+(1.0-tF0)*pow(1.0-vh, 5.0))*nl;
+    float Vis = min(0.5/(nlc*sqrt(nv2*nv2*(1.0-a2)+a2)+nv2*sqrt(nlc*nlc*(1.0-a2)+a2)+1e-4), mix(4.0, 0.9, smoothstep(0.55, 0.9, tRough)));
+    cl += uSunGround*sh*msh*tAO*D*Vis*(tF0+(1.0-tF0)*pow(1.0-vh, 5.0))*nlc;
     float fs = tF0+(max(1.0-tRough, tF0)-tF0)*pow(1.0-nv, 5.0);
-    cl += mix(skyRefl(reflect(-V, N)), amb*0.3183, tRough*tRough)*fs*tAO*ao;
+    cl += (tRough < 0.75 ? mix(skyRefl(reflect(-V, N)), amb*0.3183, tRough*tRough) : amb*0.3183)*fs*tAO*ao;   // rough ground: the sky's average will do
     col = mix(col, cl, tW);
   }
 #endif
@@ -443,6 +470,7 @@ export class Terrain {
         uLayerK: { value: L.map(l => new THREE.Vector4(1 / l.scale, l.rotate ?? 1, l.sharp ?? 6, l.hcontrast ?? 5)) },
         uLayerP: { value: L.map(() => new THREE.Vector4()) }, uLayerI: { value: new Int32Array(L.length * 2) },
         uLayerMA: { value: L.map(() => new THREE.Vector4(0.3, 0.3, 0.3, 0.5)) }, uLayerMB: { value: L.map(() => new THREE.Vector4(0.5, 0.5, 0.85, 1)) },
+        uLayerD: { value: L.map(l => new THREE.Vector4(l.detail ? l.detail[0] : 0, l.detail ? l.detail[1] : 0, recipe.layerSize || 1024, 0)) },
       });
     }
     this.shadePass = new Pass(SHADE_FRAG((L ? LAYERS_GLSL(L.map(l => l.name)) : '') + (recipe.defines || '') + recipe.shade), this.uniforms);
@@ -466,7 +494,7 @@ export class Terrain {
       return t;
     };
     const A = this.layerA = mk(true), B = this.layerB = mk(false);
-    B.texture.anisotropy = 1;   // normals, roughness, occlusion: trilinear is enough (and far cheaper on a software rasteriser)
+    B.texture.anisotropy = Math.min(this.recipe.layerAnisoB ?? 1, pipe.maxAniso);   // normals, roughness, occlusion: trilinear by default (far cheaper on a software rasteriser)
     const tex = (name, srgb) => name ? loadTexture(name, pipe, { srgb, mips: false, aniso: 1 }) : Promise.resolve(null);
     const src = await Promise.all(L.map(l => Promise.all([tex(l.albedo, true), tex(l.normal, false), tex(l.orm, false)])));
     const pack = new Pass(PACK_FRAG, { tAlb: { value: null }, tNrm: { value: null }, tOrm: { value: null }, uHas: { value: new THREE.Vector4() }, uWhich: { value: 0 } });

@@ -11,6 +11,17 @@ export const FIELD_V = [Math.cos(hr), Math.sin(hr)];    // to the right of it (t
 // parking spot used in the ramp shots, in field metres (u along the runway, v across), nose towards +v
 export const SPOT = { u: 120, v: 404 };
 
+// Optional photoscanned close-range materials (engine/terrain.js layers, textures built by blender/ground_tex.py): a
+// film opts in by passing `layers: MOJAVE_LAYERS` (plus layerAniso / layerAnisoB) to its Terrain. Without them the
+// recipe renders exactly as before; with them, the painted pavements and the graded ground take their grain, relief
+// and fine tone variation from the scans within about a metre per pixel.
+const TEX = 'shared/tex/ground/';
+const layer = (name, scale, o = {}) => ({ name, scale, albedo: `${TEX}${name}_albedo.webp`, normal: `${TEX}${name}_normal.webp`, orm: `${TEX}${name}_orm.webp`, ...o });
+export const MOJAVE_LAYERS = [
+  layer('concrete_broom', 2.5, { rotate: 0, detail: [5, 0.8] }), layer('concrete_worn', 3.0, { rotate: 0, detail: [5, 0.8] }),
+  layer('asphalt', 4.04, { detail: [6, 0.8] }), layer('soil', 2.0, { detail: [4, 1] }), layer('soil_fine', 2.48, { detail: [5, 1] }),
+];
+
 const FIELD_FN = /* glsl */`
 const vec2 MJ_FU = vec2(${FIELD_U[0].toFixed(5)}, ${FIELD_U[1].toFixed(5)});
 const vec2 MJ_FV = vec2(${FIELD_V[0].toFixed(5)}, ${FIELD_V[1].toFixed(5)});
@@ -346,8 +357,12 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
     alb = mix(alb, vec3(0.56,0.48,0.37)*(0.9+0.2*n6), (1.0-smoothstep(2.4, 3.6, pt))*0.8);
     alb *= 1.0-0.2*ruts;
   }
-  // close to the lens: gravel, grit and small relief that a low sun picks out
+  // close to the lens: gravel, grit and small relief that a low sun picks out (procedural: only without the scans)
+#ifdef TERRAIN_LAYERS
+  if (fp < 0.25 && !onField){
+#else
   if (fp < 0.25){
+#endif
     float k = smoothstep(0.25, 0.012, fp);
     vec4 d5 = dtex(duv(5)+0.13, 5), d6 = dtex(duv(6), 6);
     float peb = smoothstep(0.30, 0.12, d6.b)*step(0.45, d5.r);
@@ -377,6 +392,45 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
       spec = mix(spec, -gl, cov);
     }
   }
+#ifdef TERRAIN_LAYERS
+  // close range: photoscanned grain under the painted airfield. The paint, joints, stains and colours above stay as
+  // they are; the scans modulate them (each scan relative to its own mean) and supply the fine relief.
+  if (onField && fp < 1.3){
+    float k = 1.0-smoothstep(0.5, 1.3, fp);
+    vec4 pm = vec4(0.0);
+    if (abs(f.x) < 2410.0 && f.y > -56.0 && f.y < 598.0) pm = mjPaveMask(f, max(fp*0.6, 0.012));
+    float conc = max(max(pm.x, pm.y), pm.z), pav = max(conc, pm.w);
+    const vec3 Y3 = vec3(0.2126, 0.7152, 0.0722);
+    vec3 gain = vec3(1.0); vec2 rel = vec2(0.0);
+    if (conc > 0.001){ // jointed concrete: every slab its own stretch of the two scans; the broom grain runs across the pavement
+      float size = pm.z > 0.5 ? 6.096 : 7.62; vec2 off = pm.z > 0.5 ? vec2(1.3, 0.4) : (pm.x < 0.5 ? vec2(3.1, 1.7) : vec2(0.0));
+      vec4 r = lRand(ivec2(floor((f+off)/size))+ivec2(4099, 2741));
+      const float ch = ${Math.cos(hr).toFixed(6)}, sh = ${Math.sin(hr).toFixed(6)};
+      mat2 Ra = mat2(sh, -ch, ch, sh), Rb = mat2(ch, sh, -sh, ch);              // field axes from world (x, -z): across-grain and plain mappings
+      vec2 fx = lFootX(), fy = lFootY();
+      Surf b = layerSampleST(L_CONCRETE_BROOM, vec2(f.x, -f.y)/2.5+r.xy*13.0, Ra*fx/2.5, Ra*fy/2.5, ${(hr - Math.PI / 2).toFixed(6)});
+      Surf w = layerSampleST(L_CONCRETE_WORN, vec2(f.y, f.x)/3.0+r.zw*11.0, Rb*fx/3.0, Rb*fy/3.0, ${hr.toFixed(6)});
+      b.alb = vec3(dot(b.alb, Y3)/max(dot(layerMeanAlbedo(L_CONCRETE_BROOM), Y3), 1e-3));
+      w.alb = vec3(dot(w.alb, Y3)/max(dot(layerMeanAlbedo(L_CONCRETE_WORN), Y3), 1e-3));
+      Surf c = surfBlendH(b, w, 0.25+0.5*r.z, 0.4);
+      gain = mix(gain, vec3(clamp(c.alb.r, 0.7, 1.3)), conc*0.85); rel += c.d*conc*0.8;
+    }
+    if (pm.w > 0.001 && conc < 0.999){ // asphalt shoulders and overruns
+      Surf a = layerSample(L_ASPHALT); float wa = pm.w*(1.0-conc);
+      gain = mix(gain, vec3(clamp(dot(a.alb, Y3)/max(dot(layerMeanAlbedo(L_ASPHALT), Y3), 1e-3), 0.6, 1.5)), wa); rel += a.d*wa;
+    }
+    if (pav < 0.999){ // graded ground: soil with small stones, fine sand where it has drifted
+      float gw = 1.0-pav;
+      Surf g = layerSample(L_SOIL); g.alb /= max(layerMeanAlbedo(L_SOIL), vec3(1e-3));
+      float wF = smoothstep(0.45, 0.65, dtex(duv(11)+0.37, 11).g*0.6+dtex(duv(4)+0.53, 4).g*0.4);
+      if (wF > 0.02){ Surf s2 = layerSample(L_SOIL_FINE); s2.alb /= max(layerMeanAlbedo(L_SOIL_FINE), vec3(1e-3)); g = surfBlendH(g, s2, wF, 0.22); }
+      gain = mix(gain, clamp(mix(vec3(dot(g.alb, Y3)), g.alb, 0.6), 0.45, 1.7), gw); rel += g.d*gw;
+      tRough = mix(0.86, 0.98, g.rough); tAO = mix(1.0, g.ao, k); tW = gw*k;   // layered lighting on the bare ground only
+    }
+    alb *= mix(vec3(1.0), gain, k);
+    N = normalize(N+vec3(rel.x, 0.0, rel.y)*k);
+  }
+#endif
 }
 `;
 
