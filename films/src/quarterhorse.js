@@ -18,52 +18,39 @@ const GROUND_Y = FIELD_ALT + 1.95;          // aircraft origin height when sitti
 const RWY_START_Z = 1700;                    // brake-release point, south end; take-off run heads north (-z)
 
 // ------------------------------------------------------------------ airfield
-const RUNWAY_FN = /* glsl */`
-float box(float a, float b, float x){ float w = fwidth(x)*0.75+1e-5; return smoothstep(a-w, a+w, x)-smoothstep(b-w, b+w, x); }
-vec4 runwayColor(vec2 p){
-  vec2 s = p/7.62, f = abs(fract(s)-0.5), id = floor(s);
-  float jw = max(fwidth(s.x), fwidth(s.y));
-  float joint = smoothstep(0.5-0.004-jw, 0.5-jw*0.3, max(f.x,f.y))*clamp(0.012/max(jw,1e-4), 0.0, 1.0);
-  float tone = 0.9+0.2*fract(sin(dot(id, vec2(12.9898,78.233)))*43758.5453);
-  float n1 = texture2D(tDetail, p*0.011).r, n2 = texture2D(tDetail, p*0.09).g, n3 = texture2D(tDetail, p*0.9).r;
-  vec3 c = vec3(0.47,0.46,0.43)*tone*(0.8+0.25*n1)*(0.9+0.2*n2)*(0.92+0.16*n3);
-  c = mix(c, vec3(0.15,0.14,0.13), joint*0.8);
-  float az = abs(p.y);
-  float tz = smoothstep(1790.0,1500.0,az)*smoothstep(900.0,1300.0,az);
-  float streak = texture2D(tDetail, vec2(p.x*0.35, p.y*0.004)).r;
-  c = mix(c, vec3(0.06), tz*smoothstep(12.0,3.0,abs(p.x))*smoothstep(0.3,0.75,streak)*0.8);
-  float ax = abs(p.x), paint = box(28.3, 29.2, ax);
-  paint = max(paint, box(-0.45, 0.45, p.x)*box(0.0, 36.6, mod(p.y+1830.0, 61.0))*step(az, 1745.0));
-  paint = max(paint, box(1760.0, 1805.0, az)*box(1.5, 27.0, ax)*box(0.0, 0.5, fract(ax/3.4)));
-  paint = max(paint, box(1480.0, 1525.0, az)*box(8.0, 17.0, ax));
-  paint = max(paint, box(0.0, 22.5, mod(az-1180.0, 150.0))*step(1150.0, az)*step(az, 1470.0)*box(9.0, 16.5, ax)*box(0.0, 0.62, fract((ax-9.0)/2.5)));
-  float wear = 0.5+0.5*texture2D(tDetail, p*0.21).g;
-  c = mix(c, vec3(0.84,0.83,0.78)*wear, paint*0.92);
-  return vec4(c, mix(0.93, 0.78, paint)-0.12*tz);
-}`;
-
 function buildAirfield(pipe) {
   const g = new THREE.Group(); g.name = 'airfield';
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
-  mat.onBeforeCompile = sh => {
-    sh.uniforms.tDetail = pipe.shared.tDetail;
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vRw;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvRw = position.xz;');
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>\nvarying vec2 vRw; uniform sampler2D tDetail;\n${RUNWAY_FN}`)
-      .replace('#include <map_fragment>', '#include <map_fragment>\nvec4 rw = runwayColor(vRw); diffuseColor.rgb = rw.rgb;')
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = rw.a;');
-  };
-  const rw = new THREE.PlaneGeometry(61, 3660, 1, 120); rw.rotateX(-Math.PI / 2);
-  const runway = new THREE.Mesh(rw, mat); runway.receiveShadow = true; runway.position.y = 0.02; g.add(runway);
-  // paved shoulders / apron: darker asphalt
-  const asph = new THREE.MeshStandardMaterial({ color: 0x2c2b2a, roughness: 0.95 });
-  for (const sx of [-1, 1]) { const sh = new THREE.PlaneGeometry(8, 3660); sh.rotateX(-Math.PI / 2); const m = new THREE.Mesh(sh, asph); m.position.set(sx * 34.5, 0.0, 0); m.receiveShadow = true; g.add(m); }
-  { const ap = new THREE.PlaneGeometry(300, 180); ap.rotateX(-Math.PI / 2); const m = new THREE.Mesh(ap, new THREE.MeshStandardMaterial({ color: 0x565552, roughness: 0.92 })); m.position.set(-190, 0.0, -1600); g.add(m); }
-
   // scrub: creosote and dry grass across the levelled basin floor
   const rnd = (() => { let s = 20260526; return () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
   const lumpy = (detail, amt) => { const b = new THREE.IcosahedronGeometry(1, detail); const p = b.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), k = 1 + amt * Math.sin(x * 7.1 + y * 3.3) * Math.cos(z * 5.7 + x * 2.1); p.setXYZ(i, x * k, Math.max(y, -0.25) * k, z * k); } b.computeVertexNormals(); return b; };
   const N = pipe.quality.lowTerrain ? 30000 : 130000;
-  const bush = new THREE.InstancedMesh(lumpy(0, 0.3), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }), N);
+  // scrub is lit per vertex with a tiny shader: there are ~100k of them and each covers only a few pixels
+  const bushMat = new THREE.ShaderMaterial({
+    uniforms: { uSunDir: pipe.shared.uSunDir, uSunColor: pipe.shared.uSunColor, tAmbient: pipe.shared.tAmbient },
+    vertexShader: `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      uniform vec3 uSunDir, uSunColor; uniform sampler2D tAmbient; varying vec3 vCol;
+      void main(){
+        vec4 wp = modelMatrix*instanceMatrix*vec4(position,1.0);
+        vec3 n = normalize(mat3(modelMatrix)*mat3(instanceMatrix)*normal);
+        float up = clamp(position.y*0.7+0.5, 0.0, 1.0);                 // darker towards the base (self-shadowing)
+        float nl = max(dot(n, uSunDir), 0.0)*0.75+0.25*max(dot(n, uSunDir)*0.5+0.5, 0.0);
+        vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb;
+        vCol = instanceColor*0.3183*(uSunColor*nl*(0.35+0.65*up) + amb*(0.35+0.65*up));
+        gl_Position = projectionMatrix*viewMatrix*wp;
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: `
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      varying vec3 vCol;
+      void main(){
+        #include <logdepthbuf_fragment>
+        gl_FragColor = vec4(vCol, 1.0);
+      }`,
+  });
+  const bushGeo = lumpy(0, 0.3), cells = new Map();
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
   const patch = (x, z) => 0.5 + 0.5 * Math.sin(x * 0.011 + Math.sin(z * 0.004) * 2.1) * Math.cos(z * 0.0075 + Math.sin(x * 0.006) * 1.7);
   let n = 0, guard = 0;
@@ -72,12 +59,22 @@ function buildAirfield(pipe) {
     if (Math.abs(x) < 42 || (x < -30 && x > -350 && z > -1700 && z < -1500)) continue;
     if (rnd() > 0.25 + 0.75 * patch(x, z)) continue;
     const grass = rnd() < 0.3, w = grass ? 0.16 + rnd() * 0.2 : 0.28 + rnd() * 0.5, h = grass ? 0.2 + rnd() * 0.22 : w * (0.6 + rnd() * 0.6);
-    ps.set(x, -0.12 + h * 0.2, z); q.setFromAxisAngle(up, rnd() * 6.28); sc.set(w, h, w * (0.8 + rnd() * 0.4));
-    m4.compose(ps, q, sc); bush.setMatrixAt(n, m4);
+    ps.set(x, h * 0.2, z); q.setFromAxisAngle(up, rnd() * 6.28); sc.set(w, h, w * (0.8 + rnd() * 0.4));
+    m4.compose(ps, q, sc);
     if (grass) col.setRGB(0.36 + rnd() * 0.12, 0.31 + rnd() * 0.1, 0.18 + rnd() * 0.06); else { const k = rnd(); col.setRGB(0.05 + k * 0.035, 0.06 + k * 0.035, 0.034 + k * 0.02); }
-    bush.setColorAt(n, col); n++;
+    const key = Math.floor((x + 900) / 180) + 64 * Math.floor((z + 2300) / 180);
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push({ m: m4.clone(), c: col.clone(), w, h, x, z }); n++;
   }
-  bush.count = n; bush.instanceMatrix.needsUpdate = true; bush.instanceColor.needsUpdate = true; bush.frustumCulled = false; g.add(bush);
+  // one instanced mesh per 180 m cell, so the renderer can skip cells outside the view
+  const bush = new THREE.Group(); bush.name = 'scrub';
+  for (const list of cells.values()) {
+    const im = new THREE.InstancedMesh(bushGeo, bushMat, list.length);
+    list.forEach((it, k) => { im.setMatrixAt(k, it.m); im.setColorAt(k, it.c); });
+    im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; im.computeBoundingSphere(); im.frustumCulled = true;
+    bush.add(im);
+  }
+  g.add(bush);
 
   // power line west of the field (H-frame poles), buildings on the west apron
   const wood = new THREE.MeshStandardMaterial({ color: 0x3a2d22, roughness: 0.95 });
@@ -87,11 +84,11 @@ function buildAirfield(pipe) {
     for (const s of [-1, 1]) { m4.makeTranslation(x + s * 3.1, 8.3, z); posts.setMatrixAt(i * 2 + (s > 0 ? 1 : 0), m4); }
     m4.makeTranslation(x, 15.6, z); arms.setMatrixAt(i, m4);
   }
-  posts.frustumCulled = arms.frustumCulled = false; g.add(posts, arms);
+  posts.computeBoundingSphere(); arms.computeBoundingSphere(); g.add(posts, arms);
   const bld = (x, z, w, d, h, c) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, metalness: 0.1 })); m.position.set(x, h / 2 - 0.1, z); g.add(m); return m; };
   bld(-640, -1650, 70, 110, 13, 0x8a8478); bld(-600, -1790, 24, 30, 7, 0x9a958c); bld(-720, -1560, 40, 28, 9, 0x6f6a62); bld(-560, -1500, 10, 10, 20, 0xa7a39b);
   g.traverse(o => { if (o.isMesh) { o.layers.set(LAYER.STATIC); o.castShadow = false; } });
-  return { group: g, bush };
+  return { group: g, bush, cells };
 }
 
 // ------------------------------------------------------------------ flight profile (illustrative; peak as reported)
@@ -298,5 +295,13 @@ function score(m) {
 startFilm({
   id: 'quarterhorse', title: 'Mach 1.21', duration: T_END, fps: 30, poster: 49.6, narration: NARRATION,
   build, shots, cues, buildHud, updateHud, score,
-  frame(t, shot) { W.terrain.update(shot.terrain); W.field.bush.visible = shot.terrain === 'ground'; },
+  frame(t, shot, lt, film) {
+    W.terrain.update(shot.terrain); W.field.bush.visible = shot.terrain === 'ground' && !film.off.has('scrub');
+    if (film.off.size) { // dev profiling switches
+      if (film.off.has('env')) film.pipe.scene.environment = null;
+      if (film.off.has('ac')) W.ac.visible = false;
+      if (film.off.has('field')) W.field.group.visible = false;
+      if (film.off.has('terrain')) W.terrain.mesh.visible = false;
+    }
+  },
 });

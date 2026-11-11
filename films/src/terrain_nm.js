@@ -86,7 +86,7 @@ float terrainH(vec2 p, float lod){
   // level the airfield
   vec2 f = abs(p)/vec2(1.6, 4.2);
   float fl = smoothstep(1.0, 0.55, max(f.x,f.y));
-  h = mix(h, ${FIELD_ALT.toFixed(1)}-0.12, fl);
+  h = mix(h, ${FIELD_ALT.toFixed(1)}, fl);
   return h;
 }
 `;
@@ -118,35 +118,62 @@ const scales = [0.004, 0.02, 0.17, 1.3, 11, 90, 700, [0.018, 0.085], [0.09, 0.36
 
 const shade = /* glsl */`
 float lineAA(float d, float w, float fp){ return (1.0-smoothstep(w, w+fp*1.2, d))*min(1.0, w/max(fp*0.7,1e-5)); }
+// Spaceport America runway 16/34 (modelled north-south): 3,660 x 61 m concrete, painted markings, rubber, asphalt shoulders.
+// q: metres from the runway centre (x across, y along), fp: pixel footprint (m)
+float rwBox(float a, float b, float x, float w){ return smoothstep(a-w, a+w, x)-smoothstep(b-w, b+w, x); }
+vec4 nmRunway(vec2 q, float fp, float n5, float n6, float n7){
+  float ax = abs(q.x), az = abs(q.y), w = max(fp*0.6, 0.012);
+  float pave = rwBox(-30.5, 30.5, q.x, w)*rwBox(-1830.0, 1830.0, q.y, w);
+  float shoulder = rwBox(-38.5, 38.5, q.x, w)*rwBox(-1838.0, 1838.0, q.y, w);
+  if (shoulder <= 0.001) return vec4(0.0);
+  vec2 s = q/7.62, f = abs(fract(s)-0.5), id = floor(s);
+  float jw = max(fp/7.62, 0.0015);
+  float joint = smoothstep(0.5-0.003-jw, 0.5-jw*0.3, max(f.x,f.y))*clamp(0.012/jw, 0.0, 1.0);
+  float tone = 0.9+0.2*fract(sin(dot(id, vec2(12.9898,78.233)))*43758.5453);
+  tone = mix(1.0, tone, clamp(4.0/max(fp,0.01), 0.0, 1.0));
+  vec3 c = vec3(0.47,0.46,0.43)*tone*(0.8+0.25*n5)*(0.9+0.2*n6)*(0.92+0.16*n7);
+  c = mix(c, vec3(0.15,0.14,0.13), joint*0.8);
+  float tz = smoothstep(1790.0,1500.0,az)*smoothstep(900.0,1300.0,az);
+  float streak = textureLod(tDetail, vec2(q.x*0.35, q.y*0.004), clamp(log2(fp*0.35*512.0), 0.0, 7.0)).r;
+  c = mix(c, vec3(0.06), tz*smoothstep(12.0,3.0,ax)*smoothstep(0.3,0.75,streak)*0.8);
+  float paint = rwBox(28.3, 29.2, ax, w);
+  paint = max(paint, rwBox(-0.45, 0.45, q.x, w)*rwBox(0.0, 36.6, mod(q.y+1830.0, 61.0), w)*step(az, 1745.0));
+  paint = max(paint, rwBox(1760.0, 1805.0, az, w)*rwBox(1.5, 27.0, ax, w)*rwBox(0.0, 0.5, fract(ax/3.4), w/3.4));
+  paint = max(paint, rwBox(1480.0, 1525.0, az, w)*rwBox(8.0, 17.0, ax, w));
+  paint = max(paint, rwBox(0.0, 22.5, mod(az-1180.0, 150.0), w)*step(1150.0, az)*step(az, 1470.0)*rwBox(9.0, 16.5, ax, w)*rwBox(0.0, 0.62, fract((ax-9.0)/2.5), w/2.5));
+  c = mix(c, vec3(0.84,0.83,0.78)*(0.5+0.5*n6), paint*0.92);
+  vec3 asph = vec3(0.075,0.073,0.07)*(0.8+0.4*n6);
+  return vec4(mix(asph, c, pave), shoulder);
+}
 void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, float fp, float dist, out vec3 alb, out float spec){
   float slope = 1.0-N.y; float fk = fp*0.001;
-  float n1 = texture2D(tDetail, duv(0)).r, n2 = texture2D(tDetail, duv(1)+0.3).g;
-  float n3 = texture2D(tDetail, duv(2)).r, n4 = texture2D(tDetail, duv(3)+0.7).g;
-  vec4 t5 = texture2D(tDetail, duv(4)); float n6 = texture2D(tDetail, duv(5)).g;
+  float n1 = dtex(duv(0), 0).r, n2 = dtex(duv(1)+0.3, 1).g;
+  float n3 = dtex(duv(2), 2).r, n4 = dtex(duv(3)+0.7, 3).g;
+  vec4 t5 = dtex(duv(4), 4); float n6 = dtex(duv(5), 5).g;
   vec3 soil = mix(vec3(0.47,0.37,0.26), vec3(0.42,0.30,0.21), smoothstep(0.32,0.7,n1));
   soil = mix(soil, vec3(0.52,0.45,0.35), smoothstep(0.48,0.8,n2)*0.75);
   soil *= 0.84+0.32*n3; soil *= 0.93+0.14*n4;
   soil *= mix(1.0, 0.9+0.2*t5.r, smoothstep(40.0, 4.0, fp))*mix(1.0, 0.92+0.16*n6, smoothstep(4.0, 0.3, fp));
   // bedrock with bedding picked out by height
   vec3 rock = mix(vec3(0.27,0.225,0.19), vec3(0.37,0.32,0.275), n2);
-  float strata = texture2D(tDetail, vec2(h*0.0041+n3*0.06, p.x*0.02+p.y*0.013)).r;
+  float strata = textureLod(tDetail, vec2(h*0.0041+n3*0.06, p.x*0.02+p.y*0.013), clamp(log2(fp*0.0041*512.0), 0.0, 6.0)).r;
   rock *= 0.72+0.6*strata;
   float rk = smoothstep(0.03, 0.11, slope);
   alb = mix(soil, rock, rk);
   // gullies hold pale sediment, spurs carry dark varnish
   alb *= mix(1.0, mix(1.2, 0.84, smoothstep(0.25,0.75,m0.b)), clamp(rk+0.25,0.0,1.0));
   // washes: meandering pale channels with a darker brush fringe
-  vec2 warp = vec2(texture2D(tDetail, duv(10)).r, texture2D(tDetail, duv(10)+0.5).g)-0.5;
-  float w1 = abs(texture2D(tDetail, duv(7)+warp*2.6*uScale[7]).r-0.5);
-  float w2 = abs(texture2D(tDetail, duv(8)+warp*2.6*uScale[8]+0.3).g-0.5);
+  vec2 warp = vec2(dtex(duv(10), 10).r, dtex(duv(10)+0.5, 10).g)-0.5;
+  float w1 = abs(dtex(duv(7)+warp*2.6*uScale[7], 7).r-0.5);
+  float w2 = abs(dtex(duv(8)+warp*2.6*uScale[8]+0.3, 8).g-0.5);
   float flat1 = (1.0-rk)*(1.0-m0.r*0.8);
   float wash = max(lineAA(w1, 0.006, fk*0.02), 0.6*lineAA(w2, 0.012, fk*0.09));
   float fringe = max(lineAA(w1, 0.022, fk*0.02), 0.6*lineAA(w2, 0.04, fk*0.09));
   alb = mix(alb, alb*0.78, (fringe-wash)*flat1*0.7);
   alb = mix(alb, vec3(0.60,0.52,0.40), wash*flat1*0.7);
   // scrub: dark shrubs that merge into a mottled tone with distance
-  float patch1 = smoothstep(0.3,0.72, texture2D(tDetail, duv(9)+0.2).r);
-  float dots = (1.0-smoothstep(0.16,0.33, t5.b))*step(0.35, texture2D(tDetail, duv(11)).g);
+  float patch1 = smoothstep(0.3,0.72, dtex(duv(9)+0.2, 9).r);
+  float dots = (1.0-smoothstep(0.16,0.33, t5.b))*step(0.35, dtex(duv(11), 11).g);
   float vv = mix(dots*(0.5+0.5*patch1), 0.30+0.32*patch1, smoothstep(2.5, 18.0, fp));
   alb = mix(alb, vec3(0.105,0.115,0.07), m1.g*vv*0.74);
   alb = mix(alb, vec3(0.08,0.13,0.05), m1.b*(0.5+0.4*n4));
@@ -160,12 +187,17 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
   float road = lineAA(rd, 0.006, fk)*(1.0-rk)*(1.0-m1.r);
   alb = mix(alb, vec3(0.55,0.49,0.40), road*0.75);
   // fine relief
-  float b0 = n4, b1 = texture2D(tDetail, duv(3)+0.7+vec2(0.012,0.0)).g, b2 = texture2D(tDetail, duv(3)+0.7+vec2(0.0,0.012)).g;
+  float b0 = n4, b1 = dtex(duv(3)+0.7+vec2(0.012,0.0), 3).g, b2 = dtex(duv(3)+0.7+vec2(0.0,0.012), 3).g;
   N.xz += vec2(b0-b1, b0-b2)*(1.2*rk+0.05)*smoothstep(900.0, 60.0, fp)*3.0;
-  float c0 = t5.r, c1 = texture2D(tDetail, duv(4)+vec2(0.016,0.0)).r, c2 = texture2D(tDetail, duv(4)+vec2(0.0,0.016)).r;
+  float c0 = t5.r, c1 = dtex(duv(4)+vec2(0.016,0.0), 4).r, c2 = dtex(duv(4)+vec2(0.0,0.016), 4).r;
   N.xz += vec2(c0-c1, c0-c2)*(0.9*rk+0.1)*smoothstep(60.0, 4.0, fp)*2.0;
   spec = m1.r;
   if (spec > 0.0) alb = mix(alb, vec3(0.03,0.06,0.07), spec);
+  if (abs(p.x) < 0.045 && abs(p.y) < 1.85){
+    vec4 rw = nmRunway(p*1000.0, fp, t5.r, n6, dtex(duv(6), 6).r);
+    alb = mix(alb, rw.rgb, rw.a);
+    if (rw.a > 0.5) N = normalize(mix(N, vec3(0.0,1.0,0.0), 0.9));
+  }
 }
 `;
 

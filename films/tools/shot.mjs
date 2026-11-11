@@ -16,7 +16,7 @@ const page = await browser.newPage({ viewport: { width: W, height: H }, deviceSc
 const logs = [];
 page.on('console', m => { const t = m.text(); if (!/GPU stall|GL Driver Message/.test(t)) logs.push(`[${m.type()}] ${t}`); });
 page.on('pageerror', e => logs.push('[pageerror] ' + e.message));
-const q = new URLSearchParams({ render: '1', w: W, h: H, ...(opt.msaa ? { msaa: opt.msaa } : {}), ...(opt.nres ? { nres: opt.nres } : {}) });
+const q = new URLSearchParams({ render: '1', w: W, h: H, ...(opt.msaa ? { msaa: opt.msaa } : {}), ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.prof ? { prof: 1 } : {}), ...(opt.off ? { off: opt.off } : {}), ...(opt.aniso ? { aniso: opt.aniso } : {}), ...(opt.debug ? { debug: opt.debug } : {}) });
 const t0 = Date.now();
 await page.goto('file://' + path.join(root, 'dist', `${film}.offline.html`) + '?' + q);
 await page.waitForFunction(() => window.FILM && window.FILM.ready, null, { timeout: 180000 });
@@ -30,6 +30,7 @@ for (const spec of times) {
   const t1 = Date.now();
   await page.evaluate(([t, o]) => window.FILM.renderFrame(t, o), [t, o]);
   const ms = Date.now() - t1;
+  if (opt.prof) console.log('  prof', JSON.stringify(await page.evaluate(() => { const p = window.FILM.film.pipe.prof; return Object.fromEntries(Object.entries(p).map(([k, v]) => [k, Math.round(v)])); })));
   const out = `${prefix}_${String(i++).padStart(2, '0')}.png`;
   if (opt.canvas) { const b64 = await page.evaluate(() => document.getElementById('view').toDataURL('image/png').split(',')[1]); fs.writeFileSync(out, Buffer.from(b64, 'base64')); }
   else await page.screenshot({ path: out });

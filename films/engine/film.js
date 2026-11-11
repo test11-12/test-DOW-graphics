@@ -46,6 +46,10 @@ export class Film {
     }
     this.quality = quality;
     this.pipe = new Pipeline(this.canvas, { width: W || 1280, height: H || 720, quality });
+    if (P.has('prof')) this.pipe.prof = {};
+    this.off = new Set((P.get('off') || '').split(',').filter(Boolean));   // dev: ?off=shadow,env,... disables features for profiling
+    if (this.off.has('shadow')) this.pipe.sun.castShadow = false;
+    if (P.get('aniso')) this.pipe.detail.anisotropy = +P.get('aniso');
     if (this.renderMode) { this.frame.style.width = (W || 1280) + 'px'; this.frame.style.height = (H || 720) + 'px'; document.body.classList.add('render'); }
     this.setStatus('Loading typefaces');
     try { await Promise.all(['700 64px "Saira Condensed"', '500 32px "Saira Condensed"', '400 20px "B612"', '700 20px "B612"', '400 20px "B612 Mono"', '700 20px "B612 Mono"'].map(f => document.fonts.load(f))); } catch (e) { /* fall back to system faces */ }
@@ -107,6 +111,7 @@ export class Film {
     if (shot.fadeOut) fade *= 1 - smooth(shot.t1 - shot.fadeOut, shot.t1, t);
     fade *= smooth(0, this.def.fadeIn ?? 0.6, t) * (1 - smooth(this.duration - (this.def.fadeOut ?? 1.0), this.duration - 0.05, t));
     post.fade = fade; post.envKey = post.envKey ?? shot.id;
+    if (this.off.size) { if (this.off.has('ao')) post.ao = false; if (this.off.has('cirrus')) post.cirrus = null; if (this.off.has('blur')) post.shutter = 0; if (this.off.has('dof')) post.dof = null; if (this.params.get('debug')) post.debug = this.params.get('debug'); }
     pipe.render(t, Math.floor(t * this.fps + 1e-6), post);
     this.updateOverlays(t, shot, lt);
   }

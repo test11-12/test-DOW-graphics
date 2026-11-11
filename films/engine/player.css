@@ -16,7 +16,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-text);ov
 #frame{position:relative;width:min(100cqw,calc(100cqh*16/9));aspect-ratio:16/9;max-width:100%;overflow:hidden;background:#000;container-type:size}
 #below{display:none;width:100%;gap:10px}
 #below .st-k{font-size:10px}#below .st-t{font-size:44px}#below .st-d{font-size:14px;max-width:none}#below .st-n{font-size:9px}
-body.prestart #ov{visibility:hidden}
+body.prestart #ov{opacity:0}
 #view{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
 #ov{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 #ov>*{position:absolute}
