@@ -81,14 +81,27 @@ const frame: Frame = { t: 0, dt: 0, idle: 0, live: 0, duration: 1, progress: 0, 
 const stats = { frames: 0, total: 0, max: 0 };
 
 /* ---- Layers ---------------------------------------------------------------- */
+/** How far the canvases are nudged inside the stage so that they start on a whole device
+    pixel. The page's layout puts the stage at fractions of a pixel (gutters and gaps are
+    set in viewport units), and a canvas stretched over a fractional box is resampled by
+    the browser: every hairline becomes a grey smear two pixels wide. */
+const fit = { dx: 0, dy: 0 };
 function sizeCanvas(layer: Layer): void {
   const w = Math.max(1, Math.round(view.width * view.dpr));
   const h = Math.max(1, Math.round(view.height * view.dpr));
   if (layer.el.width !== w) layer.el.width = w;
   if (layer.el.height !== h) layer.el.height = h;
+  // The box on the page is exactly the backing store, pixel for pixel, not "100%".
+  const st = layer.el.style;
+  st.left = `${fit.dx}px`;
+  st.top = `${fit.dy}px`;
+  st.right = 'auto';
+  st.bottom = 'auto';
+  st.width = `${view.width}px`;
+  st.height = `${view.height}px`;
 }
 function placeHtml(el: HTMLElement): void {
-  el.style.transform = `translate(${view.ox}px,${view.oy}px) scale(${view.scale})`;
+  el.style.transform = `translate(${view.ox + fit.dx}px,${view.oy + fit.dy}px) scale(${view.scale})`;
 }
 /** The part of the design space every film keeps its plate in, with a little air and
     room for the plate's title above it. */
@@ -106,17 +119,30 @@ function measure(): void {
   // this runs once more through the resize observer.
   s.stage.closest('.stage-frame')?.classList.toggle('is-plate', plate);
   const win = plate ? PLATE : { x: 0, y: 0, w: K.W, h: K.H };
-  const scale = Math.min(r.width / win.w, r.height / win.h);
-  view.width = r.width;
-  view.height = r.height;
+  // Whole device pixels: where the canvases start, how big they are, and where the design
+  // space's origin falls inside them. Then a snapped hairline is one pixel, everywhere.
+  const real = window.devicePixelRatio || 1;
+  const grid = (v: number): number => Math.round(v * real) / real;
+  const left = grid(r.left);
+  const top = grid(r.top);
+  const width = Math.max(1 / real, grid(r.right) - left);
+  const height = Math.max(1 / real, grid(r.bottom) - top);
+  fit.dx = left - r.left;
+  fit.dy = top - r.top;
+  // A small frame can afford every pixel of a phone's screen; a large one is capped.
+  const dpr = Math.min(real, width < 600 ? 3 : 2.5);
+  const whole = (v: number): number => Math.round(v * dpr) / dpr;
+  const scale = Math.min(width / win.w, height / win.h);
+  view.width = width;
+  view.height = height;
   view.scale = scale;
-  view.ox = (r.width - win.w * scale) / 2 - win.x * scale;
-  view.oy = (r.height - win.h * scale) / 2 - win.y * scale;
+  view.ox = whole((width - win.w * scale) / 2 - win.x * scale);
+  view.oy = whole((height - win.h * scale) / 2 - win.y * scale);
   view.x0 = -view.ox / scale;
   view.y0 = -view.oy / scale;
-  view.x1 = (r.width - view.ox) / scale;
-  view.y1 = (r.height - view.oy) / scale;
-  view.dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  view.x1 = (width - view.ox) / scale;
+  view.y1 = (height - view.oy) / scale;
+  view.dpr = dpr;
   view.px = 1 / (scale * view.dpr);
   const sc = s.cur;
   if (sc) {
