@@ -153,7 +153,7 @@ const SEA_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.24, sat: 1.0, wb: 
 const P0 = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
 // up-sun shots: a heavier deck with the sun breaking through it (dev overrides: ?ucov= ?udens= ?urays=)
 const UP_CLOUDS = { ...CLOUDS, cover: +P0.get('ucov') || 0.56, density: +P0.get('udens') || 0.017, steps: 48 };
-const UP_SUN = { ...SEA_POST, clouds: UP_CLOUDS, rays: +P0.get('urays') || 0.6, flare: FLARE, sunDisk: 0.5 };
+const UP_SUN = { ...SEA_POST, clouds: UP_CLOUDS, rays: +P0.get('urays') || 0.12, flare: FLARE, sunDisk: 0.5 };
 const IR_POST = { clouds: null, cirrus: null, mode: 'thermal', thermal: [3.4, 0.15, 0.05, 0], exposure: 0.26, contrast: 1.2, aerial: 0.25, grain: 0.09, bloom: 0.03, shutter: 0.3, vignette: 0.45, ao: false };
 
 // ------------------------------------------------------------------ shots
@@ -287,6 +287,6 @@ startFilm({
     updateBlasts(film, t, !!shot.blasts);
     const lead = trs[0] && trs[0](t), wa = shot.wakeAt ? shot.wakeAt(t) : (lead ? [lead.x, lead.z + 40] : null);
     const off = film.off;   // dev switches for profiling: ?off=refl,wake,seaclouds,sparkle,whitecap
-    O.update(t, { wake: wa && !off.has('wake') ? { x: wa[0], z: wa[1], size: shot.wakeSize || 200 } : null, reflect: !off.has('refl'), whitecap: off.has('whitecap') ? 0 : 0.34, thermal: th, cloudsOn: !th && !off.has('seaclouds'), shadeWaves: +film.params.get('waves') || 14, ...(shot.sea || {}), ...(off.has('sparkle') ? { sparkle: 0 } : {}) });
+    O.update(t, { wake: wa && !off.has('wake') ? { x: wa[0], z: wa[1], size: shot.wakeSize || 200 } : null, reflect: !off.has('refl'), whitecap: off.has('whitecap') ? 0 : 0.34, thermal: th, cloudsOn: !th && !off.has('seaclouds'), shadeWaves: +film.params.get('waves') || 14, ...(film.params.get('bands') ? { bands: film.params.get('bands').split(',').map(Number) } : {}), ...(shot.sea || {}), ...(off.has('sparkle') ? { sparkle: 0 } : {}) });
   },
 });
