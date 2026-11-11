@@ -125,7 +125,14 @@ const ENV_FRAG = /* glsl */`
 precision highp float;
 ${ATMOSPHERE}
 uniform float uCamAlt; uniform vec3 uGroundAlb; uniform vec2 uDeck;   // cloud deck below the camera: top altitude (m), brightness (0 = none)
+uniform float uSea;     // 1: the ground below the horizon is open water, which mirrors the sky (Fresnel, wave-blurred)
 varying vec3 vDir;
+vec3 skyAlong(vec3 ro, vec3 rd){
+  vec3 LR, LM, LMS, T;
+  atmoIntegrate(ro, rd, 1.0e9, 0.5, 14, LR, LM, LMS, T);
+  float cv = dot(rd,uSunDir);
+  return LR*phaseR(cv)+LM*min(phaseM(cv),1.5)+LMS;
+}
 void main(){
   vec3 rd = normalize(vDir);
   vec3 ro = vec3(0.0, RG+uCamAlt, 0.0);
@@ -144,7 +151,14 @@ void main(){
   } else if (tG>0.0){
     vec3 p = ro+rd*tG; float mu = max(dot(normalize(p), uSunDir), 0.0);
     vec3 E = uSunE*exp(-sunTau(RG, mu))*mu + uSunE*0.06*smoothstep(-0.1,0.2,uSunDir.y);
-    col += T*uGroundAlb*E*0.3183;
+    vec3 grd = uGroundAlb*E*0.3183;
+    if (uSea > 0.0){   // sea: skylight mirrored by wave facets (the facets keep grazing reflection below ~0.45)
+      vec3 up = normalize(p), rr = reflect(rd, up);
+      rr.y = max(rr.y, 0.02); rr = normalize(rr);
+      float cosI = clamp(-dot(rd, up), 0.0, 1.0), f = 0.02+0.98*pow(1.0-max(cosI, 0.16), 5.0);
+      grd = mix(grd, skyAlong(p+up*2.0, rr), f*uSea);
+    }
+    col += T*grd;
   }
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -618,8 +632,9 @@ void main(){
 const FINAL_FRAG = /* glsl */`
 precision highp float;
 ${NOISE}
-uniform sampler2D tColor, tBloom, tDetail, tRays, tFlare;
-uniform vec2 uRes; uniform float uFrame, uExposure, uBloom, uVignette, uGrain, uCA, uLensK, uFade, uSat, uContrast, uSharpen, uRays, uFlare;
+uniform sampler2D tColor, tBloom, tDetail, tRays, tFlare, tDepth;
+uniform vec2 uRes; uniform float uFrame, uExposure, uBloom, uVignette, uGrain, uCA, uLensK, uFade, uSat, uContrast, uSharpen, uRays, uFlare, uLogFar;
+uniform vec2 uRaysNear;   // light shafts are scattered along the view ray: weight on things at 0 m, distance (m) to full (0 = off)
 uniform vec3 uWB, uLift, uTint, uBloomTint; uniform int uMode; uniform vec4 uThermal; // gain, level, noise, polarity
 varying vec2 vUv;
 vec3 agxCurve(vec3 x){ vec3 x2=x*x, x4=x2*x2; return 15.5*x4*x2-40.14*x4*x+31.96*x4-6.868*x2*x+0.4298*x2+0.1191*x-0.00232; }
@@ -632,11 +647,18 @@ vec3 agxOut(vec3 v){
   const mat3 mi = mat3(1.19687900512017,-0.0528968517574562,-0.0529716355144438, -0.0980208811401368,1.15190312990417,-0.0980434501171241, -0.0990297440797205,-0.0989611768448433,1.15107367264116);
   return mi*v;
 }
-vec3 fetch(vec2 uv){ return texture2D(tColor, uv).rgb + texture2D(tBloom, uv).rgb*uBloom*uBloomTint + texture2D(tRays, uv).rgb*uRays + texture2D(tFlare, uv).rgb*uFlare; }
+float raysW(vec2 uv){
+  if (uRaysNear.y <= 0.0) return 1.0;
+  float z = exp2(texture2D(tDepth, uv).x*uLogFar)-1.0;
+  return mix(uRaysNear.x, 1.0, 1.0-exp(-z/uRaysNear.y));
+}
+vec3 fetch(vec2 uv){ return texture2D(tColor, uv).rgb + texture2D(tBloom, uv).rgb*uBloom*uBloomTint + texture2D(tRays, uv).rgb*uRays*raysW(uv) + texture2D(tFlare, uv).rgb*uFlare; }
 void main(){
   vec2 c = vUv-0.5; vec2 asp = vec2(uRes.x/uRes.y, 1.0);
   float r2 = dot(c*asp, c*asp);
-  vec2 uv = 0.5+c*(1.0+uLensK*r2);
+  // barrel distortion, scaled so the frame corners land on the source corners: nothing is sampled from outside
+  // the frame (clamped edge pixels used to smear into streaks along the borders)
+  vec2 uv = 0.5+c*(1.0+uLensK*r2)/(1.0+uLensK*0.25*(asp.x*asp.x+1.0));
   vec3 col;
   if (uCA > 0.0){
     vec2 dir = (uv-0.5)*uCA*(0.4+r2*2.0);
@@ -776,6 +798,7 @@ export class Pipeline {
     this.pUp = new Pass(BLOOM_UP_FRAG, { tIn: { value: null }, tPrev: { value: null }, uTexel: { value: new THREE.Vector2() }, uMix: { value: 0.5 } });
     this.pFinal = new Pass(FINAL_FRAG, {
       tColor: { value: null }, tBloom: { value: null }, tDetail: shared.tDetail, tRays: { value: this.black }, tFlare: { value: this.black },
+      tDepth: shared.tDepth, uLogFar: shared.uLogFar, uRaysNear: { value: new THREE.Vector2(1, 0) },
       uRes: shared.uRes, uFrame: shared.uFrame,
       uExposure: { value: 0.25 }, uBloom: { value: 0.06 }, uVignette: { value: 0.25 }, uGrain: { value: 0.035 }, uCA: { value: 0.0012 },
       uLensK: { value: 0.0 }, uFade: { value: 1 }, uSat: { value: 1.12 }, uContrast: { value: 1.12 }, uSharpen: { value: 0.0 }, uRays: { value: 0 }, uFlare: { value: 0 },
@@ -788,11 +811,11 @@ export class Pipeline {
     this.envScene = new THREE.Scene();
     const envMat = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthTest: false, depthWrite: false,
-      uniforms: { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb, uDeck: { value: new THREE.Vector2(0, 0) } },
+      uniforms: { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb, uDeck: { value: new THREE.Vector2(0, 0) }, uSea: { value: 0 } },
       vertexShader: `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
       fragmentShader: ENV_FRAG,
     });
-    this.envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat)); this.envDeck = envMat.uniforms.uDeck.value;
+    this.envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat)); this.envDeck = envMat.uniforms.uDeck.value; this.envSea = envMat.uniforms.uSea;
     this.envRT = null; this.envKey = '';
     this.setSize(opts.width || 1280, opts.height || 720);
   }
@@ -881,8 +904,9 @@ export class Pipeline {
   }
 
   // post: { exposure, bloom, bloomTint, vignette, grain, ca, lensK, fade, sat, contrast, wb, lift, tint, shutter, shimmer:[amp,scale,far],
-  //         sunDisk, aerial, mode, thermal, sharpen, envKey, cirrus:{alt,cover,opacity,scale,wind}, clouds:{...},
-  //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, flare:{ghost,halo,streak,thr} }
+  //         sunDisk, aerial, mode, thermal, sharpen, envKey, envSea (0..1: the probe's ground is open water), cirrus:{alt,cover,opacity,scale,wind}, clouds:{...},
+  //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, raysNear:[weight at 0 m, metres to full weight],
+//         flare:{ghost,halo,streak,thr} }
   render(time, frameIndex, post = {}) {
     const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene;
     if (this.prof) { this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }
@@ -911,7 +935,8 @@ export class Pipeline {
       const dk = post.envDeck ?? (this.clouds && post.clouds ? { alt: this.clouds.top - 350, k: 0.6 * Math.min(1, (post.clouds.cover ?? 0.35) * 1.5) } : null);
       this.envDeck.set(dk ? dk.alt : 0, dk ? dk.k : 0);
     }
-    this.updateEnvironment(post.envKey ?? 'default');
+    this.envSea.value = post.envSea ?? 0;
+    this.updateEnvironment((post.envKey ?? 'default') + (post.envSea ? ':sea' + post.envSea : ''));
     // aerial-perspective froxels follow the camera every frame
     this.pAp.u.uWhich.value = 0; this.pAp.render(r, this.rtApI);
     this.pAp.u.uWhich.value = 1; this.pAp.render(r, this.rtApT);
@@ -1037,6 +1062,7 @@ export class Pipeline {
       } else rays = 0;
     }
     uf.tRays.value = rays > 0.001 ? this.rtRayB.texture : this.black; uf.uRays.value = rays > 0.001 ? rays : 0;
+    uf.uRaysNear.value.set(post.raysNear?.[0] ?? 1, post.raysNear?.[1] ?? 0);
     this.mark('rays');
 
     // 11. bloom

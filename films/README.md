@@ -99,12 +99,18 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   (base colour, ORM, normal, emissive; occlusion denoised), glTF export, a quick Cycles preview, and
   downloads of CC0 photoscans from Poly Haven and ambientCG.
 - `blender/corsair.py` (with `corsair_geo.py`, `corsair_tex.py`): the Saronic Corsair of film 3, lofted from
-  station functions (hull, cowl, rub rail) plus fittings, mast and sensors, baked to three atlases (hull;
+  station functions (hull, cowl, rub rail) plus fittings (hatches with gasket gaps and coamings, cleats, the
+  gunwale cable, engine box with louvred vents cut into it), mast and sensors, baked to three atlases (hull;
   deck and engine box; mast and gear) and finished in numpy from baked position / normal / occlusion maps
-  (spray band, dried salt, runs under fittings, wet patches). `node tools/blender.mjs corsair geo <prefix>`
-  checks geometry alone in under three minutes; `corsair full [<prefix>] [deck=4096 hull=2048 gear=2048]`
-  bakes and exports `assets/corsair/corsair.glb` and the tiling non-skid detail `assets/corsair/tex/grip.webp`.
-  `blender/ship.py` builds the distant tanker, `assets/corsair/ship.glb`. `src/corsair_boat.js` loads both.
+  (wet band, streaks running aft, boot line, dried salt, runs under fittings, water on the aft deck). The
+  painted atlases also carry a mask (R water film, G droplet density, B salt) in the glTF emissive slot, at a
+  negligible strength; `src/corsair_boat.js` turns it into a water layer (a clear coat with droplets and
+  ripples) over the paint. `node tools/blender.mjs corsair geo <prefix> [views]` checks geometry alone in about
+  a minute; `corsair full [<prefix>] [deck=4096 hull=2048 gear=2048]` bakes and exports
+  `assets/corsair/corsair.glb` with the tiling details `assets/corsair/tex/grip.webp` (non-skid grit) and
+  `drops.webp` (water drops), and keeps its bakes and scene in the bake cache, so `corsair retex` redoes only
+  the numpy weathering and the export (about five minutes). `blender/ship.py` builds the distant tanker,
+  `assets/corsair/ship.glb`. `src/corsair_boat.js` loads both.
 - `blender/boatkit.py`: mesh builders with metric UVs (grids, sweeps, tubes, lathes, lids), atlas packing at
   one texel density, float bakes of position / normal / material masks, numpy value noise, WebP output.
 - Conventions: metres; vehicles modelled nose along +X, up +Z, starboard along -Y (the engine's +x forward,

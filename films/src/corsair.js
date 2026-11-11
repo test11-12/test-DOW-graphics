@@ -114,13 +114,18 @@ function seaPose(tr, t) {
   }
   return { h: H, pitch: P / D2R, roll: R / D2R };
 }
-function placeBoat(film, b, tr, t) {
+// world position (into `out`) and attitude (into `q`) of a boat on track tr at time t
+function boatPose(tr, t, out, q) {
   const p = tr(t), s = seaPose(tr, t), plane = smooth(4, 14, p.v);
   const pitch = s.pitch * 0.85 + 3.6 * plane + 0.4 * wobble(t * 2.3, 3 + p.x * 0.01);
   const roll = s.roll * 0.7 + 0.7 * wobble(t * 1.7, 9 + p.z * 0.01);
-  tmp.set(p.x, s.h + 0.22 * plane, p.z); film.place(b, tmp);
-  attitude(p.hdg, pitch, roll, b.quaternion);
+  attitude(p.hdg, pitch, roll, q);
+  return out.set(p.x, s.h + 0.22 * plane, p.z);
 }
+function placeBoat(film, b, tr, t) { film.place(b, boatPose(tr, t, tmp, b.quaternion)); }
+// a point fixed to the boat on track tr, in its own axes (bow +x, up +y, starboard +z), in world coordinates
+const _bq = new THREE.Quaternion(), _bp = v3();
+function onBoat(tr, t, x, y, z, out = v3()) { boatPose(tr, t, _bp, _bq); return out.set(x, y, z).applyQuaternion(_bq).add(_bp); }
 // height of a camera boat or a hand-held camera riding the swell at (x, z)
 const ride = (x, z, t, k = 0.75) => W ? W.ocean.heightAt(x, z, t - 0.12) * k : 0;
 // a point given in a boat's own axes [forward, up, right], in world coordinates
@@ -150,7 +155,8 @@ function updateBlasts(film, t, show) {
 
 // ------------------------------------------------------------------ grade
 const FLARE = { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 };
-const SEA_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.24, sat: 1.0, wb: [1.0, 1.0, 1.03], aerial: 1.0, grain: 0.045, bloom: 0.1, shutter: 0.22, vignette: 0.3 };
+const P0e = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');   // ?envsea=0 for look development
+const SEA_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.24, sat: 1.0, wb: [1.0, 1.0, 1.03], aerial: 1.0, grain: 0.045, bloom: 0.1, shutter: 0.22, vignette: 0.3, envSea: +(P0e.get('envsea') ?? 1) };
 const P0 = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
 // up-sun shots: a heavier deck with the sun breaking through it (dev overrides: ?ucov= ?udens= ?urays=)
 const UP_CLOUDS = { ...CLOUDS, cover: +P0.get('ucov') || 0.56, density: +P0.get('udens') || 0.017, steps: 48 };
@@ -167,7 +173,7 @@ const shots = [
   { id: 's02', name: 'Corsair', t0: 6.5, t1: 14.5, note: 'Chase off the port quarter, low: the boat at speed against the sun path.',
     tracks: [LEAD],
     camera: (lt, t) => { const p = LEAD(t), k = ease(lt / 8); const cx = p.x - 17 + 5 * k, cz = p.z + 15 - 5.5 * k; return { pos: v3(cx, 3.4 - 1.1 * k + ride(cx, cz, t, 0.6), cz), look: v3(p.x + 2, 0.7 + ride(p.x, p.z, t, 0.4), p.z - 1), fov: 30, shake: { rot: 0.14, freq: 0.9, seed: 2, jolt: 0.03 }, focus: v3(p.x, 0.5, p.z), focusRadius: 9 }; },
-    post: { ...UP_SUN }, wakeSize: 130 },
+    post: { ...UP_SUN, raysNear: [0.3, 150] }, wakeSize: 130 },     // the shafts are air light: thin on a boat 20 m off
   { id: 's03', name: 'Head-on', t0: 14.5, t1: 21, note: 'Water-level long lens: the boat comes at the camera, spray flying, and goes by close.',
     tracks: [PASS],
     camera: (lt, t) => { const p = PASS(t), cam = v3(SEA.x + 1.5, 2.4 + ride(SEA.x + 1.5, SEA.z - 160, t), SEA.z - 160), d = Math.hypot(p.x - cam.x, p.z - cam.z), fov = clamp(2 * Math.atan(5.2 / d) / D2R, 5, 46); return { pos: cam, look: v3(p.x, 1.1 + ride(p.x, p.z, t, 0.5), p.z), fov, shake: { rot: 0.05 * Math.min(1, fov / 14), freq: 1.1, seed: 3 }, focus: v3(p.x, 0.5, p.z), focusRadius: 9 }; },
@@ -190,7 +196,8 @@ const shots = [
     post: { ...SEA_POST, exposure: 0.215 }, wakeSize: 260, wakeAt: t => { const p = RUN_IN[0](t); return [p.x + 30, p.z + 40]; } },
   { id: 's07', name: 'Bow camera', t0: 43, t1: 50.2, note: 'Simulated bow camera (original graphics, labelled): the dock, the gantry and the hull on it grow in the frame.',
     tracks: RUN_IN, bowcam: true,
-    camera: (lt, t) => { const p = RUN_IN[0](t), h = W.ocean.heightAt(p.x, p.z, t); return { pos: boatPoint(p, [1.15, 1.52 + h * 0.8, 0.0], v3()), look: boatPoint(p, [40, 1.5 + h * 0.3, 0.6 * wobble(t * 0.7, 3)], v3()), fov: 62, roll: 1.6 * wobble(t * 1.3, 8), shake: { rot: 0.5, freq: 2.2, seed: 7, jolt: 0.12 }, focus: v3(p.x, 0.5, p.z), focusRadius: 6 }; },
+    // bolted to the hull: the foredeck holds still in the lower third while the horizon pitches and rolls
+    camera: (lt, t) => { const p = RUN_IN[0](t), tr = RUN_IN[0]; return { pos: onBoat(tr, t, 1.15, 1.30, 0.0), look: onBoat(tr, t, 40, -2.6, 0.0), up: onBoat(tr, t, 0, 1, 0).sub(onBoat(tr, t, 0, 0, 0)), fov: 62, shake: { rot: 0.10, freq: 3.1, seed: 7, jolt: 0.05 }, focus: v3(p.x, 0.5, p.z), focusRadius: 6 }; },
     post: { ...SEA_POST, exposure: 0.21, contrast: 1.3, sat: 0.86, lensK: 0.12, ca: 0.003, grain: 0.08, vignette: 0.5, shutter: 0.3, sharpen: 0.25 }, wakeSize: 220, wakeAt: t => { const p = RUN_IN[0](t); return [p.x - 10, p.z + 10]; } },
   { id: 's08', name: 'Three hits', t0: 50.2, t1: 57.2, note: 'Long lens from the far breakwater: three detonations along the waterline, a second or so apart. No people in frame.',
     tracks: RUN_IN, blasts: true,

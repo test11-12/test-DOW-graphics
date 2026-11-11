@@ -20,6 +20,7 @@ import numpy as np
 from mathutils import Vector
 
 import boatkit as k
+import dowlib as d
 from boatkit import clamp, lerp, smooth
 
 L, HB, XB = 7.3, 1.24, 3.65
@@ -267,14 +268,97 @@ def make_queries(info):
 
 
 # ---------------------------------------------------------------- fittings
+def _face_up(ob):
+    """Wind an open, mostly horizontal strip so its largest face looks up."""
+    big = max(ob.data.polygons, key=lambda p: p.area)
+    if big.normal.z < 0:
+        ob.data.flip_normals()
+    return ob
+
+
+def hatch_frame(tag, outline, tz):
+    """The dark gasket gap round a hatch lid and the low coaming outside it: the hatch outline a camera on
+    the deck sees."""
+    def ring(prof):
+        rows = []
+        for off, dz in prof:
+            pts = k.inset2d(outline, -off)
+            rows.append([(x, y, tz(x, y) + dz) for x, y in pts])
+        P = np.transpose(np.array(rows), (1, 0, 2))
+        return np.concatenate([P, P[:1]], axis=0)
+    gap = _face_up(k.grid(f'{tag}_gap', ring([(0.0, 0.0010), (0.0035, 0.0010), (0.0068, 0.0010)]), kind='dark', atlas='deck'))
+    co = k.grid(f'{tag}_coaming', ring([(0.0068, 0.0010), (0.0068, 0.0042), (0.0088, 0.0060), (0.0250, 0.0060), (0.0292, 0.0032), (0.0315, -0.0030)]), kind='deck', atlas='deck')
+    return [gap, _face_up(co)]
+
+
+def gunwale_cable(info):
+    """The black cable the photographs show running from the forward mast leg over the cowl shoulder, along the
+    top of the gunwale and over the side to a padeye near the bow, held by saddle clips."""
+    out = []
+    R = 0.0065
+    st = info.st
+    r = slice(None, None, -1)
+    zsh_at = lambda x: float(np.interp(x, st['x'][r], info.zsh[r]))
+    for s in (1, -1):
+        def rim(x, lift=0.0):
+            e = 0.01
+            t = Vector((2 * e, bg(x + e) - bg(x - e), 0.0)).normalized()
+            n = Vector((-t.y, t.x, 0.0))
+            p = Vector((x, bg(x), zg(x))) - n * 0.056
+            return Vector((p.x, p.y * s, p.z + 0.032 + R + lift))
+        leg_a = Vector((-0.56, 0.62 * s, info.top_z(-0.56, 0.62)))
+        leg_b = Vector((-0.86, 0.36 * s, 1.50))
+        p0 = leg_a.lerp(leg_b, 0.32) + Vector((0.0, 0.026 * s, 0.0))
+        xs = -0.15
+        bt = info.bt_at(xs)
+        sh = Vector((xs, (bt + 0.010) * s, zsh_at(xs) + R + 0.002))
+        pts = [p0, p0.lerp(sh, 0.5) + Vector((0, 0, -0.015)), sh]
+        # down the cowl chamfer, lying on it, to the gutter, then up onto the rim
+        x1 = 0.55
+        for t in (0.25, 0.5, 0.75):
+            x = xs + (x1 - xs) * t
+            bt = info.bt_at(x)
+            yi = info.yi_at(x)
+            y = bt + 0.02 + (yi - bt - 0.02) * t
+            zc = min(deck_base(x) + (yi - y) * math.tan(CH), zsh_at(x))
+            pts.append(Vector((x, y * s, zc + R / math.cos(CH) + 0.0015)))
+        pts.append(rim(x1 - 0.12, 0.004))
+        clips = (0.95, 1.55, 2.15, 2.70)
+        for x in np.arange(x1, 2.96, 0.10):
+            sag = 0.0035 * math.sin(math.pi * min(abs(x - c) for c in (x1,) + clips) / 0.3) if x > x1 + 0.05 else 0.0
+            pts.append(rim(float(x), sag))
+        # over the side to a padeye below the rail
+        xe = 3.06
+        top = rim(xe - 0.02)
+        lip = Vector((xe, (bg(xe) + 0.050) * s, zg(xe) + 0.004))
+        pe, ne = info.side(xe + 0.03, zg(xe) - 0.15)
+        pe = Vector((pe.x, pe.y * s, pe.z)) + Vector((0, ne.y * s, ne.z)) * 0.012
+        pts += [top, lip, lip.lerp(pe, 0.5) + Vector((0, 0.010 * s, 0)), pe + Vector((0, 0, 0.02))]
+        out.append(k.tube(f'cable_{s}', pts, R, n=8, fillet=0.03, kind='black', atlas='gear'))
+        # padeye and shackle
+        ax = Vector((0, ne.y * s, ne.z))
+        out.append(k.aim(k.lathe(f'cable_padeye_{s}', [(0.026, 0.0), (0.026, 0.004), (0.020, 0.007)], n=14, kind='steel', atlas='gear'), pe - ax * 0.010, pe + ax))
+        out.append(k.tube(f'cable_shackle_{s}', [pe - ax * 0.004 + Vector((0, 0, -0.012)), pe + ax * 0.012, pe - ax * 0.004 + Vector((0, 0, 0.026))], 0.0042, n=8, fillet=0.012, kind='steel', atlas='gear'))
+        # saddle clips on the rail, a band clamp on the mast leg
+        for x in clips:
+            p = rim(x)
+            out.append(k.box(f'cable_clip_{s}_{x}', (0.026, 0.024, 0.010), (p.x, p.y, p.z - R * 0.2), bevel=0.003, kind='black', atlas='gear'))
+        axl = (leg_b - leg_a).normalized()
+        c = leg_a.lerp(leg_b, 0.32)
+        out.append(k.tube(f'cable_band_{s}', [c - axl * 0.013, c + axl * 0.013], 0.026, n=14, kind='black', atlas='gear'))
+    return out
+
+
 def deck_fittings(info):
     tz, tn = info.top_z, info.top_n
     deck, gear = [], []
     # main hatch lid with a non-skid panel, and the smaller lid abaft it
     main = k.rrect(0.20, 2.08, -0.60, 0.60, 0.05)
     deck += k.slab('hatch_main', main, tz, 0.010, inset=0.045, kinds=('deck', 'grip'), atlas='deck')
+    deck += hatch_frame('hatch_main', main, tz)
     aft = k.rrect(-0.50, 0.08, -0.46, 0.46, 0.04)
     deck += k.slab('hatch_aft', aft, tz, 0.010, inset=0.04, kinds=('deck', 'grip'), atlas='deck')
+    deck += hatch_frame('hatch_aft', aft, tz)
     # lower foredeck: two non-skid pads either side of the ridge
     for s in (1, -1):
         y0, y1 = (0.05, 0.38) if s > 0 else (-0.38, -0.05)
@@ -322,12 +406,23 @@ def deck_fittings(info):
     for s in (1, -1):
         gear.append(k.aim(k.lathe(f'bow_loop_base_{s}', [(0.022, 0.0), (0.022, 0.004), (0.016, 0.007)], n=14, kind='steel', atlas='gear'), (3.22, 0.075 * s, z0 - 0.002), (3.22, 0.075 * s, z0 + 1)))
     # quarter cleats, a bow cleat on the ridge of the lower foredeck, and a filler cap on the aft deck
-    for s, (x, y) in ((1, (-3.18, 0.90)), (-1, (-3.18, -0.90)), (0, (3.02 - 0.42, 0.0))):
+    def cleat(tag, x, y, L, across):
+        """Cast stainless horn cleat: base pad with two bolts, waisted posts, horns tapering to rounded tips."""
         z = tz(x, y)
-        gear.append(k.box(f'cleat_base_{s}', (0.14, 0.04, 0.006), (x, y, z + 0.003), bevel=0.002, kind='steel', atlas='gear'))
-        for dx in (-0.035, 0.035):
-            gear.append(k.tube(f'cleat_post_{s}_{dx}', [(x + dx, y, z), (x + dx, y, z + 0.035)], 0.009, n=8, kind='steel', atlas='gear'))
-        gear.append(k.tube(f'cleat_horn_{s}', [(x - 0.10, y, z + 0.030), (x - 0.06, y, z + 0.038), (x + 0.06, y, z + 0.038), (x + 0.10, y, z + 0.030)], 0.010, n=8, kind='steel', atlas='gear'))
+        ax = Vector((0, 1, 0)) if across else Vector((1, 0, 0))
+        c = Vector((x, y, z))
+        h = L / 2
+        gear.append(k.box(f'cleat_base_{tag}', (L * 0.62, 0.045, 0.006) if not across else (0.045, L * 0.62, 0.006), (x, y, z + 0.003), bevel=0.0025, kind='steel', atlas='gear'))
+        for sg in (-1, 1):
+            p = c + ax * (0.30 * h * sg)
+            gear.append(k.lathe(f'cleat_post_{tag}_{sg}', [(0.0125, 0.0), (0.0105, 0.012), (0.0095, 0.024), (0.0115, 0.036)], n=12, kind='steel', atlas='gear', cap_bottom=False))
+            k.xform(gear[-1], p)
+            gear.append(k.tube(f'cleat_horn_{tag}_{sg}', [c + Vector((0, 0, 0.040)), c + ax * (0.55 * h * sg) + Vector((0, 0, 0.043)), c + ax * (0.92 * h * sg) + Vector((0, 0, 0.040)), c + ax * (h * sg) + Vector((0, 0, 0.034))],
+                               0.0115, n=12, fillet=0.02, taper=0.0055, kind='steel', atlas='gear'))
+            gear.append(k.bolt(f'cleat_bolt_{tag}_{sg}', c + ax * (0.52 * h * sg) + Vector((0, 0, 0.006)), (0, 0, 1), r=0.007, h=0.004, atlas='gear'))
+    cleat('q1', -3.18, 0.90, 0.20, False)
+    cleat('q2', -3.18, -0.90, 0.20, False)
+    cleat('bow', 3.02 - 0.42, 0.0, 0.25, True)          # athwartships on the foredeck ridge, broadside to the bow camera
     x, y = -1.75, 0.93
     gear.append(k.aim(k.lathe('filler', [(0.038, 0.0), (0.038, 0.005), (0.034, 0.008), (0.012, 0.008), (0.010, 0.005), (0.0, 0.005)], n=20, kind='steel', atlas='gear'), (x, y, tz(x, y)), (x, y, tz(x, y) + 1)))
     return deck, gear
@@ -379,6 +474,17 @@ def rail_screws(info):
     return out
 
 
+def outward(ob):
+    """Wind a closed mesh outwards."""
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(ob.data)
+    bm.free()
+    ob.data.update()
+    return ob
+
+
 def engine_box(info):
     x0, x1, hw, hgt = -3.60, -2.02, 0.74, 0.50
     zb = deck_base(-2.8) - 0.004
@@ -399,34 +505,88 @@ def engine_box(info):
     ob = bpy.data.objects.new('enginebox', me)
     bpy.context.scene.collection.objects.link(ob)
     ob['kind'], ob['atlas'], ob['has_uv'] = 'box', 'deck', False
-    deck.append(ob)
     deck += k.slab('box_lid', k.rrect(x0 + 0.05, x1 - 0.05, -hw + 0.05, hw - 0.05, 0.06), lambda x, y: zt, 0.014, chamfer=0.004, inset=0.05, kinds=('boxlid', 'boxlid'), atlas='deck')
 
+    # Engine-room vents (as in the photographs: a stadium-shaped grille on each side and aft). Each is a pocket
+    # cut 32 mm into the box wall, a rolled lip round its mouth, eight inclined blades and a black plenum behind
+    # them, so it reads as a dark recessed louvre, not as a window.
+    DEPTH = 0.032
+
+    def stadium(c, u, w, h, n=10):
+        """Outline of a stadium on a vertical face (c centre, u along-face unit vector), with each point's in-plane
+        outward direction."""
+        up = Vector((0, 0, 1))
+        r, a = h / 2, w / 2 - h / 2
+        pts, outs = [], []
+        for cx, a0 in ((a, -90), (-a, 90)):
+            for i in range(n + 1):
+                t = math.radians(a0 + 180 * i / n)
+                d = u * math.cos(t) + up * math.sin(t)
+                pts.append(c + u * cx + d * r)
+                outs.append(d)
+        return pts, outs
+
+    def cutter(c, u, w, h, nrm):
+        pts, _ = stadium(c, u, w, h, 12)
+        front = [p + nrm * 0.06 for p in pts]
+        back = [p - nrm * DEPTH for p in pts]
+        n = len(pts)
+        faces = [list(range(n)), list(range(2 * n - 1, n - 1, -1))] + [(i, (i + 1) % n, n + (i + 1) % n, n + i) for i in range(n)]
+        cu = k.new_obj('vent_cutter', front + back, faces)
+        bm = bmesh.new()
+        bm.from_mesh(cu.data)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(cu.data)
+        bm.free()
+        return cu
+
     def louvre(c, u, w, h, tag):
-        """Vent on a vertical face: c centre, u along-face unit vector, outward = u x z rotated."""
         c, u = Vector(c), Vector(u)
         up = Vector((0, 0, 1))
         nrm = u.cross(up)
-        r = h / 2
-        pts = []
-        for cx, a0 in ((w / 2 - r, -90), (-(w / 2 - r), 90)):
-            for i in range(9):
-                a = math.radians(a0 + 180 * i / 8)
-                pts.append(c + u * (cx + r * math.cos(a)) + up * (r * math.sin(a)) + nrm * 0.004)
+        r, a = h / 2, w / 2 - h / 2
+        # rolled lip round the mouth of the pocket: starts inside the pocket wall, rolls over onto the face
+        pts, outs = stadium(c, u, w, h, 12)
         pts.append(pts[0])
-        deck.append(k.tube(f'louvre_frame_{tag}', pts, 0.008, n=8, caps=False, kind='box', atlas='deck'))
-        rot = (0, 0, math.atan2(u.y, u.x))
-        deck.append(k.box(f'louvre_back_{tag}', (w - 2 * r + 0.02, 0.003, h - 0.03), c + nrm * 0.0015, kind='dark', atlas='deck', rot=rot))
-        deck.append(k.box(f'louvre_backl_{tag}', (0.05, 0.003, h - 0.07), c + u * (w / 2 - r) + nrm * 0.0015, kind='dark', atlas='deck', rot=rot))
-        deck.append(k.box(f'louvre_backr_{tag}', (0.05, 0.003, h - 0.07), c - u * (w / 2 - r) + nrm * 0.0015, kind='dark', atlas='deck', rot=rot))
-        ns = 6
-        for i in range(ns):
-            z = (i + 0.5) / ns * (h - 0.036) - (h - 0.036) / 2
-            sl = k.box(f'louvre_slat_{tag}_{i}', (w - 2 * r + 0.03, 0.004, 0.026), (0, 0, 0), bevel=0.0012, seg=1, kind='louvre', atlas='deck', rot=(math.radians(38), 0, 0))
-            k.xform(sl, c + nrm * 0.011 + up * z, rot)
-            deck.append(sl)
+        outs.append(outs[0])
+        lip = [(-0.010, -0.0006), (0.0015, -0.0006), (0.0042, 0.0016), (0.0052, 0.0055), (0.0044, 0.0105), (0.0018, 0.0142), (-0.0015, 0.0160)]
+        lo = k.sweep(f'louvre_lip_{tag}', pts, [nrm] * len(pts), outs, lip, closed=False, caps=False, kind='box', atlas='deck')
+        top = max(lo.data.polygons, key=lambda p: (p.center - c).dot(nrm))
+        if top.normal.dot(nrm) < 0:
+            lo.data.flip_normals()
+        deck.append(lo)
+        # black plenum just in front of the pocket floor
+        bp, _ = stadium(c - nrm * (DEPTH - 0.0015), u, w - 0.002, h - 0.002, 12)
+        back = k.new_obj(f'louvre_back_{tag}', bp, [list(range(len(bp)))], None, 'dark', 'deck')
+        if back.data.polygons[0].normal.dot(nrm) < 0:
+            back.data.flip_normals()
+        back['has_uv'] = False
+        deck.append(back)
+        # blades: 45 degrees, front edge low, top faces looking up and out (they catch the sky, the gaps stay black)
+        nb = 8
+        pitch = (h - 0.020) / nb
+        prof = [(-0.0050, -0.0095), (-0.0245, 0.0095), (-0.0262, 0.0078), (-0.0070, -0.0114)]
+        for i in range(nb):
+            zc = -(h - 0.020) / 2 + (i + 0.5) * pitch
+            half = a + math.sqrt(max(r * r - zc * zc, 0.0)) - 0.0015
+            ctr = c + up * zc
+            path = [ctr - u * half, ctr - u * (half * 0.33), ctr + u * (half * 0.33), ctr + u * half]
+            bl = k.sweep(f'louvre_blade_{tag}_{i}', path, [nrm] * 4, [up] * 4, prof, closed=True, caps=True, kind='louvre', atlas='deck')
+            outward(bl)
+            deck.append(bl)
+        return cutter(c, u, w, h, nrm)
+
+    cutters = []
     for s in (1, -1):
-        louvre(((x0 + x1) / 2 + 0.12, hw * s, zb + 0.27), (-s, 0, 0), 0.92, 0.21, f's{s}')
+        cutters.append(louvre(((x0 + x1) / 2 + 0.12, hw * s, zb + 0.27), (-s, 0, 0), 0.92, 0.21, f's{s}'))
+    cutters.append(louvre((x0, 0.0, zb + 0.27), (0, -1, 0), 0.80, 0.21, 'aft'))
+    for cu in cutters:
+        mod = ob.modifiers.new('vent', 'BOOLEAN')
+        mod.operation, mod.solver, mod.object = 'DIFFERENCE', 'EXACT', cu
+        d.apply_modifiers(ob)
+        bpy.data.objects.remove(cu)
+    deck.append(ob)
+    for s in (1, -1):
         # draw latches on the lid joint
         for x in (x0 + 0.33, x1 - 0.33):
             gear.append(k.box(f'latch_{s}_{x}', (0.030, 0.014, 0.085), (x, (hw + 0.006) * s, zt - 0.050), bevel=0.004, kind='rubber', atlas='gear'))
@@ -434,7 +594,6 @@ def engine_box(info):
         # hinges on the forward edge
         gear.append(k.tube(f'hinge_{s}', [(x1 + 0.006, 0.40 * s - 0.05, zt - 0.004), (x1 + 0.006, 0.40 * s + 0.05, zt - 0.004)], 0.009, n=10, kind='steel', atlas='gear'))
         gear.append(k.box(f'hingel_{s}', (0.006, 0.10, 0.05), (x1 + 0.002, 0.40 * s, zt - 0.034), bevel=0.0015, kind='steel', atlas='gear'))
-    louvre((x0, 0.0, zb + 0.27), (0, -1, 0), 0.80, 0.21, 'aft')
     # lid handle
     zl = zt + 0.014
     gear.append(k.tube('lid_handle', [(x0 + 0.14, 0.09, zl - 0.004), (x0 + 0.14, 0.09, zl + 0.034), (x0 + 0.14, -0.09, zl + 0.034), (x0 + 0.14, -0.09, zl - 0.004)], 0.008, n=8, fillet=0.02, kind='steel', atlas='gear'))
@@ -568,7 +727,7 @@ def build():
     d1, g1 = deck_fittings(info)
     d2, g2 = engine_box(info)
     m, g3, glass, red = mast(info)
-    gear = rail + g1 + g2 + g3 + m + side_brackets(info) + rail_screws(info) + transom_gear(info)
+    gear = rail + g1 + g2 + g3 + m + side_brackets(info) + rail_screws(info) + transom_gear(info) + gunwale_cable(info)
     for o in glass:
         o['kind'] = 'glass'
     for o in red:
