@@ -146,8 +146,10 @@ export default def;
    of the frame.
 7. Run `npm test`, then `npm run copy` to refresh `docs/COPY.md`.
 
-The design space is 1280 by 520. The field is usually `x 44..884, y 43..477`; the
-rail takes the rest. Canvases sit behind one HTML layer (`ctx.html()`), which is for
+The design space is 1280 by 520. The field is `x 44..884, y 43..477` in every film;
+the rail takes the rest. Keep to that rectangle: a frame narrower than 520 px shows
+only the window `x 28..900, y 16..494`, so anything a film draws outside the plate is
+not seen on a phone held upright, and nothing essential may live only in the rail. Canvases sit behind one HTML layer (`ctx.html()`), which is for
 real text such as the rail. Avoid CSS transitions inside a film: they are a second
 clock.
 

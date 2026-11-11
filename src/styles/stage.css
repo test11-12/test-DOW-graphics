@@ -16,6 +16,14 @@
 .stage-frame.is-plate, .wins-motion .stage-frame.is-plate { aspect-ratio: 872 / 478; min-height: 0; }
 .is-plate .rail { visibility: hidden; }
 
+/* Under a film: what it cannot show, and where its figures come from. Real text at a
+   readable size, because on a narrow frame the rail and its note are not shown. */
+.film-notes { display: grid; gap: 5px; margin: 0; padding-top: 10px; border-top: 1px solid var(--line-2); font: 400 12px/1.45 var(--sans); letter-spacing: 0; color: var(--muted); }
+.film-notes p { margin: 0; text-wrap: pretty; }
+.notes-label { display: inline-block; margin-right: 10px; font: 500 10.5px/1.45 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+.film-notes a { display: inline-block; margin-right: 14px; color: var(--muted); text-decoration: underline; text-decoration-color: var(--wire); text-underline-offset: 3px; }
+.film-notes a:hover, .film-notes a:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
+
 .scene { position: absolute; inset: 0; opacity: 1; transition: opacity .36s var(--ease-in-out), transform .36s var(--ease-in-out); }
 .scene.is-entering { opacity: 0; transform: translateY(6px); }
 .scene.is-leaving { opacity: 0; transform: translateY(-6px); pointer-events: none; }

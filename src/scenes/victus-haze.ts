@@ -62,7 +62,7 @@ const def: SceneDef<S.Era[]> = {
     const rail = ctx.rail();
     const phase = rail.phase('Mission', ['Notice to launch', 'First sortie', 'Second sortie']);
     const clock = rail.clock({ label: 'From the order to liftoff', unit: 'h : min' });
-    const race = rail.chart({ label: 'Notice to launch', height: 56 });
+    const race = rail.chart({ label: 'Notice to launch', height: 64 });
     const pair = rail.pair();
     const sortie = pair.stat({ label: 'First sortie, hours', slots: 2, bar: true });
     const plan = pair.stat({ label: 'Round two: plan, min', prefix: 'under', slots: 2 });
@@ -126,22 +126,33 @@ const def: SceneDef<S.Era[]> = {
         g.clip();
 
         /* ---- The Earth ---- */
-        globe.draw(pen, [K.rgba(col.dim, 0.75)], { min: 0.04, max: 0.4, gamma: 1, alpha: on });
-        pen.stroke(col.wire, on, 1).ring(CX, CY, R_EARTH);
+        // It is there from the first frame, so the film never opens on an empty plate.
+        const earth = 0.45 + 0.55 * on;
+        globe.draw(pen, [K.rgba(col.dim, 0.75)], { min: 0.04, max: 0.4, gamma: 1, alpha: earth });
+        pen.stroke(col.wire, earth, 1).ring(CX, CY, R_EARTH);
 
         /* ---- The first act's clock: a dial on which once round is the old record ---- */
-        const dial = on * (1 - K.tween(t, S.INSERT - 0.2, S.INSERT + 1));
+        // It draws itself on clockwise, and when the rocket reaches orbit its ring settles onto
+        // the orbit Puma is put into, so the clock and the orbits are one drawing.
+        const leave = K.tween(t, S.INSERT - 0.2, S.INSERT + 1);
+        const dial = on * (1 - leave);
         if (dial > 0) {
-          const R = 174;
+          const R = K.lerp(174, S.R_PUMA, leave);
           const start = -Math.PI / 2;
           const hours = S.NOTICE_HOURS * K.seg(t, S.NOTICE + 0.9, S.LIFTOFF);
           const angle = (h: number): number => start + (h / S.RECORD_HOURS) * K.TAU;
-          pen.stroke(col.line2, dial, 1).ring(CX, CY, R);
+          const words = dial * (1 - K.tween(t, S.INSERT - 0.2, S.INSERT + 0.3));
+          pen.stroke(col.line2, 1 - leave, 1);
+          g.beginPath();
+          g.arc(CX, CY, R, start, start + K.TAU * K.tween(t, 0.05, 1.05));
+          g.stroke();
           for (let h = 0; h < S.RECORD_HOURS; h++) {
             const a = angle(h);
             const long = h % 3 === 0;
-            pen.stroke(col.wire, dial, 1).line(CX + R * Math.cos(a), CY + R * Math.sin(a), CX + (R + (long ? 8 : 4)) * Math.cos(a), CY + (R + (long ? 8 : 4)) * Math.sin(a));
-            if (long && h) pen.text(String(h), CX + (R + 19) * Math.cos(a), CY + (R + 19) * Math.sin(a) + 3.5, { font: 'mono', size: 9.5, color: col.faint, alpha: dial, align: 'center' });
+            const drawn = K.stagger(t, 0.05, 1.15, h, S.RECORD_HOURS, 0.6, 'out');
+            const len = (long ? 8 : 4) * drawn * (1 - leave);
+            pen.stroke(col.wire, dial * drawn, 1).line(CX + R * Math.cos(a), CY + R * Math.sin(a), CX + (R + len) * Math.cos(a), CY + (R + len) * Math.sin(a));
+            if (long && h) pen.text(String(h), CX + (R + 19) * Math.cos(a), CY + (R + 19) * Math.sin(a) + 3.5, { font: 'mono', size: 9.5, color: col.faint, alpha: words * drawn, align: 'center' });
           }
           if (hours > 0) {
             pen.stroke(hours >= S.NOTICE_HOURS ? col.live : col.bright, dial, 2.2);
@@ -151,18 +162,29 @@ const def: SceneDef<S.Era[]> = {
             pen.fill(hours >= S.NOTICE_HOURS ? col.live : col.bright, dial).dot(CX + R * Math.cos(angle(hours)), CY + R * Math.sin(angle(hours)), 3.2);
           }
           pen.stroke(col.old, dial, 1.6).line(CX, CY - R - 12, CX, CY - R + 6);
-          pen.cap('27 h · the record', CX + 8, CY - R - 6, col.old, dial);
-          pen.cap('Hours since the order', CX - 8, CY - R - 6, col.faint, dial, 'right');
+          pen.cap('27 h · the record', CX + 8, CY - R - 6, col.old, words);
+          pen.cap('Hours since the order', CX - 8, CY - R - 6, col.faint, words, 'right');
         }
 
         /* ---- Orbits ---- */
         pen.stroke(col.live, 0.3 * on, 1, DASH.dot).ring(CX, CY, S.R_JACKAL);
         const P = S.puma(eras, s);
-        const seen = S.custody(eras, s);
         const dark = S.lastSeen(eras, s);
+        const e = eras[eras.length - 1];
+        /** The orbit Puma left and the place Jackal still expects it: eased in at the burn, out as the chase ends. */
+        const ghost = dark ? K.tween(s, e.at, e.at + 0.45) * (1 - K.tween(s, e.at + S.LAG + S.CHASE - 0.5, e.at + S.LAG + S.CHASE)) : 0;
+        /** A yes or no from the model, eased: its average over the last half second. */
+        const eased = (is: (x: number) => boolean): number => {
+          let n = 0;
+          for (let k = 0; k < 9; k++) if (is(s - k * 0.055)) n++;
+          return K.smooth(n / 9);
+        };
+        /** How firmly Jackal holds Puma in view, and how brightly Puma is drawn (it is plain to see until first tasked). */
+        const held = eased((x) => S.custody(eras, x));
+        const lit = eased((x) => x < S.TASKED + 0.4 || S.custody(eras, x));
         if (P) {
-          pen.stroke(col.mark, 0.4, 1, DASH.dot).ring(CX, CY, P.r);
-          if (dark) pen.stroke(col.wire, 0.5, 1, DASH.dot).ring(CX, CY, dark.r);
+          pen.stroke(col.mark, 0.4 * K.tween(s, S.INSERT, S.INSERT + 1), 1, DASH.dot).ring(CX, CY, P.r);
+          if (dark) pen.stroke(col.wire, 0.5 * ghost, 1, DASH.dot).ring(CX, CY, dark.r);
         }
         g.setLineDash([]);
 
@@ -207,15 +229,15 @@ const def: SceneDef<S.Era[]> = {
         }
         if (dark && J.mode !== 'station') {
           const q = S.point(dark);
-          pen.stroke(col.wire, 0.9, 1, DASH.fine).ring(q[0], q[1], 9);
+          pen.stroke(col.wire, 0.9 * ghost, 1, DASH.fine).ring(q[0], q[1], 9);
           g.setLineDash([]);
         }
         // The plan: once Jackal has one, the path it is about to fly.
-        const e = eras[eras.length - 1];
         const drafted = K.seg(t, S.PLANNED, S.INGRESS);
-        if (drafted > 0 && t < S.EVADE) {
+        if (drafted > 0 && t < S.INGRESS_END) {
           // Round two's approach, as planned: it aims at where Puma will be if Puma does nothing.
-          pen.stroke(col.live, 0.75, 1.1, DASH.fine);
+          // When Puma burns the plan is not snatched away; what is left of it fades as Jackal flies it out.
+          pen.stroke(col.live, 0.75 * (1 - K.tween(t, S.EVADE, S.INGRESS_END, 'out')), 1.1, DASH.fine);
           g.beginPath();
           const from = Math.max(t, S.INGRESS);
           const to = K.lerp(S.INGRESS, S.INGRESS_END, drafted);
@@ -249,8 +271,9 @@ const def: SceneDef<S.Era[]> = {
           const p2 = S.point(S.puma(eras, s + 0.06)!);
           const born = K.tween(s, S.INSERT, S.INSERT + 0.5);
           // In view, Puma is tied to its hunter by a sight line. Out of view it is only where it is.
-          if (seen && J.mode !== 'station') {
-            pen.stroke(col.live, 0.55, 1, DASH.fine).line(J.p[0], J.p[1], p[0], p[1]);
+          const sight = held * (J.mode === 'station' ? 0 : 1 - K.tween(J.u, 0.85, 1));
+          if (sight > 0) {
+            pen.stroke(col.live, 0.55 * sight, 1, DASH.fine).line(J.p[0], J.p[1], p[0], p[1]);
             g.setLineDash([]);
           }
           const burning = eras.length > 1 && s >= e.at && s < e.at + S.BURN;
@@ -258,9 +281,16 @@ const def: SceneDef<S.Era[]> = {
             const back = Math.atan2(p[1] - p2[1], p[0] - p2[0]) + (e.r1 > e.r0 ? -0.5 : 0.5);
             pen.fill(col.bright, 0.35).dot(p[0] + Math.cos(back) * 9, p[1] + Math.sin(back) * 9, 6);
             pen.fill(col.bright).dot(p[0] + Math.cos(back) * 8, p[1] + Math.sin(back) * 8, 2.6);
+            // One ring opens from the burn, so the eye goes to the target even with Jackal on top of it.
+            const flash = K.tween(s, e.at, e.at + S.BURN, 'out');
+            pen.stroke(col.bright, 0.8 * (1 - flash), 1.2).ring(p[0], p[1], 9 + 22 * flash);
           }
-          const shown = seen ? 1 : K.lerp(1, 0.32, K.tween(s, e.at + 0.15, e.at + 0.8));
-          satellite(p, Math.atan2(p2[1] - p[1], p2[0] - p[0]), col.bright, born * shown, false);
+          satellite(p, Math.atan2(p2[1] - p[1], p2[0] - p[0]), col.bright, born * K.lerp(0.32, 1, lit), false);
+          // Each time Jackal is given the target, brackets close on it: the same mark that ends the chase.
+          for (const at of [S.TASKED + 0.4, S.TASKED_AGAIN + 0.4]) {
+            const lock = K.pulse(t, at, at + 1.5, 0.3);
+            if (lock > 0) pen.brackets(p[0], p[1], 12 + 8 * (1 - K.tween(t, at, at + 0.5, 'out')), col.live, lock, 4);
+          }
           for (const at of FRAMES) {
             const snap = K.pulse(t, at, at + 0.45, 0.12);
             if (snap > 0) {
@@ -274,12 +304,17 @@ const def: SceneDef<S.Era[]> = {
         g.restore();
 
         /* ---- Labels ---- */
-        /** A label beside a moving mark, placed on whichever side has room. */
+        /** A label beside a moving mark. It sits outward of the globe, never on its dots: to the left of a
+            mark on the far left, otherwise to the right; below a mark in the upper part of the plate and
+            above one near the bottom. It slides from below to above, and where it changes sides it
+            draws off and on again, so that it never jumps. */
         const tie = (p: Pt, lines: string[], color: string, u: number): void => {
           if (u <= 0) return;
-          const left = p[0] > FX + FW - 250;
-          const up = p[1] > CY + 40;
-          pen.label(p[0] + (left ? -9 : 9), p[1] + (up ? -7 : 7), p[0] + (left ? -46 : 46), p[1] + (up ? -42 : 44), lines, { color, u, align: left ? 'right' : 'left' });
+          const turn = CX - 110;
+          const side = p[0] < turn ? -1 : 1;
+          const clear = K.smooth(K.clamp((Math.abs(p[0] - turn) - 2) / 14));
+          const up = K.smooth(K.clamp((p[1] - (CY + 78)) / 60));
+          pen.label(p[0] + 9 * side, p[1] + K.lerp(7, -7, up), p[0] + 46 * side, p[1] + K.lerp(44, -42, up), lines, { color, u: u * clear, align: side < 0 ? 'right' : 'left' });
         };
         pen.cap('US Space Force', ORDER[0], ORDER[1], col.ink, on * (1 - K.tween(t, HUNT, HUNT + 1)));
         pen.text('notice to launch', ORDER[0], ORDER[1] + 14, { size: 10.5, color: col.muted, alpha: on * (1 - K.tween(t, HUNT, HUNT + 1)) });
@@ -312,11 +347,21 @@ const def: SceneDef<S.Era[]> = {
           ? chased
           : [[S.TASKED_AGAIN + 0.2, 'Tasked again · July 14', col.ink], [S.PLANNED, 'Plan validated · under 30 minutes', col.live], [S.INGRESS, 'Ingress and burns · 23 minutes', col.live], ...chased];
         if (s >= log[0][0]) {
-          const shown = 1 - K.tween(s, e0 + S.LAG + S.CHASE + 3.2, e0 + S.LAG + S.CHASE + 4.2);
+          const shown = extra ? 1 - K.tween(s, e0 + S.LAG + S.CHASE + 3.2, e0 + S.LAG + S.CHASE + 4.2) : 1;
+          // A spine down the right edge with a marker for each line, so it reads as a log and the eye finds the newest entry.
+          const lx = FX + FW - 18;
+          const ly = FY + 30;
+          let reach = 0;
+          for (let i = 1; i < log.length; i++) reach += K.tween(s, log[i][0], log[i][0] + 0.3, 'out');
+          pen.stroke(col.wire, shown * K.tween(s, log[0][0], log[0][0] + 0.3), 1).vline(lx, ly - 3.5, ly - 3.5 + reach * 16);
           log.forEach(([at, text, color], i) => {
-            const a = K.tween(s, at, at + 0.3) * (extra ? shown : 1);
+            const a = K.tween(s, at, at + 0.3) * shown;
             const done = i < log.length - 1 && s >= log[i + 1][0];
-            pen.cap(text, FX + FW - 18, FY + 30 + i * 16, done ? col.faint : color, a, 'right');
+            // The newest entry's marker shrinks and grays as the next one arrives.
+            const next = i < log.length - 1 ? K.tween(s, log[i + 1][0], log[i + 1][0] + 0.3) : 0;
+            pen.fill(col.stage, a).dot(lx, ly - 3.5 + i * 16, 4.5);
+            pen.fill(done ? col.faint : color, a).dot(lx, ly - 3.5 + i * 16, K.lerp(2.6, 1.6, next));
+            pen.cap(text, lx - 11, ly + i * 16, done ? col.faint : color, a, 'right');
           });
         }
 
@@ -351,6 +396,9 @@ const def: SceneDef<S.Era[]> = {
         };
         bar(13, 'VICTUS NOX · 2023', S.RECORD_HOURS * K.tween(t, 0.3, 1.1), col.old, '27 H');
         bar(42, 'VICTUS HAZE · 2026', S.NOTICE_HOURS * counted, counted >= 1 ? col.live : col.bright, counted >= 1 ? '16 H 42 MIN' : '');
+        // The dial's scale again, flat: a tick an hour, a longer one every third, so the bars and the clock are read on one ruler.
+        cg.fillStyle = col.wire;
+        for (let h = 0; h <= S.RECORD_HOURS; h++) cg.fillRect(Math.min(w - 1, Math.round(px(h))), 54, 1, h % 3 === 0 ? 7 : 3);
       },
     };
   },

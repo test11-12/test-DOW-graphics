@@ -29,6 +29,10 @@ export interface MountOptions {
   hash?: boolean;
   heading?: boolean;
   captions?: boolean;
+  /** The line saying what the film cannot show, and its sources. Set false only if the
+      article carries them itself: on a narrow column the instrument rail, where the
+      film's own caveat sits, is not shown. */
+  notes?: boolean;
   /** Set false if the host page already provides the fonts. */
   fonts?: boolean;
 }
@@ -73,11 +77,14 @@ function create(host: Element, opts: MountOptions) {
     `<button id="replay" class="tool" type="button" aria-label="Replay from the start"><svg class="icon"><use href="#i-replay"/></svg></button>` +
     `</div>` +
     `<div class="film-foot"${opts.captions !== false ? '' : ' hidden'}><p id="caption" role="status" aria-live="polite"></p><div id="controls"></div></div>` +
+    (opts.notes !== false ? `<div class="film-notes"><p><span class="notes-label">What this cannot show</span><span id="film-caveat"></span></p><p id="film-sources"></p></div>` : '') +
     `</div>`;
   const $ = <T extends HTMLElement>(id: string): T => root.getElementById(id) as T;
   const stage = $('stage');
   const title = root.getElementById('film-title');
   const prompt = root.getElementById('film-prompt');
+  const caveat = root.getElementById('film-caveat');
+  const sources = root.getElementById('film-sources');
   let current: string | null = null;
 
   player.init(stage, $('controls'));
@@ -111,6 +118,23 @@ function create(host: Element, opts: MountOptions) {
     const p = projects.find((q) => q.id === id)!;
     if (title) title.textContent = p.title;
     if (prompt) prompt.textContent = p.prompt;
+    if (caveat) caveat.textContent = p.caveat;
+    if (sources) {
+      const label = document.createElement('span');
+      label.className = 'notes-label';
+      label.textContent = p.sources.length > 1 ? 'Sources' : 'Source';
+      sources.replaceChildren(
+        label,
+        ...p.sources.map((src) => {
+          const a = document.createElement('a');
+          a.href = src.url;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.textContent = src.label;
+          return a;
+        }),
+      );
+    }
     void player.mount(id);
     host.dispatchEvent(new CustomEvent('wins-motion:change', { detail: { project: id } }));
     return true;
@@ -176,6 +200,7 @@ const auto = (): void => {
     hash: el.hasAttribute('data-hash'),
     heading: el.getAttribute('data-heading') !== 'false',
     captions: el.getAttribute('data-captions') !== 'false',
+    notes: el.getAttribute('data-notes') !== 'false',
     fonts: el.getAttribute('data-fonts') !== 'false',
   });
 };

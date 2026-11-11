@@ -44,6 +44,7 @@ Set these as attributes on the `<div>`:
 | `data-hash` | follow the URL fragment, e.g. `#blackbeard` |
 | `data-heading="false"` | hide the headline and prompt above the stage |
 | `data-captions="false"` | hide the caption line under the timeline |
+| `data-notes="false"` | hide the line saying what the film cannot show, and its sources |
 | `data-fonts="false"` | do not load the bundled fonts |
 
 The stage has its own play button, timeline, speed control and replay.
@@ -74,6 +75,9 @@ In React or similar, call `WinsMotion.mount(ref.current, …)` once in an effect
 
 The widget renders inside a shadow root, so the site's CSS cannot break it and its CSS
 cannot leak out. It takes the full width of its container and keeps a 1280:520 stage.
+In a column narrower than 520 px (a phone held upright) it shows the plate alone, at
+872:478, and leaves the instrument rail out: the whole stage at that width would be too
+small to read.
 It brings its own dark ground, so it reads the same on a light page.
 
 To match a site's palette, set these custom properties on the host element. Use
