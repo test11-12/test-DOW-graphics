@@ -56,7 +56,7 @@ ${WAVES}
 uniform sampler2D tScene, tDepth, tSky, tAmbient, tDetail, tRefl, tReflDepth, tWake, tShadow;
 uniform mat4 uInvProj, uReflVP, uShadowMat; uniform mat3 uCamRot;
 uniform vec4 uWakeRegion; uniform vec3 uOrigin, uSunColor, uWaterCol, uFoamCol, uShadowK; uniform vec2 uRes;
-uniform float uPixAngle, uReflOn, uFogK, uDetailAmp, uGlitter, uThermal, uSparkle, uWhitecap, uSlick;
+uniform float uPixAngle, uReflOn, uFogK, uDetailAmp, uGlitter, uThermal, uSparkle, uWhitecap, uSlick; uniform int uShadeWaves;
 uniform vec3 uCloudK;     // cloud layer for reflections and shadows: mid altitude (m), shadow strength, reflection strength
 uniform vec2 uPh[NS]; uniform float uSc[NS];
 ${CLOUD_COVER}
@@ -135,6 +135,7 @@ void main(){
   // resolved wave slopes, plus the slope variance of everything too fine to resolve
   vec2 slope = vec2(0.0); float var = 0.0, pinch = 0.0;
   for (int i=0;i<NW;i++){
+    if (i >= uShadeWaves) break;
     vec4 A = uWA[i]; vec2 B = uWB[i];
     float att = clamp(1.0-fp*A.z*0.32, 0.0, 1.0);
     float ka = A.z*A.w*(i >= 8 ? calm : 1.0);
@@ -311,7 +312,7 @@ function ringGeometry(cols, rings) {
 
 export class Ocean {
   constructor(pipe, o = {}) {
-    this.pipe = pipe;
+    this.pipe = pipe; this.profName = 'sea';
     const S = pipe.shared, A = pipe.atmo.uniforms;
     this.wakeSize = o.wakeSize || 1024;
     this.rtWake = new THREE.WebGLRenderTarget(this.wakeSize, this.wakeSize, { type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: false, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter });
@@ -335,7 +336,7 @@ export class Ocean {
       uOrigin: S.uOrigin, uSunColor: S.uSunColor, uTime: S.uTime,
       uWaterCol: { value: new THREE.Vector3(0.018, 0.06, 0.066) }, uFoamCol: { value: new THREE.Vector3(0.86, 0.9, 0.92) },
       uPixAngle: { value: 0.001 }, uReflOn: { value: 0 }, uFogK: { value: 0 }, uDetailAmp: { value: 1 }, uGlitter: { value: 1 }, uThermal: { value: 0 }, uChop: mu.uChop,
-      uSparkle: { value: 0.8 }, uWhitecap: { value: 0 }, uSlick: { value: 0.6 }, uCloudK: this.cloudK,
+      uSparkle: { value: 0.8 }, uWhitecap: { value: 0 }, uSlick: { value: 0.6 }, uCloudK: this.cloudK, uShadeWaves: { value: NW },
       uCov: cl ? cl.cover.uCov : { value: new THREE.Vector4(0, 1, 0, 0) }, uCovHole: cl ? cl.cover.uCovHole : { value: new THREE.Vector4(0, 0, 1, 0) },
       uWA: mu.uWA, uWB: mu.uWB, uCalm: mu.uCalm, uCalmK: mu.uCalmK,
       uPh: { value: Array.from({ length: NS }, () => new THREE.Vector2()) }, uSc: { value: this.scales },
@@ -486,6 +487,7 @@ export class Ocean {
     if (!this.geos[gk]) { const rings = [0]; let rr = 0.25; const kk = 1 + 0.034 / q; while (rr < 560000) { rings.push(rr); rr *= kk; } rings.push(rr); this.geos[gk] = ringGeometry(cols, rings); }
     this.mesh.geometry = this.geos[gk];
     // look of the water this frame
+    U.uShadeWaves.value = opt.shadeWaves ?? NW;
     U.uGlitter.value = opt.glitter ?? 1; U.uSparkle.value = opt.sparkle ?? 0.8; U.uWhitecap.value = opt.whitecap ?? 0; U.uSlick.value = opt.slick ?? 0.6; U.uDetailAmp.value = opt.detail ?? 1;
     if (opt.water) U.uWaterCol.value.set(opt.water[0], opt.water[1], opt.water[2]);
     const cl = this.clouds, cs = opt.cloudShadow ?? (cl ? 0.75 : 0), cr = opt.cloudReflect ?? (cl ? 0.9 : 0);

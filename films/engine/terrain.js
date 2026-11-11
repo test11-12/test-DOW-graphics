@@ -297,7 +297,7 @@ export class Terrain {
     this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
     this.mesh.frustumCulled = false; this.mesh.layers.set(LAYER.STATIC); this.mesh.matrixAutoUpdate = false;
     pipe.scene.add(this.mesh);
-    pipe.deferred.push(this);
+    this.profName = 'terrain'; pipe.deferred.push(this);
     this.bakedSun = new THREE.Vector3();
   }
   // deferred hook: called by the pipeline after the opaque scene pass

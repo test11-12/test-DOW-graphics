@@ -286,6 +286,7 @@ startFilm({
     O.wakes = trs.map(tr => ({ pos: (time, out) => { const p = tr(time); return out.set(p.x, 0, p.z); }, beam: 1.25 }));
     updateBlasts(film, t, !!shot.blasts);
     const lead = trs[0] && trs[0](t), wa = shot.wakeAt ? shot.wakeAt(t) : (lead ? [lead.x, lead.z + 40] : null);
-    O.update(t, { wake: wa ? { x: wa[0], z: wa[1], size: shot.wakeSize || 200 } : null, reflect: !film.off.has('refl'), whitecap: 0.34, thermal: th, cloudsOn: !th, ...(shot.sea || {}) });
+    const off = film.off;   // dev switches for profiling: ?off=refl,wake,seaclouds,sparkle,whitecap
+    O.update(t, { wake: wa && !off.has('wake') ? { x: wa[0], z: wa[1], size: shot.wakeSize || 200 } : null, reflect: !off.has('refl'), whitecap: off.has('whitecap') ? 0 : 0.34, thermal: th, cloudsOn: !th && !off.has('seaclouds'), shadeWaves: +film.params.get('waves') || 14, ...(shot.sea || {}), ...(off.has('sparkle') ? { sparkle: 0 } : {}) });
   },
 });

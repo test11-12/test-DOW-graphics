@@ -921,8 +921,7 @@ export class Pipeline {
 
     // 3. deferred lighting of depth-only geometry (terrain): one evaluation per pixel
     let sceneTex = this.rtScene.texture, dT = this.rtB;
-    for (const d of this.deferred) if (d.shade(r, sceneTex, dT)) { sceneTex = dT.texture; dT = dT === this.rtB ? this.rtC : this.rtB; }
-    this.mark('deferred');
+    for (const d of this.deferred) { if (d.shade(r, sceneTex, dT)) { sceneTex = dT.texture; dT = dT === this.rtB ? this.rtC : this.rtB; } this.mark('deferred.' + (d.profName || d.constructor.name)); }
 
     // 4. ambient occlusion (half resolution, edge-aware blur)
     const ua = this.pAtmo.u, ao = post.ao === false ? null : (post.ao || {});
