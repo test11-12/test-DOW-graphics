@@ -11,6 +11,8 @@ import { attitude } from '../engine/geo.js';
 import { makePlume, makeHeatHaze, makeShockCone } from '../engine/fx.js';
 import { NM_TERRAIN, FIELD_ALT } from './terrain_nm.js';
 import { buildQuarterhorse, QH } from './quarterhorse_model.js';
+import { buildScrub } from './scrub.js';
+import { SCRUB_ATLAS } from './scrub_atlas_quarterhorse.js';
 
 const NARRATION = __NARRATION__;
 const D = Math.PI / 180;
@@ -21,110 +23,18 @@ const RWY_START_Z = 1700;                    // brake-release point, south end; 
 // ------------------------------------------------------------------ airfield
 function buildAirfield(pipe) {
   const g = new THREE.Group(); g.name = 'airfield';
-  // scrub: creosote and dry grass across the levelled basin floor
-  const rnd = (() => { let s = 20260526; return () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
-  const lumpy = (detail, amt) => { const b = new THREE.IcosahedronGeometry(1, detail); const p = b.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), k = 1 + amt * Math.sin(x * 7.1 + y * 3.3) * Math.cos(z * 5.7 + x * 2.1); p.setXYZ(i, x * k, Math.max(y, -0.25) * k, z * k); } b.computeVertexNormals(); return b; };
-  const N = pipe.quality.lowTerrain ? 30000 : 130000;
-  // scrub is lit per vertex with a tiny shader: there are ~100k of them and each covers only a few pixels
-  const bushMat = new THREE.ShaderMaterial({
-    uniforms: { uSunDir: pipe.shared.uSunDir, uSunColor: pipe.shared.uSunColor, tAmbient: pipe.shared.tAmbient },
-    vertexShader: `
-      #include <common>
-      #include <logdepthbuf_pars_vertex>
-      uniform vec3 uSunDir, uSunColor; uniform sampler2D tAmbient; varying vec3 vSun, vAmb, vP; varying float vRim;
-      void main(){
-        vec4 wp = modelMatrix*instanceMatrix*vec4(position,1.0);
-        vec3 n = normalize(mat3(modelMatrix)*mat3(instanceMatrix)*normalize(position));
-        float up = clamp(position.y*0.7+0.5, 0.0, 1.0);                 // darker towards the base (self-shadowing)
-        float nl = max(dot(n, uSunDir), 0.0)*0.8+0.2*max(dot(n, uSunDir)*0.5+0.5, 0.0);
-        vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb;
-        vSun = instanceColor*0.3183*uSunColor*nl*(0.3+0.7*up); vAmb = instanceColor*0.3183*amb*(0.3+0.7*up);
-        vP = position*(4.0+3.0*fract(instanceColor.r*91.7));
-        vec4 mv = viewMatrix*wp;
-        vRim = abs(dot(normalize(mat3(viewMatrix)*n), normalize(-mv.xyz)));
-        gl_Position = projectionMatrix*mv;
-        #include <logdepthbuf_vertex>
-      }`,
-    fragmentShader: `
-      #include <common>
-      #include <logdepthbuf_pars_fragment>
-      varying vec3 vSun, vAmb, vP; varying float vRim;
-      float h3(vec3 p){ p = fract(p*0.3183099+0.1); p *= 17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
-      void main(){
-        vec3 c = floor(vP*2.6); float a = h3(c), b = h3(c+7.3);
-        if (vRim < 0.5 && a > vRim*1.7+0.12) discard;               // ragged, twiggy silhouette
-        #include <logdepthbuf_fragment>
-        float gap = step(0.3, b);                                    // gaps between leaf clumps fall into shade
-        gl_FragColor = vec4(vSun*(0.25+0.95*gap)*(0.7+0.6*a)+vAmb*(0.55+0.45*gap), 1.0);
-      }`,
-  });
-  const bushGeo = lumpy(1, 0.34), cells = new Map();
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
-  const patch = (x, z) => 0.5 + 0.5 * Math.sin(x * 0.011 + Math.sin(z * 0.004) * 2.1) * Math.cos(z * 0.0075 + Math.sin(x * 0.006) * 1.7);
-  let n = 0, guard = 0;
-  while (n < N && guard++ < N * 30) {
-    const near = rnd() < 0.72, x = (rnd() * 2 - 1) * (near ? 420 : 860), z = (rnd() * 2 - 1) * 2280;
-    if (Math.abs(x) < 42 || (x < -30 && x > -350 && z > -1700 && z < -1500) || Math.abs(x + 58) < 9 || (x > -62 && x < -38 && z > RWY_START_Z + 8 && z < RWY_START_Z + 36)) continue;
-    if (rnd() > 0.25 + 0.75 * patch(x, z)) continue;
-    const grass = rnd() < 0.3, w = grass ? 0.16 + rnd() * 0.2 : 0.28 + rnd() * 0.5, h = grass ? 0.2 + rnd() * 0.22 : w * (0.6 + rnd() * 0.6);
-    ps.set(x, h * 0.2, z); q.setFromAxisAngle(up, rnd() * 6.28); sc.set(w, h, w * (0.8 + rnd() * 0.4));
-    m4.compose(ps, q, sc);
-    if (grass) col.setRGB(0.36 + rnd() * 0.12, 0.31 + rnd() * 0.1, 0.18 + rnd() * 0.06); else { const k = rnd(); col.setRGB(0.05 + k * 0.035, 0.06 + k * 0.035, 0.034 + k * 0.02); }
-    const key = Math.floor((x + 900) / 180) + 64 * Math.floor((z + 2300) / 180);
-    if (!cells.has(key)) cells.set(key, []);
-    cells.get(key).push({ m: m4.clone(), c: col.clone(), w, h, x, z }); n++;
-  }
-  // one instanced mesh per 180 m cell, so the renderer can skip cells outside the view
-  const bush = new THREE.Group(); bush.name = 'scrub';
-  // long low-sun shadows: one soft dark streak per plant, laid on the ground away from the sun. They darken the
-  // terrain placeholder (alpha = shadow strength), so the deferred terrain pass lights that much less of it.
-  const sd = pipe.atmo.sunDir, sh = Math.hypot(sd.x, sd.z), tanEl = Math.max(sd.y / sh, 0.05), ax = -sd.x / sh, az = -sd.z / sh;
-  const shGeo = new THREE.PlaneGeometry(1, 1); shGeo.rotateX(-Math.PI / 2); shGeo.translate(0.5, 0, 0);
-  const shMat = new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.ZeroFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
-    blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
-    vertexShader: `
-      #include <common>
-      #include <logdepthbuf_pars_vertex>
-      varying vec2 vUv;
-      void main(){
-        vUv = uv;
-        gl_Position = projectionMatrix*viewMatrix*modelMatrix*instanceMatrix*vec4(position,1.0);
-        #include <logdepthbuf_vertex>
-      }`,
-    fragmentShader: `
-      #include <common>
-      #include <logdepthbuf_pars_fragment>
-      varying vec2 vUv;
-      void main(){
-        #include <logdepthbuf_fragment>
-        float across = 1.0-smoothstep(0.12, 0.5, abs(vUv.y-0.5)*(1.0+vUv.x*0.5));
-        float along = smoothstep(0.0, 0.06, vUv.x)*(1.0-smoothstep(0.45, 1.0, vUv.x));
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 0.62*across*along);
-      }`,
-  });
-  const bx = new THREE.Vector3(), by = new THREE.Vector3(0, 1, 0), bz = new THREE.Vector3();
-  for (const [key, list] of cells) {
-    const im = new THREE.InstancedMesh(bushGeo, bushMat, list.length), sm = new THREE.InstancedMesh(shGeo, shMat, list.length);
-    let cx = 0, cz = 0;
-    list.forEach((it, k) => {
-      im.setMatrixAt(k, it.m); im.setColorAt(k, it.c); cx += it.x; cz += it.z;
-      const L = Math.min(1.25 * it.h / tanEl, 16), wd = it.w * 1.9;
-      bx.set(ax * L, 0, az * L); bz.set(-az * wd, 0, ax * wd); m4.makeBasis(bx, by, bz); m4.setPosition(it.x - ax * it.w * 0.4, 0.03, it.z - az * it.w * 0.4);
-      sm.setMatrixAt(k, m4);
-    });
-    im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; im.computeBoundingSphere(); im.frustumCulled = true;
-    sm.instanceMatrix.needsUpdate = true; sm.computeBoundingSphere(); sm.frustumCulled = true; sm.renderOrder = 2;
-    im.userData = sm.userData = { cx: cx / list.length, cz: cz / list.length, n: list.length };
-    bush.add(im, sm);
-  }
-  g.add(bush);
+  // scrub: creosote, mesquite, snakeweed and dry grass from photoscanned plants, pre-lit for this sunrise in Cycles
+  // (blender/scrub.py), each with its baked long shadow and contact occlusion on the ground (src/scrub.js)
+  const bush = new THREE.Group(); bush.name = 'scrub-root'; g.add(bush);
+  const terrain = pipe.deferred.find(d => d.heightUniforms);
+  const field = { group: g, bush, scrub: null, updateScrub: () => 0 };
+  field.ready = buildScrub(pipe, { atlas: SCRUB_ATLAS, terrain, clouds: pipe.clouds }).then(s => { field.scrub = s; bush.add(s.group); field.updateScrub = (cam, film) => s.update(cam, film); });
 
   // buildings on the west apron
   const bld = (x, z, w, d, h, c) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, metalness: 0.1 })); m.position.set(x, h / 2 - 0.1, z); g.add(m); return m; };
   bld(-640, -1650, 70, 110, 13, 0x8a8478); bld(-600, -1790, 24, 30, 7, 0x9a958c); bld(-720, -1560, 40, 28, 9, 0x6f6a62); bld(-560, -1500, 10, 10, 20, 0xa7a39b);
   g.traverse(o => { if (o.isMesh) { o.layers.set(LAYER.STATIC); o.castShadow = false; } });
-  return { group: g, bush, cells };
+  return field;
 }
 
 // ------------------------------------------------------------------ flight profile (illustrative; peak as reported)
@@ -178,6 +88,7 @@ async function build(film) {
   pipe.registerDynamic(ac);
   if (film.off.has('cshadow')) CLOUDS.shadow = GROUND_CLOUDS.shadow = 0;
   if (film.off.has('clouds')) { CLOUDS.cover = GROUND_CLOUDS.cover = 0; CLOUDS.shadow = GROUND_CLOUDS.shadow = 0; }
+  await Promise.all([terrain.ready, field.ready]);   // photoscanned ground layers and scrub atlases
   W = { terrain, field, ac, plume, haze, shocks, clouds };
   return W;
 }
@@ -342,14 +253,7 @@ startFilm({
   build, shots, cues, buildHud, updateHud, score,
   frame(t, shot, lt, film, c) {
     W.terrain.update(shot.terrain); W.field.bush.visible = shot.terrain === 'ground' && !film.off.has('scrub');
-    if (W.field.bush.visible) { // thin the scrub out with distance: plants under about a pixel are skipped
-      const pxPerM = film.pipe.h / (2 * Math.tan(c.fov * Math.PI / 360));
-      for (const im of W.field.bush.children) {
-        const u = im.userData, d = Math.hypot(u.cx - c.pos.x, u.cz - c.pos.z, FIELD_ALT - c.pos.y);
-        const f = clamp((0.55 * pxPerM / Math.max(d - 130, 30) - 0.8) / 1.7, 0, 1);
-        im.count = Math.round(u.n * f); im.visible = im.count > 0;
-      }
-    }
+    if (W.field.bush.visible) W.field.updateScrub(film.pipe.camera, film);   // per-cell instance counts: plants under about a pixel are skipped
     if (film.off.size) { // dev profiling switches
       if (film.off.has('env')) film.pipe.scene.environment = null;
       if (film.off.has('ac')) W.ac.visible = false;

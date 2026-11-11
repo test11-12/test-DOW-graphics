@@ -5,6 +5,121 @@
 import * as THREE from 'three';
 import { NOISE, DEPTH, FSQ_VERT } from './glsl.js';
 import { Pass, LAYER, RG } from './pipeline.js';
+import { loadTexture } from './assets.js';
+
+// ---------------------------------------------------------------- photoscanned material layers (optional)
+// recipe.layers = [{ name, albedo, normal, orm, scale, rotate, sharp, hcontrast }]: packed textures (paths under
+// films/assets), scale = metres per texture tile (the scan's real size), rotate = random rotation per hex cell
+// (0..1; 0 for directional textures), sharp / hcontrast = hex-blend sharpness and height weighting.
+// File layouts: albedo RGB (sRGB); normal OpenGL tangent space, either standard RGB or one grey image twice as wide
+// as tall (left half x, right half y); orm R occlusion, G roughness, A height (0..1).
+// All layers are packed at load into two texture arrays (A: albedo + height, B: normal xy + roughness + occlusion),
+// so any number of layers costs two samplers.
+const HEXS = 3.4641016151377544;   // 2*sqrt(3): hex cells are about 0.58 texture tiles across
+const LAYERS_GLSL = names => /* glsl */`
+#define TERRAIN_LAYERS 1
+#define TERRAIN_NLAYERS ${names.length}
+${names.map((n, i) => `#define L_${n.toUpperCase()} ${i}`).join('\n')}
+uniform highp sampler2DArray tLayerA, tLayerB;
+uniform vec4 uLayerK[${names.length}];   // x: texture tiles per metre, y: random rotation 0..1, z: hex sharpness, w: height weighting
+uniform vec4 uLayerP[${names.length}];   // xy: camera position in the skewed hex lattice (fraction), zw: texture phase at the lattice anchor
+uniform ivec2 uLayerI[${names.length}];  // integer lattice anchor, so the per-cell random transforms stay fixed to the world
+uniform vec4 uLayerMA[${names.length}], uLayerMB[${names.length}];   // each layer's mean (albedo + height, normal + roughness + occlusion)
+// Lighting inputs a recipe sets through surfApply(); tRough < 0 keeps the default terrain lighting.
+float tRough = -1.0, tAO = 1.0, tF0 = 0.03, tFp = 1.0, tW = 0.0;   // tW: weight of the layered lighting (fade it out where the recipe hands over to its own far-field look)
+// A sampled surface. d: slope perturbation in world (x, z), added to the normal as N += vec3(d.x, 0.0, d.y).
+struct Surf { vec3 alb; float h; vec2 d; float rough; float ao; };
+uvec2 lPcg(uvec2 v){ v = v*1664525u+1013904223u; v.x += v.y*1664525u; v.y += v.x*1664525u; v ^= v>>16u; v.x += v.y*1664525u; v.y += v.x*1664525u; v ^= v>>16u; return v; }
+vec4 lRand(ivec2 c){ uvec2 h = lPcg(uvec2(c)); return vec4(float(h.x&65535u), float(h.x>>16u), float(h.y&65535u), float(h.y>>16u))/65535.0; }
+Surf surfMix(Surf a, Surf b, float t){ Surf s; s.alb = mix(a.alb, b.alb, t); s.h = mix(a.h, b.h, t); s.d = mix(a.d, b.d, t); s.rough = mix(a.rough, b.rough, t); s.ao = mix(a.ao, b.ao, t); return s; }
+// b takes over from a as t goes 0 -> 1, first where b stands proud of a (height-aware blend; soft: transition width)
+Surf surfBlendH(Surf a, Surf b, float t, float soft){
+  float ha = a.h+1.0-2.0*t, hb = b.h-1.0+2.0*t, m = max(ha, hb)-max(soft, 1e-3);
+  float wa = max(ha-m, 0.0), wb = max(hb-m, 0.0);
+  return surfMix(a, b, wb/max(wa+wb, 1e-5));
+}
+// the layer's average (measured from its last mip at load): what it converges to far away
+Surf layerMean(int k){
+  vec4 a = uLayerMA[k], b = uLayerMB[k];
+  Surf s; s.alb = a.rgb; s.h = a.a; s.d = vec2(0.0); s.rough = max(b.b, 0.93); s.ao = 1.0; return s;
+}
+vec3 layerMeanAlbedo(int k){ return uLayerMA[k].rgb; }
+// world slope from a tangent-space normal sampled with texture coords rotated by R relative to world (x, -z). The
+// layer's mean normal is taken out first: a scan's slight overall tilt, turned a different way in every hex cell,
+// would otherwise show as a patchwork under a grazing sun.
+vec2 lSlope(vec2 nt, mat2 R, int k){ vec2 n = (nt-uLayerMB[k].xy)*2.0; float nz = sqrt(max(1.0-dot(n, n), 0.25)); n = n*R; return vec2(n.x, -n.y)/nz; }
+// metres -> roughness rises as the micro-relief falls below a pixel (keeps far ground from turning glossy)
+float lRoughAt(float r, float tilesPerPx){ return mix(r, max(r, 0.93), smoothstep(0.004, 0.06, tilesPerPx)); }
+// occlusion relative to the layer's mean: local cavity contrast only (a recipe sets the overall tone by its grade)
+float lAO(float ao, int k){ return clamp(ao/max(uLayerMB[k].a, 0.3), 0.0, 1.0); }
+// layer k in a mapping of the caller's own: st in texture tiles, dx / dy its footprint per pixel, ang the rotation of
+// st relative to world (x, -z) (for per-slab offsets, directional finishes, ...). No hex tiling.
+Surf layerSampleST(int k, vec2 st, vec2 dx, vec2 dy, float ang){
+  float cs = cos(ang), sn = sin(ang); mat2 R = mat2(cs, sn, -sn, cs);
+  vec3 c = vec3(st, float(k));
+  vec4 a = textureGrad(tLayerA, c, dx, dy), b = textureGrad(tLayerB, c, dx, dy);
+  Surf s; s.alb = a.rgb; s.h = a.a; s.d = lSlope(b.xy, R, k); s.rough = lRoughAt(b.b, tFp*uLayerK[k].x); s.ao = lAO(b.a, k); return s;
+}
+// metres-per-pixel footprint axes of this pixel in world (x, -z), for building dx / dy of layerSampleST
+vec2 lFootX(){ return vec2(gGx.x, -gGx.y)*1000.0; }
+vec2 lFootY(){ return vec2(gGy.x, -gGy.y)*1000.0; }
+// layer k at this pixel, hex-tiled (Mikkelsen 2022): three world-fixed hex cells, each with its own random offset (and
+// rotation), blended by barycentric weight sharpened by height. Footprint-correct gradients; far away it fades to the
+// layer mean, which costs one cached tap.
+Surf layerSample(int k){
+  vec4 K = uLayerK[k], P = uLayerP[k];
+  float tpp = tFp*K.x;                                   // texture tiles per pixel
+  float far = smoothstep(0.035, 0.12, tpp);
+  if (far >= 1.0) return layerMean(k);
+  bool nrm = tpp < 0.05;                                 // normals, roughness and occlusion average out first
+  vec2 dX = lFootX()*K.x, dY = lFootY()*K.x;
+  vec2 u = vec2(vRel.x, -vRel.z)*K.x;
+  vec2 sk = vec2(u.x, -0.57735027*u.x+1.15470054*u.y)*${HEXS.toFixed(10)}+P.xy;
+  vec2 b0 = floor(sk), f = sk-b0; float tz = 1.0-f.x-f.y;
+  float sg = tz < 0.0 ? 1.0 : 0.0, s2 = 2.0*sg-1.0;
+  vec3 bw = vec3(-tz*s2, sg-f.y*s2, sg-f.x*s2);
+  vec2 V[3]; V[0] = b0+vec2(sg); V[1] = b0+vec2(sg, 1.0-sg); V[2] = b0+vec2(1.0-sg, sg);
+  vec2 uL = vec2(sk.x, 0.5*sk.x+0.8660254*sk.y)/${HEXS.toFixed(10)};
+  vec4 A[3], B[3]; mat2 R[3]; vec3 W = pow(bw, vec3(K.z));
+  for (int i=0;i<3;i++){
+    A[i] = vec4(0.0); B[i] = vec4(0.5, 0.5, 0.0, 1.0); R[i] = mat2(1.0);
+    if (W[i] < 0.002) continue;                          // deep inside another cell: skip the taps
+    vec4 r = lRand(ivec2(V[i])+uLayerI[k]);
+    float ang = (r.x*2.0-1.0)*3.14159265*K.y, cs = cos(ang), sn = sin(ang);
+    R[i] = mat2(cs, sn, -sn, cs);
+    vec2 ci = vec2(V[i].x, 0.5*V[i].x+0.8660254*V[i].y)/${HEXS.toFixed(10)};
+    vec3 st = vec3(R[i]*(uL-ci)+ci+r.zw+P.zw, float(k));
+    A[i] = textureGrad(tLayerA, st, R[i]*dX, R[i]*dY);
+    B[i] = nrm ? textureGrad(tLayerB, st, R[i]*dX, R[i]*dY) : uLayerMB[k];
+  }
+  W *= exp2(K.w*(vec3(A[0].a, A[1].a, A[2].a)-0.5));
+  W /= W.x+W.y+W.z;
+  Surf s;
+  s.alb = A[0].rgb*W.x+A[1].rgb*W.y+A[2].rgb*W.z; s.h = A[0].a*W.x+A[1].a*W.y+A[2].a*W.z;
+  s.d = nrm ? (lSlope(B[0].xy, R[0], k)*W.x+lSlope(B[1].xy, R[1], k)*W.y+lSlope(B[2].xy, R[2], k)*W.z)*(1.0-smoothstep(0.025, 0.05, tpp)) : vec2(0.0);
+  s.rough = lRoughAt(B[0].b*W.x+B[1].b*W.y+B[2].b*W.z, tpp); s.ao = lAO(B[0].a*W.x+B[1].a*W.y+B[2].a*W.z, k);
+  if (far > 0.0) s = surfMix(s, layerMean(k), far);
+  return s;
+}
+// write a surface into shadeTerrain's outputs; k scales the normal detail. Switches the pixel to the layered lighting.
+void surfApply(Surf s, float k, inout vec3 alb, inout vec3 N){
+  alb = s.alb; N = normalize(N+vec3(s.d.x, 0.0, s.d.y)*k); tRough = s.rough; tAO = s.ao; tW = 1.0;
+}
+`;
+const PACK_FRAG = /* glsl */`
+precision highp float;
+uniform sampler2D tAlb, tNrm, tOrm; uniform vec4 uHas; uniform int uWhich;   // uHas: normal, normal pair layout, orm, half-texel of a pair half
+varying vec2 vUv;
+void main(){
+  vec4 o = uHas.z > 0.5 ? texture2D(tOrm, vUv) : vec4(1.0, 0.85, 0.0, 0.5);
+  if (uWhich == 0){ gl_FragColor = vec4(texture2D(tAlb, vUv).rgb, o.a); return; }
+  vec2 n = vec2(0.5);
+  if (uHas.x > 0.5){
+    if (uHas.y > 0.5){ float x = clamp(vUv.x, uHas.w, 1.0-uHas.w)*0.5; n = vec2(texture2D(tNrm, vec2(x, vUv.y)).g, texture2D(tNrm, vec2(x+0.5, vUv.y)).g); }
+    else n = texture2D(tNrm, vUv).rg;
+  }
+  gl_FragColor = vec4(n, o.g, o.r);
+}`;
 
 // Slope-following erosion noise (after Fewes / Clay John): gullies and spurs that run down the fall line.
 export const EROSION = /* glsl */`
@@ -90,6 +205,10 @@ float hLod(vec2 w, float lodM){
   return mix(hf, textureLod(tHNear, (w-uNear.xy)/uNear.z+0.5, log2(max(lodM/uNear.w,1.0))).r, bn);
 }
 `;
+
+// for objects that sit on the ground (plants, decals): float hLod(vec2 worldXZ, float lodMetres) with
+// terrain.heightUniforms (tHNear, tHFar, uNear, uFar)
+export const TERRAIN_HEIGHT = TERRAIN_COMMON;
 
 // depth-only geometry. Log depth is written per vertex (triangles are small) so early-Z stays enabled.
 const TERRAIN_VERT = /* glsl */`
@@ -190,6 +309,9 @@ void main(){
   else if (bn <= 0.0){ m0 = textureLod(tM0Far, uf, lf); m1 = textureLod(tM1Far, uf, lf); }
   else { m0 = mix(textureLod(tM0Far, uf, lf), textureLod(tM0Near, un, ln), bn); m1 = mix(textureLod(tM1Far, uf, lf), textureLod(tM1Near, un, ln), bn); }
   vec3 alb; float spec = 0.0;
+#ifdef TERRAIN_LAYERS
+  tFp = fp;
+#endif
   shadeTerrain(w*0.001, h0, N, lap, m0, m1, fp, dist, alb, spec);
   N = normalize(N);
   float nl = max(dot(N, uSunDir), 0.0);
@@ -206,6 +328,22 @@ void main(){
     float fr = 0.03+0.97*pow(1.0-max(dot(V,Hh),0.0), 5.0);
     col += uSunGround*sh*nl*pow(nh, 10.0)*0.45*fr*0.35*(0.4+alb.g);
   }
+#ifdef TERRAIN_LAYERS
+  if (tW > 0.0 && tRough >= 0.0){ // photoscanned layers: cavity occlusion and micro-shadowing, GGX specular, rough sky reflection
+    float msh = mix(1.0, smoothstep(0.15, 0.95, tAO), 0.55*(1.0-nl));   // cavities lose a grazing sun first
+    vec3 cl = alb*0.3183*(uSunGround*max(on,0.0)*sh*msh + amb*ao*tAO*(0.55+0.45*N.y));
+    vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0), vh = max(dot(V,Hh),0.0);
+    float a = max(tRough*tRough, 0.03), a2 = a*a, dd = nh*nh*(a2-1.0)+1.0, D = a2/(3.14159*dd*dd);
+    float nv2 = max(nv, 0.03);
+    // Smith visibility, capped: clods and pebbles shadow and mask far more than a microfacet height field at grazing
+    // angles, so rough ground keeps a soft forward sheen instead of a mirror-like glare
+    float Vis = min(0.5/(nl*sqrt(nv2*nv2*(1.0-a2)+a2)+nv2*sqrt(nl*nl*(1.0-a2)+a2)+1e-4), mix(4.0, 0.9, smoothstep(0.55, 0.9, tRough)));
+    cl += uSunGround*sh*msh*tAO*D*Vis*(tF0+(1.0-tF0)*pow(1.0-vh, 5.0))*nl;
+    float fs = tF0+(max(1.0-tRough, tF0)-tF0)*pow(1.0-nv, 5.0);
+    cl += mix(skyRefl(reflect(-V, N)), amb*0.3183, tRough*tRough)*fs*tAO*ao;
+    col = mix(col, cl, tW);
+  }
+#endif
   if (spec < 0.0){ // pavement: a broad glossy lobe towards a low sun, and the sky's sheen at grazing angles
     float k = -spec;
     vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0), vh = max(dot(V,Hh),0.0);
@@ -224,6 +362,11 @@ void main(){
   if (uDebug == 1) col = vec3(sh);
   else if (uDebug == 2) col = N.xzy*0.5+0.5;
   else if (uDebug == 3) col = alb;
+#ifdef TERRAIN_LAYERS
+  else if (uDebug == 4) col = vec3(tAO);
+  else if (uDebug == 5) col = vec3(nl*4.0);
+  else if (uDebug == 6) col = vec3(tRough);
+#endif
   gl_FragColor = vec4(sc.rgb+col*cov, 1.0);
 }`;
 
@@ -276,7 +419,7 @@ export class Terrain {
     this.pH = new Pass(BAKE_H(recipe.height), { uCenter: { value: new THREE.Vector2() }, uExtent: { value: 1 }, uTexel: { value: 1 } });
     this.pM = new Pass(BAKE_M(recipe.height + '\n' + recipe.mask), { tH: { value: null }, uCenter: { value: new THREE.Vector2() }, uExtent: { value: 1 }, uTexel: { value: 1 }, uRes: { value: 1 }, uSunDir: pipe.atmo.uniforms.uSunDir, uWhich: { value: 0 } });
     const S = pipe.shared;
-    const heights = { tHNear: { value: this.near.h.texture }, tHFar: { value: this.far.h.texture }, uNear: { value: new THREE.Vector4() }, uFar: { value: new THREE.Vector4() } };
+    const heights = this.heightUniforms = { tHNear: { value: this.near.h.texture }, tHFar: { value: this.far.h.texture }, uNear: { value: new THREE.Vector4() }, uFar: { value: new THREE.Vector4() } };
     this.uniforms = {
       ...heights,
       tScene: { value: null }, tDepth: S.tDepth, uLogFar: S.uLogFar, uInvProj: S.uInvProj, uCamRot: S.uCamRot, uRes: S.uRes,
@@ -291,13 +434,65 @@ export class Terrain {
     };
     this.meshUniforms = { ...heights, uOrigin: S.uOrigin, uYaw: { value: 0 }, uSector: { value: Math.PI * 2 }, logDepthBufFC: { value: 2 / (Math.log(pipe.quality.far + 1) / Math.LN2) } };
     this.material = new THREE.ShaderMaterial({ vertexShader: TERRAIN_VERT, fragmentShader: TERRAIN_FRAG, uniforms: this.meshUniforms });
-    this.shadePass = new Pass(SHADE_FRAG((recipe.defines || '') + recipe.shade), this.uniforms);
+    // optional photoscanned layers: the film awaits terrain.ready before its first frame
+    const L = this.layers = recipe.layers && recipe.layers.length ? recipe.layers : null;
+    if (L) {
+      Object.assign(this.uniforms, {
+        tLayerA: { value: null }, tLayerB: { value: null },
+        uLayerK: { value: L.map(l => new THREE.Vector4(1 / l.scale, l.rotate ?? 1, l.sharp ?? 6, l.hcontrast ?? 5)) },
+        uLayerP: { value: L.map(() => new THREE.Vector4()) }, uLayerI: { value: new Int32Array(L.length * 2) },
+        uLayerMA: { value: L.map(() => new THREE.Vector4(0.3, 0.3, 0.3, 0.5)) }, uLayerMB: { value: L.map(() => new THREE.Vector4(0.5, 0.5, 0.85, 1)) },
+      });
+    }
+    this.shadePass = new Pass(SHADE_FRAG((L ? LAYERS_GLSL(L.map(l => l.name)) : '') + (recipe.defines || '') + recipe.shade), this.uniforms);
+    this.ready = L ? this.loadLayers(L) : Promise.resolve(this);
     this.geos = {};
     this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
     this.mesh.frustumCulled = false; this.mesh.layers.set(LAYER.STATIC); this.mesh.matrixAutoUpdate = false;
     pipe.scene.add(this.mesh);
     pipe.deferred.push(this);
     this.bakedSun = new THREE.Vector3();
+  }
+  // decode every layer's textures and pack them on the GPU into the two mipmapped texture arrays
+  async loadLayers(L) {
+    const pipe = this.pipe, r = pipe.renderer, n = L.length, S = this.recipe.layerSize || 1024;
+    const mk = srgb => {
+      const t = new THREE.WebGLArrayRenderTarget(S, S, n, { depthBuffer: false }), x = t.texture;
+      x.format = THREE.RGBAFormat; x.type = THREE.UnsignedByteType; x.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      x.wrapS = x.wrapT = THREE.RepeatWrapping; x.magFilter = THREE.LinearFilter; x.minFilter = THREE.LinearMipmapLinearFilter;
+      x.generateMipmaps = false;   // three.js would bind the array as TEXTURE_2D; mipmaps are generated below
+      x.anisotropy = Math.min(this.recipe.layerAniso ?? 2, pipe.maxAniso);
+      return t;
+    };
+    const A = this.layerA = mk(true), B = this.layerB = mk(false);
+    B.texture.anisotropy = 1;   // normals, roughness, occlusion: trilinear is enough (and far cheaper on a software rasteriser)
+    const tex = (name, srgb) => name ? loadTexture(name, pipe, { srgb, mips: false, aniso: 1 }) : Promise.resolve(null);
+    const src = await Promise.all(L.map(l => Promise.all([tex(l.albedo, true), tex(l.normal, false), tex(l.orm, false)])));
+    const pack = new Pass(PACK_FRAG, { tAlb: { value: null }, tNrm: { value: null }, tOrm: { value: null }, uHas: { value: new THREE.Vector4() }, uWhich: { value: 0 } });
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), u = pack.u;
+    src.forEach(([a, nm, o], k) => {
+      const pair = !!nm && nm.image.width === 2 * nm.image.height;
+      u.tAlb.value = a; u.tNrm.value = nm || a; u.tOrm.value = o || a;
+      u.uHas.value.set(nm ? 1 : 0, pair ? 1 : 0, o ? 1 : 0, nm ? 0.5 / (pair ? nm.image.height : nm.image.width) : 0);
+      u.uWhich.value = 0; r.setRenderTarget(A, k); r.render(pack.mesh, cam);
+      u.uWhich.value = 1; r.setRenderTarget(B, k); r.render(pack.mesh, cam);
+    });
+    r.setRenderTarget(null);
+    const gl = r.getContext();
+    for (const t of [A, B]) { r.state.bindTexture(gl.TEXTURE_2D_ARRAY, r.properties.get(t.texture).__webglTexture); gl.generateMipmap(gl.TEXTURE_2D_ARRAY); r.state.unbindTexture(); }
+    for (const s of src) for (const t of s) if (t) { t.image.close?.(); t.dispose(); }
+    pack.material.dispose();
+    // each layer's mean from its 1x1 mip, read back once, so shaders get it as a uniform instead of a texture tap
+    const mean = new THREE.WebGLRenderTarget(n, 2, { type: THREE.FloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    const mp = new Pass(`precision highp float; precision highp sampler2DArray; uniform sampler2DArray tA, tB; uniform float uN; varying vec2 vUv;
+      void main(){ float k = floor(vUv.x*uN); gl_FragColor = vUv.y < 0.5 ? textureLod(tA, vec3(0.5, 0.5, k), 14.0) : textureLod(tB, vec3(0.5, 0.5, k), 14.0); }`,
+    { tA: { value: A.texture }, tB: { value: B.texture }, uN: { value: n } });
+    mp.render(r, mean);
+    const px = new Float32Array(n * 2 * 4); r.readRenderTargetPixels(mean, 0, 0, n, 2, px); r.setRenderTarget(null);
+    for (let k = 0; k < n; k++) { this.uniforms.uLayerMA.value[k].fromArray(px, k * 4); this.uniforms.uLayerMB.value[k].fromArray(px, (n + k) * 4); }
+    mean.dispose(); mp.material.dispose();
+    this.uniforms.tLayerA.value = A.texture; this.uniforms.tLayerB.value = B.texture;
+    return this;
   }
   // deferred hook: called by the pipeline after the opaque scene pass
   shade(renderer, sceneTex, target) {
@@ -341,6 +536,14 @@ export class Terrain {
     mu.logDepthBufFC.value = 2 / (Math.log(cam.far + 1) / Math.LN2);
     const sc = this.uniforms.uScale.value, ph = this.uniforms.uPhase.value, o = pipe.origin;
     for (let i = 0; i < 12; i++) { const ax = o.x * 0.001 * sc[i].x, az = o.z * 0.001 * sc[i].y; ph[i].set(ax - Math.floor(ax), az - Math.floor(az)); }
+    if (this.layers) { // hex-lattice anchors in double precision: cell ids stay fixed to the world under a moving camera
+      const K = this.uniforms.uLayerK.value, P = this.uniforms.uLayerP.value, I = this.uniforms.uLayerI.value, fr = x => x - Math.floor(x);
+      for (let k = 0; k < this.layers.length; k++) {
+        const s = K[k].x, ux = o.x * s, uy = -o.z * s, sx = ux * HEXS, sy = (-0.57735027 * ux + 1.15470054 * uy) * HEXS;
+        const ix = Math.floor(sx), iy = Math.floor(sy);
+        P[k].set(sx - ix, sy - iy, fr(ix / HEXS), fr((0.5 * ix + 0.8660254 * iy) / HEXS)); I[2 * k] = ix; I[2 * k + 1] = iy;
+      }
+    }
     if (full) { mu.uYaw.value = 0; mu.uSector.value = Math.PI * 2; return; }
     // azimuth sector covering the view frustum
     cam.updateMatrixWorld();
