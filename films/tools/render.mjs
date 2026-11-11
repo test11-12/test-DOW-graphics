@@ -70,7 +70,7 @@ const missing = []; for (let i = from; i < to; i++) if (!fs.existsSync(fname(i))
 if (missing.length) { console.error('missing frames:', missing.slice(0, 20).join(','), missing.length > 20 ? '…' : ''); process.exit(1); }
 const ff = ['-y', '-v', 'error', '-framerate', String(FPS), '-start_number', String(from), '-i', path.join(dir, 'f_%06d.jpg'), '-ss', String(from / FPS), '-i', wav,
   '-frames:v', String(to - from), '-c:v', 'libx264', '-preset', 'slow', '-crf', String(opt.crf || 17), '-pix_fmt', 'yuv420p', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709',
-  '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', out];
+  '-af', 'alimiter=limit=0.82:attack=2:release=60:level=false', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', out];
 const r = spawnSync('ffmpeg', ff, { stdio: 'inherit' });
 if (r.status !== 0) process.exit(r.status || 1);
 console.log('wrote', out, (fs.statSync(out).size / 1e6).toFixed(1), 'MB in', Math.round((Date.now() - t0) / 1000), 's');
