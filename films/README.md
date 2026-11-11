@@ -16,7 +16,7 @@ card listing its sources and what is illustrative.
 
 Stated as fact (on screen or in narration) only when it appears in a primary statement or trade
 reporting: dates, places, vehicle names, counts, the Mach 1.21 peak, quoted officials. Not publicly
-released, and therefore illustrative here: times of day, altitudes, flight and approach paths, telemetry
+released, and therefore illustrative here: times of day, weather, altitudes, flight and approach paths, telemetry
 traces, camera positions, the look of sites beyond what released imagery shows. Vehicle models are built
 from released photographs; dimensions are estimates.
 
