@@ -118,7 +118,7 @@ export class Film {
     if (shot.fadeOut) fade *= 1 - smooth(shot.t1 - shot.fadeOut, shot.t1, t);
     fade *= smooth(0, this.def.fadeIn ?? 0.6, t) * (1 - smooth(this.duration - (this.def.fadeOut ?? 1.0), this.duration - 0.05, t));
     post.fade = fade; post.envKey = post.envKey ?? shot.id;
-    if (this.off.size) { if (this.off.has('ao')) post.ao = false; if (this.off.has('cirrus')) post.cirrus = null; if (this.off.has('blur')) post.shutter = 0; if (this.off.has('dof')) post.dof = null; if (this.params.get('debug')) post.debug = this.params.get('debug'); }
+    if (this.off.size) { if (this.off.has('ao')) post.ao = false; if (this.off.has('cirrus')) post.cirrus = null; if (this.off.has('blur')) post.shutter = 0; if (this.off.has('dof')) post.dof = null; if (this.off.has('rays')) post.rays = 0; if (this.off.has('bloom')) post.bloom = 0; if (this.off.has('flare')) post.flare = null; if (this.off.has('ca')) post.ca = 0; if (this.params.get('debug')) post.debug = this.params.get('debug'); }
     pipe.render(t, Math.floor(t * this.fps + 1e-6), post);
     this.updateOverlays(t, shot, lt);
   }
