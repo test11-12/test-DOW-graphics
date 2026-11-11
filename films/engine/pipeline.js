@@ -302,13 +302,20 @@ void main(){
   float ak = sky ? 1.0 : uAerial;
   vec3 col; float dist = 1.0e9;
   if (sky){
-    col = skyLut(rd, cv);
-    float cs = 0.9999892; // cos(0.00465)
-    float disk = smoothstep(cs-0.0000035, cs+0.0000015, cv);
-    if (disk > 0.0){
-      vec3 Tv = exp(-sunTau(RG+uCamAlt, rd.y));
-      float limb = 1.0-0.55*(1.0-sqrt(clamp((cv-cs)/(1.0-cs),0.0,1.0)));
-      col += uSunE*14700.0*uSunDisk*Tv*disk*limb;
+    // the scene pass already drew the sky behind everything (alpha 1); only depth-only markers of terrain or sea
+    // that this sample missed (alpha below 1, at the horizon) still need sky
+    col = sc.rgb;
+    if (sc.a < 0.999){
+      vec3 skyc = skyLut(rd, cv);
+      float cs = 0.9999892; // cos(0.00465)
+      float disk = smoothstep(cs-0.0000035, cs+0.0000015, cv);
+      if (disk > 0.0){
+        vec3 Tv = exp(-sunTau(RG+uCamAlt, rd.y));
+        float limb = 1.0-0.55*(1.0-sqrt(clamp((cv-cs)/(1.0-cs),0.0,1.0)));
+        vec3 sd = uSunE*14700.0*uSunDisk*Tv*disk*limb;
+        skyc += sd*min(1.0, 3.0e4/max(max(sd.r, max(sd.g, sd.b)), 1e-6));
+      }
+      col += skyc*(1.0-sc.a);
     }
   } else {
     float vz = viewZ(d);
@@ -334,6 +341,36 @@ void main(){
     }
   }
   gl_FragColor = vec4(max(col, vec3(0.0)), sc.a);
+}`;
+
+// The sky drawn behind everything inside the multisampled scene pass, so that the edges of objects against the
+// sky are anti-aliased against the sky itself rather than against black.
+const SKY_BG_VERT = `varying vec2 vUv; void main(){ vUv = position.xy*0.5+0.5; gl_Position = vec4(position.xy, 1.0, 1.0); }`;
+const SKY_BG_FRAG = /* glsl */`
+precision highp float;
+${ATMOSPHERE}
+uniform sampler2D tSky; uniform mat4 uInvProj; uniform mat3 uCamRot; uniform float uCamAlt, uSunDisk;
+varying vec2 vUv;
+vec3 skyLut(vec3 d, float cv){
+  vec2 uv = skyUV(d); float v = clamp(uv.y, 0.004, 0.996);
+  return texture2D(tSky, vec2(uv.x,(v+0.0)/3.0)).rgb*phaseR(cv)
+       + texture2D(tSky, vec2(uv.x,(v+1.0)/3.0)).rgb*phaseM(cv)
+       + texture2D(tSky, vec2(uv.x,(v+2.0)/3.0)).rgb;
+}
+void main(){
+  vec4 q = uInvProj*vec4(vUv*2.0-1.0, 1.0, 1.0);
+  vec3 rd = normalize(uCamRot*normalize(q.xyz/q.w));
+  float cv = dot(rd, uSunDir);
+  vec3 col = skyLut(rd, cv);
+  float cs = 0.9999892; // cos(0.00465)
+  float disk = smoothstep(cs-0.0000035, cs+0.0000015, cv);
+  if (disk > 0.0){
+    vec3 Tv = exp(-sunTau(RG+uCamAlt, rd.y));
+    float limb = 1.0-0.55*(1.0-sqrt(clamp((cv-cs)/(1.0-cs),0.0,1.0)));
+    vec3 sd = uSunE*14700.0*uSunDisk*Tv*disk*limb;
+    col += sd*min(1.0, 3.0e4/max(max(sd.r, max(sd.g, sd.b)), 1e-6));   // stay inside half-float range, keep the hue
+  }
+  gl_FragColor = vec4(col, 1.0);
 }`;
 
 const VEL_VERT = /* glsl */`
@@ -453,7 +490,7 @@ precision highp float;
 uniform sampler2D tColor, tVelFull; uniform vec3 uDof;  // focus distance (m), px of blur per unit (z-S)/z, max blur (px)
 varying vec2 vUv;
 void main(){
-  vec3 c = min(texture2D(tColor, vUv).rgb, vec3(4.0e3));
+  vec3 c = texture2D(tColor, vUv).rgb; c *= min(1.0, 4.0e3/max(max(c.r, max(c.g, c.b)), 1e-6));
   float z = texture2D(tVelFull, vUv).z;
   gl_FragColor = vec4(c, clamp((z-uDof.x)/z*uDof.y, -uDof.z, uDof.z)*0.5);
 }`;
@@ -491,7 +528,8 @@ void main(){
   vec4 q = uInvProj*vec4(vUv*2.0-1.0, 1.0, 1.0);
   vec3 rd = normalize(uCamRot*normalize(q.xyz/q.w));
   float m = step(0.999999, texture2D(tDepth, vUv).x)*pow(max(dot(rd,uSunDir), 0.0), 20.0);
-  gl_FragColor = vec4(min(texture2D(tColor, vUv).rgb, vec3(80.0))*m, 1.0);
+  vec3 c = texture2D(tColor, vUv).rgb;
+  gl_FragColor = vec4(c*min(1.0, 80.0/max(max(c.r, max(c.g, c.b)), 1e-6))*m, 1.0);   // cap brightness, keep the sun's hue
 }`;
 const RAY_BLUR_FRAG = /* glsl */`
 precision highp float;
@@ -535,7 +573,7 @@ void main(){
     // anamorphic streak: long, thin, fading smoothly
     vec3 st = vec3(0.0); float ws = 0.0;
     for (int i=-32;i<=32;i++){ float w = exp(-abs(float(i))/7.0); st += thr(vUv+vec2(float(i)*uTexel.x*2.2, 0.0))*w; ws += w; }
-    res += st/ws*vec3(0.5,0.7,1.0)*uK.z;
+    res += st/ws*vec3(0.78,0.88,1.0)*uK.z*0.45;   // a faint, nearly neutral streak: documentary glass, not a stylised anamorphic
   }
   gl_FragColor = vec4(res, 1.0);
 }`;
@@ -543,7 +581,7 @@ const BLOOM_DOWN_FRAG = /* glsl */`
 precision highp float;
 uniform sampler2D tIn; uniform vec2 uTexel; uniform float uFirst;
 varying vec2 vUv;
-vec3 S(vec2 o){ return min(texture2D(tIn, vUv+o*uTexel).rgb, vec3(6.0e3)); }
+vec3 S(vec2 o){ vec3 c = texture2D(tIn, vUv+o*uTexel).rgb; return c*min(1.0, 6.0e3/max(max(c.r, max(c.g, c.b)), 1e-6)); }   // cap brightness, keep hue
 float kw(vec3 c){ return 1.0/(1.0+max(c.r,max(c.g,c.b))*uFirst); }
 void main(){
   vec3 a=S(vec2(-2,2)), b=S(vec2(0,2)), c=S(vec2(2,2)), d=S(vec2(-2,0)), e=S(vec2(0,0)), f=S(vec2(2,0)),
@@ -701,6 +739,12 @@ export class Pipeline {
       uCirrus: { value: new THREE.Vector4(10500, 0, 0, 1) }, uCirrusWind: { value: new THREE.Vector2() },
       uCloud: { value: new THREE.Vector4(0, 3000, 5000, 0) }, uAOk: { value: new THREE.Vector3(0, 1, 1) },
     });
+    this.skyQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+      vertexShader: SKY_BG_VERT, fragmentShader: SKY_BG_FRAG, depthWrite: false,
+      uniforms: { ...A, tSky: shared.tSky, uInvProj: shared.uInvProj, uCamRot: shared.uCamRot, uCamAlt: shared.uCamAlt, uSunDisk: this.pAtmo.u.uSunDisk },
+    }));
+    this.skyQuad.frustumCulled = false; this.skyQuad.renderOrder = -1e9; this.skyQuad.layers.set(LAYER.STATIC); this.skyQuad.name = 'sky-background';
+    this.scene.add(this.skyQuad);
     this.velMat = new THREE.ShaderMaterial({ vertexShader: VEL_VERT, fragmentShader: VEL_FRAG, uniforms: { uPrevMVP: { value: new THREE.Matrix4() } }, side: THREE.DoubleSide });
     this.velMat.isVelocityMaterial = true;
     this.pVelFull = new Pass(VELFULL_FRAG, { tDepth: shared.tDepth, tVel: { value: null }, uInvProj: shared.uInvProj, uPrevVP: { value: this.prevVP }, uCamRot: shared.uCamRot, uLogFar: shared.uLogFar });
@@ -858,7 +902,8 @@ export class Pipeline {
     this.pAp.u.uWhich.value = 1; this.pAp.render(r, this.rtApT);
     this.mark('sky+env');
 
-    // 1. opaque scene
+    // 1. opaque scene (the sky background reads the sun-disk strength)
+    this.pAtmo.u.uSunDisk.value = post.sunDisk ?? 0.05;
     cam.layers.set(LAYER.STATIC); cam.layers.enable(LAYER.DYNAMIC);
     r.shadowMap.needsUpdate = true;
     r.setRenderTarget(this.rtScene); r.setClearColor(0x000000, 1); r.clear();
@@ -876,8 +921,7 @@ export class Pipeline {
 
     // 3. deferred lighting of depth-only geometry (terrain): one evaluation per pixel
     let sceneTex = this.rtScene.texture, dT = this.rtB;
-    for (const d of this.deferred) if (d.shade(r, sceneTex, dT)) { sceneTex = dT.texture; dT = dT === this.rtB ? this.rtC : this.rtB; }
-    this.mark('deferred');
+    for (const d of this.deferred) { if (d.shade(r, sceneTex, dT)) { sceneTex = dT.texture; dT = dT === this.rtB ? this.rtC : this.rtB; } this.mark('deferred.' + (d.profName || d.constructor.name)); }
 
     // 4. ambient occlusion (half resolution, edge-aware blur)
     const ua = this.pAtmo.u, ao = post.ao === false ? null : (post.ao || {});
