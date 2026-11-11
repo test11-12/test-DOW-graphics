@@ -132,10 +132,10 @@ def hull_section(x, ys, zs):
     Lb = float(np.linalg.norm(C - K))
     t = (C - K) / Lb if Lb > 1e-6 else np.array([1.0, 0.0])
     e = clamp(b / 0.35)
-    es = clamp((b - 0.25) / 0.35)
+    es = clamp((b - 0.14) / 0.30)
     pts = [K, K + t * min(0.02, Lb * 0.1), K + t * Lb * 0.19]
     for f, mid in ((0.36, 0.52), (0.68, 0.86)):
-        ws = 0.032 * es
+        ws = 0.036 * es
         A, A2 = K + t * (f * Lb - ws), K + t * (f * Lb + ws)
         B = np.array([A2[0], A[1]])
         pts += [A, B - np.array([0.008 * es, 0.0]), B + np.array([0.0, 0.008 * es]), A2, K + t * Lb * mid]
@@ -222,14 +222,15 @@ def build_shell():
     if tr.data.polygons[0].normal.x > 0:
         tr.data.flip_normals()
     hull.append(tr)
-    # rub rail: a D-section with a fastener groove, swept round the sheer
+    # deck-edge flange (the photographs show a hull-grey flange with a thin shadow line under it, not a black
+    # rubber rail): 40 mm deep, 29 mm proud, rolled outer face, flat underside, swept round the sheer
     idx = list(range(n - 1, 0, -1))
-    path = [(st['sx'][i], -st['sy'][i], st['sz'][i] - 0.022) for i in idx] + [(st['sx'][i], st['sy'][i], st['sz'][i] - 0.022) for i in range(n)]
+    path = [(st['sx'][i], -st['sy'][i], st['sz'][i] - 0.018) for i in idx] + [(st['sx'][i], st['sy'][i], st['sz'][i] - 0.018) for i in range(n)]
     out = [(st['nx'][i], -st['ny'][i], 0.0) for i in idx] + [(st['nx'][i], st['ny'][i], 0.0) for i in range(n)]
     up = [(0.0, 0.0, 1.0)] * len(path)
-    D = [(-0.022, -0.037), (0.014, -0.037), (0.030, -0.028), (0.037, -0.013), (0.037, -0.006), (0.032, -0.004), (0.032, 0.004),
-         (0.037, 0.006), (0.037, 0.013), (0.030, 0.028), (0.014, 0.037), (-0.004, 0.037)]
-    rail = k.sweep('rubrail', path, out, up, D, closed=True, caps=True, flip=True, kind='rubber', atlas='gear', cuts=list(range(18, len(path) - 4, 18)))
+    D = [(-0.016, -0.0195), (0.010, -0.0195), (0.019, -0.0170), (0.025, -0.0120), (0.0285, -0.0050), (0.0290, 0.0020), (0.0280, 0.0090),
+         (0.0240, 0.0150), (0.0170, 0.0190), (0.0080, 0.0205), (-0.006, 0.0205)]
+    rail = k.sweep('rubrail', path, out, up, D, closed=True, caps=True, flip=True, kind='railpaint', atlas='gear', cuts=list(range(18, len(path) - 4, 18)))
     info.rail_path, info.rail_out = np.array(path), np.array(out)
     info.x = st['x']
     return hull, deck, [rail], info
@@ -292,60 +293,66 @@ def hatch_frame(tag, outline, tz):
 
 
 def gunwale_cable(info):
-    """The black cable the photographs show running from the forward mast leg over the cowl shoulder, along the
-    top of the gunwale and over the side to a padeye near the bow, held by saddle clips."""
-    out = []
+    """The black cable the photographs show on each side: from a band on the forward mast leg it drops over the
+    cowl shoulder and the gunwale near the step, then runs forward along the outside of the topside just under
+    the deck-edge flange, sagging between saddle clips, to a padeye and shackle near the stem. Built on the port
+    side and mirrored."""
     R = 0.0065
     st = info.st
     r = slice(None, None, -1)
     zsh_at = lambda x: float(np.interp(x, st['x'][r], info.zsh[r]))
-    for s in (1, -1):
-        def rim(x, lift=0.0):
-            e = 0.01
-            t = Vector((2 * e, bg(x + e) - bg(x - e), 0.0)).normalized()
-            n = Vector((-t.y, t.x, 0.0))
-            p = Vector((x, bg(x), zg(x))) - n * 0.056
-            return Vector((p.x, p.y * s, p.z + 0.032 + R + lift))
-        leg_a = Vector((-0.56, 0.62 * s, info.top_z(-0.56, 0.62)))
-        leg_b = Vector((-0.86, 0.36 * s, 1.50))
-        p0 = leg_a.lerp(leg_b, 0.32) + Vector((0.0, 0.026 * s, 0.0))
-        xs = -0.15
-        bt = info.bt_at(xs)
-        sh = Vector((xs, (bt + 0.010) * s, zsh_at(xs) + R + 0.002))
-        pts = [p0, p0.lerp(sh, 0.5) + Vector((0, 0, -0.015)), sh]
-        # down the cowl chamfer, lying on it, to the gutter, then up onto the rim
-        x1 = 0.55
-        for t in (0.25, 0.5, 0.75):
-            x = xs + (x1 - xs) * t
-            bt = info.bt_at(x)
-            yi = info.yi_at(x)
-            y = bt + 0.02 + (yi - bt - 0.02) * t
-            zc = min(deck_base(x) + (yi - y) * math.tan(CH), zsh_at(x))
-            pts.append(Vector((x, y * s, zc + R / math.cos(CH) + 0.0015)))
-        pts.append(rim(x1 - 0.12, 0.004))
-        clips = (0.95, 1.55, 2.15, 2.70)
-        for x in np.arange(x1, 2.96, 0.10):
-            sag = 0.0035 * math.sin(math.pi * min(abs(x - c) for c in (x1,) + clips) / 0.3) if x > x1 + 0.05 else 0.0
-            pts.append(rim(float(x), sag))
-        # over the side to a padeye below the rail
-        xe = 3.06
-        top = rim(xe - 0.02)
-        lip = Vector((xe, (bg(xe) + 0.050) * s, zg(xe) + 0.004))
-        pe, ne = info.side(xe + 0.03, zg(xe) - 0.15)
-        pe = Vector((pe.x, pe.y * s, pe.z)) + Vector((0, ne.y * s, ne.z)) * 0.012
-        pts += [top, lip, lip.lerp(pe, 0.5) + Vector((0, 0.010 * s, 0)), pe + Vector((0, 0, 0.02))]
-        out.append(k.tube(f'cable_{s}', pts, R, n=8, fillet=0.03, kind='black', atlas='gear'))
-        # padeye and shackle
-        ax = Vector((0, ne.y * s, ne.z))
-        out.append(k.aim(k.lathe(f'cable_padeye_{s}', [(0.026, 0.0), (0.026, 0.004), (0.020, 0.007)], n=14, kind='steel', atlas='gear'), pe - ax * 0.010, pe + ax))
-        out.append(k.tube(f'cable_shackle_{s}', [pe - ax * 0.004 + Vector((0, 0, -0.012)), pe + ax * 0.012, pe - ax * 0.004 + Vector((0, 0, 0.026))], 0.0042, n=8, fillet=0.012, kind='steel', atlas='gear'))
-        # saddle clips on the rail, a band clamp on the mast leg
-        for x in clips:
-            p = rim(x)
-            out.append(k.box(f'cable_clip_{s}_{x}', (0.026, 0.024, 0.010), (p.x, p.y, p.z - R * 0.2), bevel=0.003, kind='black', atlas='gear'))
-        axl = (leg_b - leg_a).normalized()
-        c = leg_a.lerp(leg_b, 0.32)
-        out.append(k.tube(f'cable_band_{s}', [c - axl * 0.013, c + axl * 0.013], 0.026, n=14, kind='black', atlas='gear'))
+    port = []
+    leg_a = Vector((-0.56, 0.62, info.top_z(-0.56, 0.62)))
+    leg_b = Vector((-0.86, 0.36, 1.50))
+    c = leg_a.lerp(leg_b, 0.32)
+    p0 = c + Vector((0.0, 0.026, 0.0))
+
+    def hull_pt(x, dz, off=0.0):
+        """A point on the port topside at station x, dz below the sheer, `off` out from the plating."""
+        p, nrm = info.side(x, zg(x) - dz)
+        return p + Vector((0.0, nrm.y, nrm.z)) * (R + 0.0015 + off)
+    # over the cowl shoulder and down its side athwartships, across the gutter and the rim, over the edge
+    xd = -0.45
+    bt, yi = info.bt_at(xd), info.yi_at(xd)
+    pts = [p0, p0.lerp(Vector((xd, bt + 0.012, zsh_at(xd) + R + 0.002)), 0.55) + Vector((0, 0, 0.02)), Vector((xd, bt + 0.012, zsh_at(xd) + R + 0.002))]
+    for t in (0.35, 0.7):
+        y = bt + 0.02 + (yi - bt - 0.02) * t
+        zc_ = min(deck_base(xd) + (yi - y) * math.tan(CH), zsh_at(xd))
+        pts.append(Vector((xd + 0.01 * t, y, zc_ + R / math.cos(CH) + 0.0015)))
+    xr = xd + 0.03
+    pts.append(Vector((xr, bg(xr) - 0.07, zg(xr) + 0.032 + R)))                 # on the rim lip
+    pts.append(Vector((xr + 0.01, bg(xr) + 0.034, zg(xr) + 0.006)))            # over the flange
+    pts.append(hull_pt(xr + 0.04, 0.058, 0.010))
+    # forward along the topside under the flange, sagging between clips; out over the bracket's strap
+    clips = (0.02, 0.72, 1.40, 2.06, 2.66)
+    for x in np.arange(xr + 0.12, 3.18, 0.06):
+        x = float(x)
+        span = min(abs(x - cx) for cx in clips)
+        sag = 0.016 * math.sin(math.pi * min(span / 0.68, 0.5)) ** 2 if x > clips[0] else 0.004
+        bump = 0.034 * math.exp(-((x - 0.49) / 0.075) ** 2)
+        pts.append(hull_pt(x, 0.060 + sag, bump))
+    # end: up to a padeye just under the flange near the stem
+    xe = 3.26
+    pe, ne = info.side(xe, zg(xe) - 0.055)
+    nv = Vector((0.0, ne.y, ne.z))
+    pts.append(pe + nv * 0.02 + Vector((-0.03, 0, -0.012)))
+    port.append(k.tube('cable', pts, R, n=8, fillet=0.03, kind='black', atlas='gear'))
+    port.append(k.aim(k.lathe('cable_padeye', [(0.024, 0.0), (0.024, 0.004), (0.018, 0.007)], n=14, kind='steel', atlas='gear'), pe - nv * 0.004, pe + nv))
+    port.append(k.tube('cable_shackle', [pe + nv * 0.004 + Vector((-0.010, 0, -0.010)), pe + nv * 0.020, pe + nv * 0.004 + Vector((0.010, 0, 0.012))], 0.0040, n=8, fillet=0.010, kind='steel', atlas='gear'))
+    # saddle clips screwed to the topside
+    for x in clips:
+        p, nrm = info.side(x, zg(x) - 0.060)
+        th = math.atan2(nrm.z, nrm.y)
+        cl = k.box(f'cable_clip_{x}', (0.024, 0.016, 0.030), (0, 0, 0), bevel=0.004, kind='black', atlas='gear')
+        k.xform(cl, tuple(p + Vector((0.0, nrm.y, nrm.z)) * 0.004), (th, 0, 0))
+        port.append(cl)
+    axl = (leg_b - leg_a).normalized()
+    port.append(k.tube('cable_band', [c - axl * 0.013, c + axl * 0.013], 0.026, n=14, kind='black', atlas='gear'))
+    out = list(port)
+    for o in port:
+        m = k.mirrored(o, o.name + '_stbd')
+        m['has_uv'] = o.get('has_uv', False)
+        out.append(m)
     return out
 
 
@@ -422,28 +429,29 @@ def deck_fittings(info):
             gear.append(k.bolt(f'cleat_bolt_{tag}_{sg}', c + ax * (0.52 * h * sg) + Vector((0, 0, 0.006)), (0, 0, 1), r=0.007, h=0.004, atlas='gear'))
     cleat('q1', -3.18, 0.90, 0.20, False)
     cleat('q2', -3.18, -0.90, 0.20, False)
-    cleat('bow', 3.02 - 0.42, 0.0, 0.25, True)          # athwartships on the foredeck ridge, broadside to the bow camera
+    cleat('bow', 2.893, 0.0, 0.21, True)                # athwartships on the foredeck ridge, broadside to the bow camera
     x, y = -1.75, 0.93
     gear.append(k.aim(k.lathe('filler', [(0.038, 0.0), (0.038, 0.005), (0.034, 0.008), (0.012, 0.008), (0.010, 0.005), (0.0, 0.005)], n=20, kind='steel', atlas='gear'), (x, y, tz(x, y)), (x, y, tz(x, y) + 1)))
     return deck, gear
 
 
 def side_brackets(info):
-    """The black fittings hanging below the rub rail, two a side (lifting / lashing points in the photographs)."""
+    """The short black fittings just under the deck-edge flange, two a side (lifting / lashing points in the
+    photographs): an eye under the flange and a stubby strap and foot below it, 0.25 m long in all."""
     out = []
     for s in (1, -1):
         for x in (0.49, -2.40):
             zs = zg(x)
-            pb, nb = info.side(x, zs - 0.43)
-            p_top = Vector((x, bg(x) + 0.054, zs - 0.030))
+            pb, nb = info.side(x, zs - 0.27)
+            p_top = Vector((x, bg(x) + 0.040, zs - 0.058))
             p_bot = pb + nb * 0.022
             ax = (p_top - p_bot).normalized()                     # up the bracket
             nn = Vector((0.0, ax.z, -ax.y))                       # outward
             parts = []
-            ring = k.lathe('br_ring', [(0.030, -0.016), (0.062, -0.016), (0.066, -0.010), (0.066, 0.010), (0.062, 0.016), (0.030, 0.016), (0.026, 0.010), (0.026, -0.010), (0.030, -0.016)], n=24, kind='rubber', atlas='gear', cap_top=False, cap_bottom=False)
+            ring = k.lathe('br_ring', [(0.026, -0.016), (0.052, -0.016), (0.056, -0.010), (0.056, 0.010), (0.052, 0.016), (0.026, 0.016), (0.022, 0.010), (0.022, -0.010), (0.026, -0.016)], n=24, kind='rubber', atlas='gear', cap_top=False, cap_bottom=False)
             parts.append(ring)
-            parts.append(k.box('br_strap', (0.082, 0.26, 0.030), (0, -0.175, 0), bevel=0.006, kind='rubber', atlas='gear'))
-            parts.append(k.box('br_foot', (0.125, 0.12, 0.042), (0, -0.345, 0), bevel=0.010, kind='rubber', atlas='gear'))
+            parts.append(k.box('br_strap', (0.115, 0.115, 0.030), (0, -0.098, 0), bevel=0.008, kind='rubber', atlas='gear'))
+            parts.append(k.box('br_foot', (0.118, 0.060, 0.040), (0, -0.170, 0), bevel=0.011, kind='rubber', atlas='gear'))
             parts.append(k.lathe('br_pin', [(0.011, -0.022), (0.011, 0.024), (0.006, 0.027)], n=10, kind='steel', atlas='gear'))
             ob = k.join(parts, f'bracket_{s}_{x}')
             from mathutils import Matrix
@@ -470,7 +478,7 @@ def rail_screws(info):
         p = np.array([np.interp(s, cum, path[:, c]) for c in range(3)])
         q = np.array([np.interp(s, cum, o[:, c]) for c in range(3)])
         q /= np.linalg.norm(q)
-        out.append(k.bolt(f'railscrew_{i}', p + q * 0.0315, q, r=0.004, h=0.002, n=8, atlas='gear'))
+        out.append(k.bolt(f'railscrew_{i}', p + q * 0.0287, q, r=0.004, h=0.0015, n=8, atlas='gear'))
     return out
 
 
@@ -562,10 +570,17 @@ def engine_box(info):
             back.data.flip_normals()
         back['has_uv'] = False
         deck.append(back)
-        # blades: 45 degrees, front edge low, top faces looking up and out (they catch the sky, the gaps stay black)
-        nb = 8
+        # blades: four at 47 mm pitch (stripes that resolve at chase distance), 45 degrees, front edge low with a
+        # rolled nose, top faces looking up and out: light bars over dark gaps
+        nb = 4
         pitch = (h - 0.020) / nb
-        prof = [(-0.0050, -0.0095), (-0.0245, 0.0095), (-0.0262, 0.0078), (-0.0070, -0.0114)]
+        F, Bk, hh = np.array([-0.0042, -0.0105]), np.array([-0.0245, 0.0098]), 0.0019
+        dd = (Bk - F) / np.linalg.norm(Bk - F)
+        nn = np.array([-dd[1], dd[0]]) if (-dd[1] + dd[0]) > 0 else np.array([dd[1], -dd[0]])
+        prof = [tuple(F + nn * hh), tuple(Bk + nn * hh), tuple(Bk - nn * hh), tuple(F - nn * hh)]
+        for ph in (0.20, 0.40, 0.60, 0.80):              # the nose: a half-round in front of F, from below round to the top
+            ang = math.pi * (1.0 + ph)
+            prof.append(tuple(F + hh * (math.cos(ang) * nn + math.sin(ang) * dd)))
         for i in range(nb):
             zc = -(h - 0.020) / 2 + (i + 0.5) * pitch
             half = a + math.sqrt(max(r * r - zc * zc, 0.0)) - 0.0015
@@ -711,8 +726,12 @@ def mast(info):
     pts = [b.lerp(ca(-1), 0.25) + Vector((-0.03, 0, -0.01)), b + Vector((-0.035, 0.0, -0.02))]
     for t in (0.8, 0.6, 0.4, 0.2, 0.06):
         pts.append(a.lerp(b, t) + off + Vector((0, 0, 0.004 * math.sin(t * 40))))
-    pts += [a + Vector((0.02, -0.07, 0.012)), a + Vector((0.20, -0.16, 0.010)), Vector((-1.02, 0.62, tz(-1.02, 0.62) + 0.012)), Vector((-0.93, 0.60, tz(-0.93, 0.60) + 0.03))]
+    run = [a + Vector((0.06, -0.05, 0.0)), a.lerp(Vector((-1.02, 0.62, 0)), 0.5), Vector((-1.04, 0.62, 0.0))]
+    run = [Vector((p.x, p.y, tz(p.x, p.y) + 0.0095)) for p in run]
+    pts += [a + Vector((0.025, -0.02, 0.03))] + run + [Vector((-0.975, 0.60, tz(-0.975, 0.60) + 0.012)), Vector((-0.94, 0.60, tz(-0.94, 0.60) + 0.028))]
     g.append(k.tube('loom', pts, 0.0085, n=8, fillet=0.03, kind='black', atlas='gear'))
+    for i, p in enumerate(run[:2]):                    # deck clips holding the run down
+        g.append(k.box(f'loom_deckclip_{i}', (0.020, 0.040, 0.012), (p.x, p.y, p.z - 0.002), bevel=0.003, kind='black', atlas='gear', rot=(0, 0, math.atan2(-0.32, 0.45))))
     for t in (0.75, 0.5, 0.25):
         c = a.lerp(b, t)
         ax = (b - a).normalized()

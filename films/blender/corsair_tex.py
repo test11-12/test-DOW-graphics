@@ -14,31 +14,33 @@ import dowlib as d
 import boatkit as k
 import corsair_geo as geo
 
-PAINT = np.array([0.275, 0.295, 0.315])
-LOUVRE = (0.062, 0.068, 0.078)      # vent blades: near-black, slightly cool powder coat
+PAINT = np.array([0.280, 0.310, 0.350])   # one cool haze grey for the whole boat (the photographs show no two-tone)
+LOUVRE = tuple(PAINT * 0.70)                # vent blades: the box paint, a shade darker (powder coat on the blades)
 SRC = {  # kind: source material (scanned detail from ambientCG; colours are paint / material albedo, linear)
-    'hull': dict(base=PAINT * 0.74, scan='Metal032', scale=0.9, rough=(0.24, 0.36), var=0.05, nrm=0.4, wavy=0.004),
-    'deck': dict(base=PAINT * 1.45, scan='Metal032', scale=1.1, rough=(0.30, 0.44), var=0.05, nrm=0.35, wavy=0.0015),
-    'grip': dict(base=PAINT * 1.30, scan='Metal032', scale=1.1, rough=(0.62, 0.74), var=0.04, nrm=0.0),
-    'box': dict(base=PAINT * 1.40, scan='Metal032', scale=1.3, rough=(0.34, 0.48), var=0.05, nrm=0.35, wavy=0.0015),
-    'louvre': dict(base=LOUVRE, scan='Plastic006', scale=3.0, rough=(0.40, 0.50), var=0.0, nrm=0.0),
-    'boxlid': dict(base=PAINT * 1.50, scan='Metal032', scale=1.3, rough=(0.38, 0.52), var=0.05, nrm=0.2),
-    'dark': dict(base=(0.008, 0.008, 0.009), scan='Plastic006', scale=3.0, rough=(0.80, 0.90), var=0.0, nrm=0.0),
-    'mast': dict(base=(0.56, 0.57, 0.59), scan='Metal038', scale=2.5, rough=(0.30, 0.40), var=0.04, nrm=0.25, metal=1.0),
+    'hull': dict(base=PAINT * 0.80, scan='Metal032', scale=0.9, rough=(0.24, 0.36), var=0.05, nrm=0.4, wavy=0.004),
+    'deck': dict(base=PAINT * 0.90, scan='Metal032', scale=1.1, rough=(0.30, 0.44), var=0.05, nrm=0.35, wavy=0.0015),
+    'grip': dict(base=PAINT * 0.80, scan='Metal032', scale=1.1, rough=(0.44, 0.56), var=0.04, nrm=0.0),
+    'box': dict(base=PAINT * 0.88, scan='Metal032', scale=1.3, rough=(0.34, 0.48), var=0.05, nrm=0.35, wavy=0.0015),
+    'louvre': dict(base=LOUVRE, scan='Metal032', scale=3.0, rough=(0.40, 0.52), var=0.03, nrm=0.0),
+    'boxlid': dict(base=PAINT * 0.92, scan='Metal032', scale=1.3, rough=(0.38, 0.52), var=0.05, nrm=0.2),
+    'dark': dict(base=(0.030, 0.031, 0.033), scan='Plastic006', scale=3.0, rough=(0.80, 0.90), var=0.0, nrm=0.0),
+    'railpaint': dict(base=PAINT * 0.74, scan='Metal032', scale=2.0, rough=(0.20, 0.30), var=0.04, nrm=0.3),
+    'mast': dict(base=(0.66, 0.67, 0.69), scan='Metal038', scale=2.5, rough=(0.40, 0.50), var=0.04, nrm=0.25, metal=1.0),
     'steel': dict(base=(0.60, 0.60, 0.585), scan='Metal009', scale=4.0, rough=(0.20, 0.36), var=0.06, nrm=0.5, metal=1.0),
     'alu': dict(base=(0.40, 0.41, 0.42), scan='Metal038', scale=2.5, rough=(0.42, 0.60), var=0.10, nrm=1.0, metal=1.0),
     'rubber': dict(base=(0.030, 0.030, 0.032), scan='Rubber004', scale=5.0, rough=(0.46, 0.62), var=0.12, nrm=0.6),
     'black': dict(base=(0.018, 0.018, 0.020), scan='Plastic006', scale=4.0, rough=(0.36, 0.52), var=0.0, nrm=0.5),
     'white': dict(base=(0.78, 0.785, 0.775), scan='Plastic006', scale=3.0, rough=(0.24, 0.34), var=0.0, nrm=0.2),
 }
-# final glTF materials the engine addresses by name: (atlas, kind) -> name ('vent': vent blades and holes, which
-# src/corsair_boat.js draws unlit and near black)
-FINAL = {('hull', None): 'hull', ('deck', 'grip'): 'deck_grip', ('deck', 'box'): 'enginebox', ('deck', 'boxlid'): 'enginebox', ('deck', 'louvre'): 'vent', ('deck', 'dark'): 'vent',
+# final glTF materials the engine addresses by name: (atlas, kind) -> name ('vent': the plenum behind the louvres,
+# hatch gaps and holes, which src/corsair_boat.js treats as cavities; 'ventblade': the louvre blades, which get
+# the sky in full and part of the sun)
+FINAL = {('hull', None): 'hull', ('deck', 'grip'): 'deck_grip', ('deck', 'box'): 'enginebox', ('deck', 'boxlid'): 'enginebox', ('deck', 'louvre'): 'ventblade', ('deck', 'dark'): 'vent',
          ('deck', None): 'deck', ('gear', 'mast'): 'mast', ('gear', None): 'gear'}
-# colours of the mask bake: R paint (takes water marks, salt, streaks), G non-skid, B rubber (gear atlas) or the
-# inside of a vent (deck atlas)
-IDCOL = {'hull': (1, 0, 0), 'deck': (1, 0, 0), 'grip': (1, 1, 0), 'box': (1, 0, 0), 'boxlid': (1, 0, 0), 'louvre': (0, 0, 1), 'dark': (0, 0, 1), 'mast': (0.5, 0, 0), 'rubber': (0, 0, 1),
-         'white': (0.5, 0, 0)}
+# colours of the mask bake: R paint (takes water marks, salt, streaks), G non-skid (deck atlas) or the painted
+# deck-edge flange (gear atlas), B rubber (gear atlas) or the inside of a vent (deck atlas; G 0.5 = a blade)
+IDCOL = {'hull': (1, 0, 0), 'deck': (1, 0, 0), 'grip': (1, 1, 0), 'box': (1, 0, 0), 'boxlid': (1, 0, 0), 'louvre': (0, 0.5, 1), 'dark': (0, 0, 1), 'mast': (0.5, 0, 0), 'rubber': (0, 0, 1),
+         'white': (0.5, 0, 0), 'railpaint': (1, 1, 0)}
 _range = {}
 
 
@@ -109,6 +111,7 @@ def table(fn, n=512):
 
 
 ZG, ZC = table(geo.zg), table(geo.zc)
+ZK, BC = table(geo.zk), table(geo.bc)
 YI = table(lambda x: max(geo.bg(x) - geo.RIM, 0.0))
 SALT = np.array([0.60, 0.61, 0.60], np.float32)
 V = lambda *a: np.array(a, np.float32)
@@ -149,12 +152,26 @@ def weather_hull(P, N, ao, idm, base, rough, mask):
     mott = satin(P, base, rough)
     n1 = k.fbm(P * V(1, 0, 0) + 7.0, 1.1, 3, seed=5)
     wl = 0.17 + 0.13 * aft + 0.06 * (n1 - 0.5)                  # top of the solid wet band (fraction of the side)
-    # dry and slightly chalky high up: a little lighter, less saturated and flatter
-    dry = k.sstep(wl + 0.22, wl + 0.50, s) * side
+    # dry and slightly chalky high up: lighter, less saturated and flat
+    dry = k.sstep(wl + 0.20, wl + 0.42, s) * side
     lum = base.mean(-1, keepdims=True)
-    base *= (1 + 0.09 * dry)[..., None]
-    base += (lum * 1.09 - base) * (0.35 * dry)[..., None]
-    rough[:] = rough + (0.45 + 0.05 * (mott - 0.5) - rough) * (0.8 * dry)
+    base *= (1 + 0.13 * dry)[..., None]
+    base += (lum * 1.13 - base) * (0.45 * dry)[..., None]
+    rough[:] = rough + (0.55 + 0.05 * (mott - 0.5) - rough) * (0.85 * dry)
+    # lifting strakes: the down-facing ledge of each is in its own shadow and the bottom just inboard of it is
+    # stained darker by the water that leaves it (two crisp dark lines converging on the stem)
+    K0, bc_ = ZK(x), np.maximum(BC(x), 0.05)
+    tz_ = (zc - K0)
+    Lb = np.sqrt(bc_ * bc_ + tz_ * tz_)
+    q = (np.abs(y) * bc_ + (z - K0) * tz_) / (Lb * Lb)            # 0 at the keel, 1 at the chine
+    led = np.zeros_like(x)
+    for fs in (0.36, 0.68):
+        w0 = 0.036 / Lb
+        band = k.sstep(fs - w0 - 0.07 / Lb, fs - w0 - 0.005 / Lb, q) * (1 - k.sstep(fs - w0 - 0.003 / Lb, fs - w0 + 0.004 / Lb, q))
+        ledge = (np.abs(q - fs) < w0 * 1.15) * k.sstep(-0.94, -0.985, N[..., 2])
+        led = np.maximum(led, np.maximum(0.55 * ledge, 0.16 * band))
+    led *= bottom * k.sstep(3.55, 3.2, x)
+    base *= (1 - led)[..., None]
     # runs: fine vertical streaking below the rail and under the side fittings
     Ps = P * V(1, 1, 0.04)
     runs = k.fbm(Ps, 38.0, 3, seed=11)
@@ -170,25 +187,26 @@ def weather_hull(P, N, ao, idm, base, rough, mask):
     # water: a solid wet band low on the side; above it, spray-wet streaks a few centimetres wide running aft and
     # a little down (the boat's own wind and gravity), thinning out with height; fine rivulets among them
     al, ac = _flow(x, z, 9)
-    stk = k.fbm(np.stack([al * 0.9, ac * 22.0, y * 0], -1), 1.0, 4, seed=43)
-    up_ = np.clip((s - wl) / 0.42, 0, 1)                           # 0 at the band, 1 at the top of the streaks
-    streak = k.sstep(0.47 + 0.20 * up_, 0.53 + 0.20 * up_, stk) * (1 - k.sstep(0.85, 1.0, up_)) * (s > wl - 0.02)
+    # streaks 5 to 12 cm wide (5 px or more from the chase camera), crisp-edged, longest low down
+    stk = k.fbm(np.stack([al * 0.55, ac * 7.0, y * 0], -1), 1.0, 4, seed=43)
+    up_ = np.clip((s - wl) / 0.50, 0, 1)                           # 0 at the band, 1 at the top of the streaks
+    streak = k.sstep(0.46 + 0.16 * up_, 0.485 + 0.16 * up_, stk) * (1 - k.sstep(0.80, 1.0, up_)) * (s > wl - 0.02)
     streak *= side * k.sstep(3.0, 1.2, x)
-    band = (1 - k.sstep(wl - 0.012, wl + 0.012, s)) * side * k.sstep(3.25, 2.5, x)
-    riv = k.sstep(0.66, 0.80, k.fbm(np.stack([al * 0.7, ac * 120.0, y * 0], -1), 1.0, 3, seed=44))
-    riv *= k.sstep(wl + 0.55, wl + 0.02, s) * side * k.sstep(3.0, 1.0, x)
+    band = (1 - k.sstep(wl - 0.006, wl + 0.006, s)) * side * k.sstep(3.25, 2.5, x)
+    riv = k.sstep(0.64, 0.70, k.fbm(np.stack([al * 0.5, ac * 26.0, y * 0], -1), 1.0, 3, seed=44))
+    riv *= k.sstep(wl + 0.60, wl + 0.02, s) * side * k.sstep(3.0, 1.0, x)
     n2 = k.fbm(P, 9.0, 3, seed=6)
     # transom: wet low down, water running down it in streaks from the deck edge
     tstk = k.sstep(0.55, 0.68, k.fbm(np.stack([y * 26.0, z * 0.9, x * 0], -1), 1.0, 4, seed=48))
     wet_t = transom * np.maximum(1 - k.sstep(0.02, 0.22, z + 0.10 * (n2 - 0.5)), 0.85 * tstk)
     film = np.clip(np.maximum.reduce([band, 0.92 * streak, 0.8 * riv, bottom * k.sstep(3.4, 2.7, x), wet_t]), 0, 1)
     wl_e = wl
-    # boot line: a clean dark stripe on the chine, always wet
-    boot = k.sstep(-0.003, 0.002, hc) * (1 - k.sstep(0.050, 0.055, hc)) * flank * k.sstep(3.35, 3.05, x)
-    base *= (1 - 0.42 * film)[..., None]
-    rough[:] = rough * (1 - 0.30 * film)
-    base *= (1 - 0.78 * boot)[..., None]
-    rough[:] = rough * (1 - boot) + 0.22 * boot
+    # boot line: a clean dark stripe 40 mm deep on the chine, always wet
+    boot = k.sstep(-0.003, 0.0015, hc) * (1 - k.sstep(0.0385, 0.0415, hc)) * flank * k.sstep(3.35, 3.05, x)
+    base *= (1 - 0.55 * film)[..., None]
+    rough[:] = rough * (1 - 0.40 * film)
+    base *= (1 - 0.80 * boot)[..., None]
+    rough[:] = rough * (1 - boot) + 0.18 * boot
     # dried salt: a broken tide line above the wet line, a faint haze on the upper topsides forward
     tide = k.sstep(wl + 0.40, wl + 0.43, s) * (1 - k.sstep(wl + 0.44, wl + 0.52, s)) * side
     tide *= 0.35 + 0.65 * k.fbm(np.stack([al * 2.0, ac * 30.0, y * 0], -1), 1.0, 3, seed=45)
@@ -239,8 +257,13 @@ def weather_deck(P, N, ao, idm, base, rough, mask):
     lidw = lid * k.sstep(0.42, 0.56, n1 + 0.15 * (n2 - 0.5))
     boxside = (x < -1.98) * (np.abs(N[..., 2]) < 0.3) * (z > ZG(x) + 0.02)
     shed = boxside * k.sstep(0.55, 0.68, k.fbm(np.stack([x * 28.0, y * 28.0, z * 0.9], -1), 1.0, 4, seed=58))
-    film = np.clip(np.maximum.reduce([gut, sheet, lidw, streak, 0.8 * runs, 0.85 * shed]), 0, 1)
-    base *= (1 - (0.24 + 0.06 * grip) * film)[..., None]
+    # the lower foredeck ahead of the step takes green water and spray all the time: a thin film over most of it,
+    # in sheets with crisp edges (the bow camera looks along it and sees the sky in it)
+    patch = k.sstep(0.40, 0.47, k.fbm(np.stack([x * 1.4, y * 3.2, z * 1.4], -1), 1.6, 4, seed=59) + 0.12 * k.sstep(2.9, 3.4, x))
+    fwet = (up + 0.6 * slope) * k.sstep(2.12, 2.30, x) * (0.55 + 0.45 * patch)
+    film = np.clip(np.maximum.reduce([gut, sheet, lidw, streak, 0.8 * runs, 0.85 * shed, fwet]), 0, 1)
+    thin = fwet >= np.maximum.reduce([gut, sheet, lidw, streak, 0.8 * runs, 0.85 * shed]) - 1e-4
+    base *= (1 - np.where(thin, 0.10, 0.24 + 0.06 * grip) * film)[..., None]
     rough[:] = rough * (1 - 0.30 * film)
     # salt: crusts in the gutters' edges and corners, tide marks round the wet areas, round fittings, along the
     # edges of the non-skid
@@ -277,6 +300,12 @@ def weather_gear(P, N, ao, idm, base, rough, mask):
     salt = k.sstep(0.50, 0.82, k.fbm(P, 7.0, 3, seed=33)) * up * (0.4 * paint + 0.6 * rubber) * (0.5 + 0.5 * n2)
     base[:] = base * (1 - 0.10 * salt[..., None]) + SALT * (0.10 * salt[..., None])
     rough += 0.12 * salt
+    # the painted deck-edge flange: its underside is a thin dark shadow line against the topside; the outer face
+    # is wet and a little glossier than the topside
+    rail = k.sstep(0.25, 0.75, idm[..., 1]) * paint
+    under = rail * k.sstep(-0.15, -0.55, N[..., 2])
+    base *= (1 - 0.70 * under)[..., None]
+    rough[:] = rough * (1 - 0.25 * rail * (1 - under))
     g = 1 - k.sstep(0.25, 0.8, ao)
     base *= (1 - 0.25 * g * np.clip(paint + rubber, 0, 1))[..., None]
     return base, rough

@@ -126,7 +126,29 @@ precision highp float;
 ${ATMOSPHERE}
 uniform float uCamAlt; uniform vec3 uGroundAlb; uniform vec2 uDeck;   // cloud deck below the camera: top altitude (m), brightness (0 = none)
 uniform float uSea;     // 1: the ground below the horizon is open water, which mirrors the sky (Fresnel, wave-blurred)
+// the cloud layer seen from the probe (opt-in, post.envClouds): column cover as clouds.js CLOUD_COVER computes it
+uniform sampler2D tDetail, tAmbient; uniform vec4 uECov, uEHole, uECloud; uniform vec3 uSunColor;   // uECloud: mid altitude (m), strength, world x, z of the probe
+uniform float uEFog;
 varying vec3 vDir;
+float envCover(vec2 wxz){
+  vec2 q = wxz*0.001/uECov.y+uECov.zw;
+  float n = textureLod(tDetail, q*0.011, 1.0).r*0.5+textureLod(tDetail, q*0.043+0.31, 2.0).g*0.33+textureLod(tDetail, q*0.17+0.7, 7.0).r*0.17;
+  float thr = mix(0.66, 0.12, uECov.x);
+  float c = smoothstep(thr, thr+0.42, n);
+  if (uEHole.w > 0.0) c *= 1.0-uEHole.w*(1.0-smoothstep(uEHole.z*0.55, uEHole.z, length(wxz-uEHole.xy)));
+  return c;
+}
+// what a ray from the probe sees of the cloud deck (lit as the ocean lights the clouds it reflects)
+vec3 envClouds(vec3 rd, vec3 col){
+  if (uECloud.y <= 0.0 || rd.y < 0.012) return col;
+  float tc = (uECloud.x-uCamAlt)/rd.y;
+  if (tc <= 0.0 || tc > 90000.0) return col;
+  float cc = smoothstep(0.32, 0.8, envCover(uECloud.zw+rd.xz*tc));
+  float cs = max(dot(rd, uSunDir), 0.0);
+  vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb;
+  vec3 cloudCol = uSunColor*(0.035+0.10*pow(cs, 6.0)+0.05*(1.0-cs))+amb*0.21;
+  return mix(col, cloudCol, cc*uECloud.y*exp(-tc*uEFog*0.5));
+}
 vec3 skyAlong(vec3 ro, vec3 rd){
   vec3 LR, LM, LMS, T;
   atmoIntegrate(ro, rd, 1.0e9, 0.5, 14, LR, LM, LMS, T);
@@ -144,6 +166,7 @@ void main(){
   atmoIntegrate(ro, rd, tD>0.0 ? tD : (tG>0.0 ? tG : 1.0e9), 0.5, 14, LR, LM, LMS, T);
   float cv = dot(rd,uSunDir);
   vec3 col = LR*phaseR(cv)+LM*min(phaseM(cv),1.5)+LMS;
+  if (tD <= 0.0 && tG <= 0.0) col = envClouds(rd, col);
   if (tD>0.0){        // a bright, softly lit cloud floor
     vec3 p = ro+rd*tD; float mu = dot(normalize(p), uSunDir);
     vec3 E = uSunE*exp(-sunTau(RG+uDeck.x, max(mu, 0.02)))*(0.2+0.8*max(mu, 0.0)) + uSunE*0.07*smoothstep(-0.1,0.2,uSunDir.y);
@@ -156,7 +179,14 @@ void main(){
       vec3 up = normalize(p), rr = reflect(rd, up);
       rr.y = max(rr.y, 0.02); rr = normalize(rr);
       float cosI = clamp(-dot(rd, up), 0.0, 1.0), f = 0.02+0.98*pow(1.0-max(cosI, 0.16), 5.0);
-      grd = mix(grd, skyAlong(p+up*2.0, rr), f*uSea);
+      grd = mix(grd, envClouds(rr, skyAlong(p+up*2.0, rr)), f*uSea);
+      if (uECloud.y > 0.0 && uSunDir.y > 0.0){   // the sun's glitter: wave facets (Cox-Munk, ~7 m/s) mirroring the sun at the probe
+        vec3 v = -rd, hh = normalize(uSunDir+v);
+        float cb = max(dot(hh, up), 1e-3), tb2 = (1.0-cb*cb)/(cb*cb), s2 = 0.04, cvv = max(dot(v, up), 0.03);
+        float Fh = 0.02+0.98*pow(1.0-max(dot(hh, v), 0.0), 5.0);
+        vec3 Es = uSunE*exp(-sunTau(RG, max(dot(up, uSunDir), 0.02)));
+        grd += min(Es*Fh*exp(-tb2/s2)/(3.14159*s2*4.0*cvv*cb*cb*cb*cb), Es*1.5)*uSea*uECloud.y;
+      }
     }
     col += T*grd;
   }
@@ -633,7 +663,7 @@ const FINAL_FRAG = /* glsl */`
 precision highp float;
 ${NOISE}
 uniform sampler2D tColor, tBloom, tDetail, tRays, tFlare, tDepth;
-uniform vec2 uRes; uniform float uFrame, uExposure, uBloom, uVignette, uGrain, uCA, uLensK, uFade, uSat, uContrast, uSharpen, uRays, uFlare, uLogFar;
+uniform vec2 uRes; uniform float uFrame, uExposure, uBloom, uVignette, uGrain, uCA, uLensK, uLensFit, uFade, uSat, uContrast, uSharpen, uRays, uFlare, uLogFar;
 uniform vec2 uRaysNear;   // light shafts are scattered along the view ray: weight on things at 0 m, distance (m) to full (0 = off)
 uniform vec3 uWB, uLift, uTint, uBloomTint; uniform int uMode; uniform vec4 uThermal; // gain, level, noise, polarity
 varying vec2 vUv;
@@ -656,12 +686,15 @@ vec3 fetch(vec2 uv){ return texture2D(tColor, uv).rgb + texture2D(tBloom, uv).rg
 void main(){
   vec2 c = vUv-0.5; vec2 asp = vec2(uRes.x/uRes.y, 1.0);
   float r2 = dot(c*asp, c*asp);
-  // barrel distortion, scaled so the frame corners land on the source corners: nothing is sampled from outside
-  // the frame (clamped edge pixels used to smear into streaks along the borders)
-  vec2 uv = 0.5+c*(1.0+uLensK*r2)/(1.0+uLensK*0.25*(asp.x*asp.x+1.0));
+  // barrel distortion. lensFit (opt-in) scales it so the frame corners land on the source corners and nothing is
+  // sampled from outside the frame (clamped edge pixels smear into streaks along the borders); the CA spread is
+  // then shrunk so the red and blue taps stay inside the frame too
+  float fit = mix(1.0, 1.0+uLensK*0.25*(asp.x*asp.x+1.0), uLensFit);
+  vec2 uv = 0.5+c*(1.0+uLensK*r2)/fit;
   vec3 col;
   if (uCA > 0.0){
     vec2 dir = (uv-0.5)*uCA*(0.4+r2*2.0);
+    if (uLensFit > 0.5){ vec2 room = max(0.5-abs(uv-0.5), vec2(0.0)); dir = clamp(dir, -room, room); }
     col = vec3(fetch(uv+dir).r, fetch(uv).g, fetch(uv-dir).b);
   } else col = fetch(uv);
   if (uSharpen > 0.0){
@@ -801,7 +834,7 @@ export class Pipeline {
       tDepth: shared.tDepth, uLogFar: shared.uLogFar, uRaysNear: { value: new THREE.Vector2(1, 0) },
       uRes: shared.uRes, uFrame: shared.uFrame,
       uExposure: { value: 0.25 }, uBloom: { value: 0.06 }, uVignette: { value: 0.25 }, uGrain: { value: 0.035 }, uCA: { value: 0.0012 },
-      uLensK: { value: 0.0 }, uFade: { value: 1 }, uSat: { value: 1.12 }, uContrast: { value: 1.12 }, uSharpen: { value: 0.0 }, uRays: { value: 0 }, uFlare: { value: 0 },
+      uLensK: { value: 0.0 }, uLensFit: { value: 0 }, uFade: { value: 1 }, uSat: { value: 1.12 }, uContrast: { value: 1.12 }, uSharpen: { value: 0.0 }, uRays: { value: 0 }, uFlare: { value: 0 },
       uWB: { value: new THREE.Vector3(1, 1, 1) }, uLift: { value: new THREE.Vector3(0, 0, 0) }, uTint: { value: new THREE.Vector3(1, 1, 1) }, uBloomTint: { value: new THREE.Vector3(1, 1, 1) },
       uMode: { value: 0 }, uThermal: { value: new THREE.Vector4(2.2, 0.3, 0.06, 0) },
     });
@@ -811,11 +844,13 @@ export class Pipeline {
     this.envScene = new THREE.Scene();
     const envMat = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthTest: false, depthWrite: false,
-      uniforms: { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb, uDeck: { value: new THREE.Vector2(0, 0) }, uSea: { value: 0 } },
+      uniforms: { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb, uDeck: { value: new THREE.Vector2(0, 0) }, uSea: { value: 0 },
+        tDetail: shared.tDetail, tAmbient: shared.tAmbient, uSunColor: shared.uSunColor, uECov: { value: new THREE.Vector4(0, 1, 0, 0) }, uEHole: { value: new THREE.Vector4(0, 0, 1, 0) },
+        uECloud: { value: new THREE.Vector4() }, uEFog: { value: 0 } },
       vertexShader: `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
       fragmentShader: ENV_FRAG,
     });
-    this.envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat)); this.envDeck = envMat.uniforms.uDeck.value; this.envSea = envMat.uniforms.uSea;
+    this.envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat)); this.envDeck = envMat.uniforms.uDeck.value; this.envSea = envMat.uniforms.uSea; this.envU = envMat.uniforms;
     this.envRT = null; this.envKey = '';
     this.setSize(opts.width || 1280, opts.height || 720);
   }
@@ -906,7 +941,8 @@ export class Pipeline {
   // post: { exposure, bloom, bloomTint, vignette, grain, ca, lensK, fade, sat, contrast, wb, lift, tint, shutter, shimmer:[amp,scale,far],
   //         sunDisk, aerial, mode, thermal, sharpen, envKey, envSea (0..1: the probe's ground is open water), cirrus:{alt,cover,opacity,scale,wind}, clouds:{...},
   //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, raysNear:[weight at 0 m, metres to full weight],
-  //         flare:{ghost,halo,streak,thr} }
+  //         flare:{ghost,halo,streak,thr}, lensFit (scale lensK so nothing is sampled from outside the frame),
+//         envClouds (0..1: the cloud layer, and over envSea the sun's glitter, in the reflection probe) }
   render(time, frameIndex, post = {}) {
     const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene;
     if (this.prof) { this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }
@@ -936,7 +972,14 @@ export class Pipeline {
       this.envDeck.set(dk ? dk.alt : 0, dk ? dk.k : 0);
     }
     this.envSea.value = post.envSea ?? 0;
-    this.updateEnvironment((post.envKey ?? 'default') + (post.envSea ? ':sea' + post.envSea : ''));
+    // the cloud deck (and over the sea the sun's glitter) in the probe: a key per 1.5 km of camera travel
+    const ec = post.envClouds && this.clouds && post.clouds ? post.envClouds : 0, eu = this.envU;
+    if (ec) {
+      this.clouds.setCover(post.clouds, time);
+      eu.uECov.value.copy(this.clouds.cover.uCov.value); eu.uEHole.value.copy(this.clouds.cover.uCovHole.value);
+      eu.uECloud.value.set((this.clouds.base + this.clouds.top) / 2, ec, this.origin.x, this.origin.z); eu.uEFog.value = 4.44e-6 * A.uHaze.value + 1.3e-5;
+    } else eu.uECloud.value.y = 0;
+    this.updateEnvironment((post.envKey ?? 'default') + (post.envSea ? ':sea' + post.envSea : '') + (ec ? `:cl${ec}@${Math.round(this.origin.x / 1500)},${Math.round(this.origin.z / 1500)},${(post.clouds.cover ?? 0.35).toFixed(2)}` : ''));
     // aerial-perspective froxels follow the camera every frame
     this.pAp.u.uWhich.value = 0; this.pAp.render(r, this.rtApI);
     this.pAp.u.uWhich.value = 1; this.pAp.render(r, this.rtApT);
@@ -1095,7 +1138,7 @@ export class Pipeline {
     uf.tColor.value = cur.texture; uf.tBloom.value = up;
     uf.uExposure.value = exposure; uf.uBloom.value = post.bloom ?? 0.06;
     uf.uVignette.value = post.vignette ?? 0.25; uf.uGrain.value = post.grain ?? 0.035; uf.uCA.value = post.ca ?? 0.0012;
-    uf.uLensK.value = post.lensK ?? 0; uf.uFade.value = post.fade ?? 1; uf.uSat.value = post.sat ?? 1.12; uf.uContrast.value = post.contrast ?? 1.12;
+    uf.uLensK.value = post.lensK ?? 0; uf.uLensFit.value = post.lensFit ? 1 : 0; uf.uFade.value = post.fade ?? 1; uf.uSat.value = post.sat ?? 1.12; uf.uContrast.value = post.contrast ?? 1.12;
     uf.uSharpen.value = post.sharpen ?? 0;
     uf.uWB.value.fromArray(post.wb || [1, 1, 1]); uf.uLift.value.fromArray(post.lift || [0, 0, 0]); uf.uTint.value.fromArray(post.tint || [1, 1, 1]);
     uf.uBloomTint.value.fromArray(post.bloomTint || [1, 1, 1]);

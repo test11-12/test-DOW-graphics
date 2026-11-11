@@ -1,6 +1,7 @@
 # The Saronic Corsair for film 3 ("Three Corsairs") -> assets/corsair/corsair.glb (+ assets/corsair/tex/*.webp)
 #   node tools/blender.mjs corsair [geo|full] [preview-prefix]
-# geo: geometry only with flat materials (fast check); full: scanned source materials, bakes, weathering, export.
+# geo: geometry only with flat materials (fast check; exports to the bake cache, never over the shipped GLB);
+# full: scanned source materials, bakes, weathering, export; retex: weathering and export from the cached bakes.
 import math
 import os
 import sys
@@ -25,6 +26,7 @@ FLAT = {  # kind: (base colour, roughness, metallic) for the geometry check
     'box': ((0.30, 0.32, 0.34), 0.45, 0), 'louvre': ((0.18, 0.19, 0.2), 0.6, 0), 'boxlid': ((0.40, 0.42, 0.44), 0.5, 0), 'dark': ((0.02, 0.02, 0.02), 0.6, 0),
     'mast': ((0.30, 0.32, 0.34), 0.4, 0), 'steel': ((0.6, 0.6, 0.6), 0.3, 1), 'alu': ((0.45, 0.46, 0.47), 0.5, 1),
     'rubber': ((0.02, 0.02, 0.022), 0.7, 0), 'black': ((0.015, 0.015, 0.016), 0.45, 0), 'white': ((0.75, 0.76, 0.76), 0.35, 0),
+    'railpaint': ((0.21, 0.23, 0.26), 0.3, 0),
     'glass': ((0.01, 0.012, 0.016), 0.06, 0), 'navred': ((0.5, 0.02, 0.02), 0.3, 0),
 }
 
@@ -79,7 +81,8 @@ if STAGE == 'geo':
         joined[name] = ob
         d.log(d.stats(ob))
     d.log('triangles', tris)
-    d.export_glb(d.out_path('corsair', 'corsair.glb'), list(joined.values()), tangents=False)
+    # a scratch file: the shipped assets/corsair/corsair.glb is written only by full and retex
+    d.export_glb(os.path.join(d.bake_dir('corsair'), 'corsair_geo.glb'), list(joined.values()), tangents=False)
     if PREVIEW:
         views = {'side': ((0.5, -14, 1.2), (0, 0, 0.6), 85), 'bowq': ((9, -6.5, 3.2), (0.3, 0, 0.5), 60), 'sternq': ((-9, 7, 3.0), (-0.3, 0, 0.5), 60),
                  'top': ((0.2, -0.3, 16), (0, 0, 0), 70), 'bowcam': ((1.15, 0, 1.23), (8, 0, 0.9), 20), 'mast': ((1.6, -2.6, 2.3), (-1.1, 0, 1.6), 50),
@@ -139,12 +142,11 @@ def weather(name):
     rough = np.where(paint[..., 0], r2, rough)
     # faces that look down see the sea, not the sky: less of the probe's light reaches them
     ao = ao * (1 - (0.35 if name == 'hull' else 0.45) * k.sstep(-0.15, -0.85, N[..., 2]))
-    if name == 'deck':                      # vents: blades in the near-black powder coat; the plenum behind them a cavity
+    if name == 'deck':                      # vents: the blades keep their paint; the plenum and the gaps behind them are a cavity
         vent = idm[..., 2] > 0.5
-        blade = vent & (np.abs(N[..., 2]) > 0.3)
-        base[blade] = k.srgb_to_lin(k.lin_to_srgb(np.array(tx.LOUVRE, np.float32)))
-        rough[blade] = 0.45
+        blade = vent & (idm[..., 1] > 0.25)
         ao *= 1 - 0.6 * (vent & ~blade)
+        ao[blade] = np.maximum(ao[blade], 0.55)     # the blade noses stand at the mouth of the pocket
     arr = np.ones((size, size, 4), np.float32)
     arr[..., :3] = k.lin_to_srgb(base)
     orm = np.ones((size, size, 4), np.float32)

@@ -13,6 +13,7 @@ import { attitude } from '../engine/geo.js';
 import { Trail, makeGlow } from '../engine/fx.js';
 import { buildPort, PORT } from './corsair_model.js';
 import { buildCorsair, buildShip } from './corsair_boat.js';
+import { BoatWash } from './corsair_wash.js';
 
 const NARRATION = __NARRATION__;
 const SUN = { az: 80, el: +new URLSearchParams(typeof location !== 'undefined' ? location.search : '').get('sunel') || 11 };   // low morning sun, east
@@ -59,11 +60,9 @@ async function build(film) {
   const ocean = new Ocean(pipe, { clouds, sea });
   ocean.setShelter(15, 70, 150, 340, 0.3);      // the basin behind the breakwaters
   const boats = []; for (let i = 0; i < 3; i++) { const b = await buildCorsair(pipe); pipe.scene.add(b); pipe.registerDynamic(b); boats.push(b); }
-  // spray: two sheets thrown off the chines forward of midships and a rooster tail off the transom, per boat
-  const spray = boats.map(() => ({
-    side: [-1, 1].map(() => new Trail(pipe, { rate: 190, life: 0.45, size0: 0.08, size1: 0.44, grow: 0.8, color: [0.93, 0.95, 0.96], alpha: 0.15, jitter: 0.2, drift: [0, -2.4, 0], drag: 3.0, spreadV: 1.6, noise: 1.0, softness: 0.3, fadeIn: 0.05 })),
-    tail: new Trail(pipe, { rate: 110, life: 0.6, size0: 0.14, size1: 0.8, grow: 0.8, color: [0.93, 0.95, 0.96], alpha: 0.13, jitter: 0.25, drift: [0, -1.8, 0], drag: 2.6, spreadV: 1.4, noise: 1.0, softness: 0.3, fadeIn: 0.06 }),
-  }));
+  // the water at each hull: white water along the waterline, spray sheets off the chines, the jet's rooster tail,
+  // contact foam (src/corsair_wash.js). Each follows whichever track its boat is on in the current shot.
+  const spray = boats.map((b, i) => { const w = new BoatWash(pipe, b, (time, out, q) => boatPose(w.track || LEAD, time, out, q)); return w; });
   const port = buildPort(pipe); pipe.scene.add(port);
   port.traverse(o => { if (o.isMesh) o.layers.set(LAYER.STATIC); });
   // the coast range north of the city: two ragged ridgelines whose tops stand clear of the haze layer
@@ -100,7 +99,7 @@ async function build(film) {
 // A boat riding the sea. A planing hull rides the crests rather than averaging through them, and it has inertia:
 // sample the surface along the keel and abeam at three earlier moments of its own track and fit height, pitch
 // and roll from them. Pure function of time.
-const tmp = v3();
+const tmp = v3(), camVel = v3();
 const KEEL = [-3.0, -1.5, 0, 1.5, 3.0], KW = [0.5, 0.3, 0.2], KDT = [0, 0.09, 0.18];
 function seaPose(tr, t) {
   const O = W.ocean; let H = 0, P = 0, R = 0;
@@ -114,13 +113,16 @@ function seaPose(tr, t) {
   }
   return { h: H, pitch: P / D2R, roll: R / D2R };
 }
-// world position (into `out`) and attitude (into `q`) of a boat on track tr at time t
+// world position (into `out`) and attitude (into `q`) of a boat on track tr at time t. On the plane a Corsair
+// runs about 7 degrees bow-up with the forward 40% of its bottom clear of the water (the photographs at speed);
+// a rising slope ahead throws the bow up harder than a falling one lets it down.
+const TRIM = 7.0, LIFT = 0.40;
 function boatPose(tr, t, out, q) {
   const p = tr(t), s = seaPose(tr, t), plane = smooth(4, 14, p.v);
-  const pitch = s.pitch * 0.85 + 3.6 * plane + 0.4 * wobble(t * 2.3, 3 + p.x * 0.01);
+  const pitch = s.pitch * 0.95 + 0.55 * Math.max(s.pitch, 0) * plane + TRIM * plane + 0.6 * wobble(t * 2.3, 3 + p.x * 0.01);
   const roll = s.roll * 0.7 + 0.7 * wobble(t * 1.7, 9 + p.z * 0.01);
   attitude(p.hdg, pitch, roll, q);
-  return out.set(p.x, s.h + 0.22 * plane, p.z);
+  return out.set(p.x, s.h + LIFT * plane, p.z);
 }
 function placeBoat(film, b, tr, t) { film.place(b, boatPose(tr, t, tmp, b.quaternion)); }
 // a point fixed to the boat on track tr, in its own axes (bow +x, up +y, starboard +z), in world coordinates
@@ -130,15 +132,6 @@ function onBoat(tr, t, x, y, z, out = v3()) { boatPose(tr, t, _bp, _bq); return 
 const ride = (x, z, t, k = 0.75) => W ? W.ocean.heightAt(x, z, t - 0.12) * k : 0;
 // a point given in a boat's own axes [forward, up, right], in world coordinates
 function boatPoint(p, off, out) { const r = p.hdg * D2R, fx = Math.sin(r), fz = -Math.cos(r); return out.set(p.x + fx * off[0] - fz * off[2], off[1], p.z + fz * off[0] + fx * off[2]); }
-function updateSpray(film, i, track, t, on) {
-  const sp = W.spray[i], O = film.origin, vis = on && !film.off.has('spray');
-  for (const tr of sp.side) tr.mesh.visible = vis; sp.tail.mesh.visible = vis;
-  if (!vis) return;
-  const at = (tb, fwd, lat, up, out) => { const p = track(tb), r = p.hdg * D2R, fx = Math.sin(r), fz = -Math.cos(r); return out.set(p.x + fx * fwd - fz * lat, W.ocean.heightAt(p.x, p.z, tb) + up, p.z + fz * fwd + fx * lat); };
-  sp.side.forEach((tr, k) => { const sg = k ? 1 : -1;
-    tr.update(t, O, (tb, out) => at(tb, 0.7, sg * 1.05, 0.2, out), (tb, out) => { const p = track(tb), r = p.hdg * D2R, fx = Math.sin(r), fz = -Math.cos(r), k2 = clamp(p.v / 16, 0, 1.2); return out.set(fx * p.v * 0.9 - fz * sg * 4.2 * k2, 2.6 * k2, fz * p.v * 0.9 + fx * sg * 4.2 * k2); }); });
-  sp.tail.update(t, O, (tb, out) => at(tb, -3.9, 0, 0.1, out), (tb, out) => { const p = track(tb), r = p.hdg * D2R, k2 = clamp(p.v / 16, 0, 1.2); return out.set(Math.sin(r) * p.v * 0.88, 2.4 * k2, -Math.cos(r) * p.v * 0.88); });
-}
 function updateBlasts(film, t, show) {
   const O = film.origin;
   for (const b of W.blasts) {
@@ -156,7 +149,8 @@ function updateBlasts(film, t, show) {
 // ------------------------------------------------------------------ grade
 const FLARE = { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 };
 const P0e = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');   // ?envsea=0 for look development
-const SEA_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.24, sat: 1.0, wb: [1.0, 1.0, 1.03], aerial: 1.0, grain: 0.045, bloom: 0.1, shutter: 0.22, vignette: 0.3, envSea: +(P0e.get('envsea') ?? 1) };
+const SEA_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.24, sat: 1.0, wb: [1.0, 1.0, 1.03], aerial: 1.0, grain: 0.045, bloom: 0.1, shutter: 0.22, vignette: 0.3, envSea: +(P0e.get('envsea') ?? 1), envClouds: +(P0e.get('envcl') ?? 1) };
+const LOW_SUN_WB = [0.95, 1.0, 1.07];     // balanced for the low sun, as a DP would: lit paint warm-grey, shade cool
 const P0 = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
 // up-sun shots: a heavier deck with the sun breaking through it (dev overrides: ?ucov= ?udens= ?urays=)
 const UP_CLOUDS = { ...CLOUDS, cover: +P0.get('ucov') || 0.56, density: +P0.get('udens') || 0.017, steps: 48 };
@@ -173,11 +167,11 @@ const shots = [
   { id: 's02', name: 'Corsair', t0: 6.5, t1: 14.5, note: 'Chase off the port quarter, low: the boat at speed against the sun path.',
     tracks: [LEAD],
     camera: (lt, t) => { const p = LEAD(t), k = ease(lt / 8); const cx = p.x - 17 + 5 * k, cz = p.z + 15 - 5.5 * k; return { pos: v3(cx, 3.4 - 1.1 * k + ride(cx, cz, t, 0.6), cz), look: v3(p.x + 2, 0.7 + ride(p.x, p.z, t, 0.4), p.z - 1), fov: 30, shake: { rot: 0.14, freq: 0.9, seed: 2, jolt: 0.03 }, focus: v3(p.x, 0.5, p.z), focusRadius: 9 }; },
-    post: { ...UP_SUN, raysNear: [0.3, 150] }, wakeSize: 130 },     // the shafts are air light: thin on a boat 20 m off
+    post: { ...UP_SUN, exposure: 0.23, raysNear: [0.3, 150], wb: LOW_SUN_WB }, wakeSize: 130 },     // the shafts are air light: thin on a boat 20 m off; exposed for the boat's shadow side
   { id: 's03', name: 'Head-on', t0: 14.5, t1: 21, note: 'Water-level long lens: the boat comes at the camera, spray flying, and goes by close.',
     tracks: [PASS],
     camera: (lt, t) => { const p = PASS(t), cam = v3(SEA.x + 1.5, 2.4 + ride(SEA.x + 1.5, SEA.z - 160, t), SEA.z - 160), d = Math.hypot(p.x - cam.x, p.z - cam.z), fov = clamp(2 * Math.atan(5.2 / d) / D2R, 5, 46); return { pos: cam, look: v3(p.x, 1.1 + ride(p.x, p.z, t, 0.5), p.z), fov, shake: { rot: 0.05 * Math.min(1, fov / 14), freq: 1.1, seed: 3 }, focus: v3(p.x, 0.5, p.z), focusRadius: 9 }; },
-    post: { ...SEA_POST, exposure: 0.22, shutter: 0.3 }, wakeSize: 150 },
+    post: { ...SEA_POST, exposure: 0.22, shutter: 0.3, wb: LOW_SUN_WB }, wakeSize: 150 },
   { id: 's04', name: 'Three', t0: 21, t1: 28.5, note: 'From the air, down-sun: three boats, three white wakes on dark water.',
     tracks: TRIO,
     camera: (lt, t) => { const p = TRIO[0](t), k = lt / 7.5; return { pos: v3(p.x + 150 - 30 * k, 78 - 14 * k, p.z + 62), look: v3(p.x - 4, 0, p.z + 34), fov: 31 - 5 * k, shake: { rot: 0.07, freq: 0.6, seed: 4 }, focus: v3(p.x, 0.5, p.z + 30), focusRadius: 45 }; },
@@ -196,9 +190,11 @@ const shots = [
     post: { ...SEA_POST, exposure: 0.215 }, wakeSize: 260, wakeAt: t => { const p = RUN_IN[0](t); return [p.x + 30, p.z + 40]; } },
   { id: 's07', name: 'Bow camera', t0: 43, t1: 50.2, note: 'Simulated bow camera (original graphics, labelled): the dock, the gantry and the hull on it grow in the frame.',
     tracks: RUN_IN, bowcam: true,
-    // bolted to the hull: the foredeck holds still in the lower third while the horizon pitches and rolls
-    camera: (lt, t) => { const p = RUN_IN[0](t), tr = RUN_IN[0]; return { pos: onBoat(tr, t, 1.15, 1.30, 0.0), look: onBoat(tr, t, 40, -5.2, 0.0), up: onBoat(tr, t, 0, 1, 0).sub(onBoat(tr, t, 0, 0, 0)), fov: 62, shake: { rot: 0.10, freq: 3.1, seed: 7, jolt: 0.05 }, focus: v3(p.x, 0.5, p.z), focusRadius: 6 }; },
-    post: { ...SEA_POST, exposure: 0.21, contrast: 1.3, sat: 0.86, lensK: 0.12, ca: 0.003, grain: 0.08, vignette: 0.5, shutter: 0.3, sharpen: 0.25 }, wakeSize: 220, wakeAt: t => { const p = RUN_IN[0](t); return [p.x - 10, p.z + 10]; } },
+    // bolted to the bow, 0.2 m over the lower foredeck: the bow is a wedge at the bottom of the frame (clear of
+    // the captions) while the horizon pitches and rolls; tilted 12 degrees down from the deck line
+    camera: (lt, t) => { const p = RUN_IN[0](t), tr = RUN_IN[0]; return { pos: onBoat(tr, t, 2.40, 0.99, 0.0), look: onBoat(tr, t, 40, 0.99 - 40 * Math.tan(12 * D2R), 0.0), up: onBoat(tr, t, 0, 1, 0).sub(onBoat(tr, t, 0, 0, 0)), fov: 56, shake: { rot: 0.10, freq: 3.1, seed: 7, jolt: 0.05 }, focus: v3(p.x, 0.5, p.z), focusRadius: 6 }; },
+    // an auto-exposed action camera in daylight: bright, a short shutter (crisp ripples), a little lens CA
+    post: { ...SEA_POST, exposure: 0.34, contrast: 1.3, sat: 0.86, lensK: 0.12, lensFit: true, ca: 0.0012, grain: 0.08, vignette: 0.5, shutter: 0.04, sharpen: 0.25 }, wakeSize: 220, wakeAt: t => { const p = RUN_IN[0](t); return [p.x - 10, p.z + 10]; } },
   { id: 's08', name: 'Three hits', t0: 50.2, t1: 57.2, note: 'Long lens from the far breakwater: three detonations along the waterline, a second or so apart. No people in frame.',
     tracks: RUN_IN, blasts: true,
     camera: (lt, t) => { const jolt = HIT.reduce((a, T) => a + (t > T + 0.55 ? Math.exp(-(t - T - 0.55) * 3.2) : 0), 0); return { pos: v3(-118 - lt * 0.5, 8.5, 214), look: v3(-6 + lt * 0.3, 11 + lt * 0.6, 30), fov: 13.5 - lt * 0.15, shake: { rot: 0.03 + 0.34 * jolt, freq: 1.4 + 5 * jolt, seed: 8, jolt: 0.16 * jolt }, focus: v3(0, 3, 30), focusRadius: 60 }; },
@@ -290,10 +286,17 @@ startFilm({
   build, shots, cues, buildHud, updateHud, score,
   frame(t, shot, lt, film, c) {
     const O = W.ocean, trs = shot.tracks || [], th = shot.thermal ? 1 : 0;
+    // the camera's own velocity, so spray streaks show motion relative to the lens; exposure time from the shutter
+    const cA = film.cameraOf(shot, lt, t), cB = film.cameraOf(shot, lt - 0.02, t - 0.02); camVel.copy(cA.pos).sub(cB.pos).multiplyScalar(50);
+    const expo = (shot.post?.shutter ?? 0.22) / 30;
+    O.hulls = [];
     W.boats.forEach((b, i) => {
-      const tr = trs[i], p = tr && tr(t), on = !!(p && p.on);
+      const tr = trs[i], p = tr && tr(t), on = !!(p && p.on), w = W.spray[i];
       b.userData.setThermal && b.userData.setThermal(th);
-      updateSpray(film, i, tr || LEAD, t, on && p.v > 6 && !th);
+      if (w.track !== tr) { w.track = tr; w.cache.clear(); }
+      w.setCamera(camVel, expo);
+      w.update(film, O, t, p ? p.v : 0, on && !th);
+      if (w.active) O.hulls.push(w.footprint(t, p.v));
     });
     O.wakes = trs.map(tr => ({ pos: (time, out) => { const p = tr(time); return out.set(p.x, 0, p.z); }, beam: 1.25 }));
     updateBlasts(film, t, !!shot.blasts);
