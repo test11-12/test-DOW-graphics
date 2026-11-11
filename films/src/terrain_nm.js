@@ -249,7 +249,7 @@ Surf nmConcrete(vec2 q){
   b.alb = nmGrade(b.alb, L_CONCRETE_BROOM, NM_CONC, 0.35); w.alb = nmGrade(w.alb, L_CONCRETE_WORN, NM_CONC, 0.45);
   Surf c = surfBlendH(b, w, 0.12+0.3*rl.z, 0.4);                                // the broomed surface leads; worn patches between
   float m4 = dtex(duv(4)+0.23, 4).b;
-  c.alb *= (0.93+0.13*rl.w)*(0.975+0.05*r.w)*(0.97+0.06*m4); c.rough = nmRough(c.rough, 0.78, 0.95);
+  c.alb *= (0.93+0.13*rl.w)*(0.975+0.05*r.w)*(0.97+0.06*m4); c.rough = nmRough(c.rough, 0.62, 0.86);   // broomed concrete keeps a soft sheen towards a low sun
   c.d *= 1.5;
   return c;
 }
@@ -452,7 +452,7 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
 `;
 
 export const NM_TERRAIN = {
-  height, mask, shade, scales, groundAlt: FIELD_ALT, layers, layerAniso: 4, layerAnisoB: 2, partialGround: true, ambSat: 0.6,
+  height, mask, shade, scales, groundAlt: FIELD_ALT, layers, layerAniso: 4, layerAnisoB: 1, partialGround: true, ambSat: 0.6,
   near: { center: [40, 8], extent: 128, res: 4096 },
   far: { center: [20, 0], extent: 1100, res: 2048 },
 };
