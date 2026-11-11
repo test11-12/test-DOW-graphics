@@ -164,11 +164,15 @@ void main(){
       float gz = textureLod(tWake, wuv+vec2(0.0,e), wl).g-textureLod(tWake, wuv-vec2(0.0,e), wl).g;
       slope += vec2(gx, gz)*(170.0/uWakeRegion.z)*clamp(1.0-fp*0.15, 0.0, 1.0);
       vec4 fn = dtex(duv(3), 3); float fn2 = dtex(duv(4), 4).r;
-      float n = mix(fn.b*0.75+fn.r*0.4, fn2, 0.35);
-      n = mix(n, 0.5, clamp(fp*0.7, 0.0, 1.0));
-      foam = smoothstep(1.0-wk.r*1.05, 1.0-wk.r*1.05+0.22, n+0.02);
-      foam = max(foam, smoothstep(0.86, 1.0, wk.r));
-      foam = mix(foam, smoothstep(0.2, 0.75, wk.r), clamp(fp*0.8, 0.0, 1.0));   // too far to see the lace: an even white
+      // foam is lace: bright along the walls between bubble cells (far from the cellular feature points), at
+      // two cell sizes, broken up by fBm; fresh white water fills in, old foam thins to the walls alone
+      float c1 = dtex(duv(4)*1.7+0.21, 4).b, c2 = dtex(duv(3)*2.9+0.57, 3).b;
+      float lace = max(smoothstep(0.34, 0.56, c1), 0.75*smoothstep(0.38, 0.6, c2));
+      float n = clamp(lace*0.7+fn.r*0.45+0.3*(fn2-0.5), 0.0, 1.0);
+      n = mix(n, 0.55, clamp(fp*0.5, 0.0, 1.0));
+      foam = smoothstep(1.0-wk.r*1.08, 1.0-wk.r*1.08+0.16, n);
+      foam = max(foam, smoothstep(0.94, 1.0, wk.r)*(0.7+0.3*lace));
+      foam = mix(foam, smoothstep(0.2, 0.8, wk.r)*0.85, clamp(fp*0.6-0.2, 0.0, 1.0));   // too far to resolve the lace: an even white
       churn = wk.b*(0.55+0.9*fn.r);
       var += churn*0.03;                                 // aerated water is matt: no glitter in the wash
     }
@@ -225,7 +229,7 @@ void main(){
   }
   float sunUp = max(uSunDir.y, 0.0);
   vec3 body = uWaterCol*0.3183*(uSunColor*sunUp*shadow+amb);
-  body = mix(body, vec3(0.16, 0.30, 0.29)*0.3183*(uSunColor*sunUp*shadow+amb), clamp(churn*0.5, 0.0, 0.6));
+  body = mix(body, vec3(0.20, 0.38, 0.36)*0.3183*(uSunColor*sunUp*shadow+amb), clamp(churn*0.7, 0.0, 0.75));   // aerated water: pale turquoise
   // light scattered forward through thin crests when looking up-sun
   float crest = clamp(dot(slope, -normalize(uSunDir.xz+1e-5))*2.2, 0.0, 1.0);
   body += vec3(0.02, 0.09, 0.075)*uSunColor*shadow*0.3183*crest*pow(max(dot(-V, normalize(vec3(uSunDir.x, 0.0, uSunDir.z))), 0.0), 3.0);
@@ -266,8 +270,8 @@ void main(){
     float fresh = exp(-vDat.y*30.0);                                          // boiling white water off the transom
     float edge = smoothstep(0.5, 0.82, ax)*(1.0-smoothstep(0.9, 1.0, ax));    // the two bright shoulders of the wake
     float core = 1.0-smoothstep(0.0, 0.8, ax);
-    o.r = (fresh*pow(prof, 0.4)*1.3+edge*exp(-vDat.y*6.0)*(0.4+1.0*n)+core*exp(-vDat.y*10.0)*(0.2+1.3*n*n2*2.0))*k;
-    o.b = pow(prof, 0.8)*exp(-vDat.y*3.0)*k;
+    o.r = (fresh*pow(prof, 0.4)*1.15+edge*exp(-vDat.y*8.0)*(0.25+0.8*n)+core*exp(-vDat.y*16.0)*(0.15+1.1*n*n2*2.0))*k*0.85;
+    o.b = pow(prof, 0.8)*exp(-vDat.y*2.2)*k;
   } else if (vType < 1.5){     // bow-wave arm
     float prof = max(1.0-vDat.x*vDat.x, 0.0);
     float n = texture2D(tDetail, vec2(vDat.z*0.11, vDat.x*0.4)).g;
