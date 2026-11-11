@@ -80,3 +80,49 @@ A film is a list of shots. Each shot gives a time range, a `pose(time)` that pla
 function of film time, live playback, scrubbing and the offline renderer produce the same picture. World
 positions are kept in double precision and re-centred on the camera every frame, so a 14 m aircraft and a
 400 km horizon share one scene.
+
+## Engine reference
+
+`src/quarterhorse.js` is the worked example for everything below.
+
+**Frame order** (`engine/pipeline.js`): sky-view table and ambient → reflection probe → aerial-perspective
+froxels → scene (MSAA, log depth) → motion vectors → deferred terrain lighting → ambient occlusion →
+volumetric clouds → sky, sun, aerial perspective and cloud composite → effects layer → refraction (heat
+haze, shock fronts) → depth of field → motion blur → light shafts → bloom and flare → lens, AgX tone map,
+grade, grain.
+
+**Layers** (`LAYER`): `STATIC`, `DYNAMIC` (call `pipe.registerDynamic(root)` so it gets motion vectors),
+`FX` (additive, drawn after the atmosphere; test depth by hand against `tDepth`), `DISTORT` (refraction).
+
+**Grade and lens**, per shot, in `post`: `exposure, contrast, sat, wb, lift, tint, bloom, bloomSpread,
+vignette, grain, ca, shutter, shimmer:[px, scale, far], aerial, sunDisk, sharpen`,
+`dof:{focus (m), fstop, max (px)}`, `rays` (light shafts when the sun is in or near frame),
+`flare:{ghost, halo, streak, thr}`, `ao:{radius, strength}|false`, `cirrus:{alt, cover, opacity, scale, wind}`,
+`clouds:{…}` (below), `mode:'thermal'` with `thermal:[gain, level, noise, polarity]`, `envKey`,
+`envDeck:{alt, k}`.
+
+**Sun and air**: `pipe.atmo.setSun(azimuthDeg, elevationDeg)` (0 = north, 90 = east);
+`pipe.atmo.uniforms.uHaze / uHazeH` set aerosol density and scale height; `pipe.atmo.groundAlbedo`.
+
+**Clouds** (`engine/clouds.js`): `new CloudLayer(pipe, {base, top, div})` ray-marches one layer of cumulus
+between two altitudes (m MSL) at 1/div resolution. Turn it on per shot with
+`post.clouds = {cover 0..1, scale, wind:[km/s, km/s], density, tile (m), steps, erosion, gain, shear,
+shadow 0..1, hole:[x, z, radius, strength]}`. `hole` thins the layer around a world position (to keep a low
+sun or the ground under a look-down shot visible). Create the layer before the terrain and pass
+`clouds.terrainShadow()` into the terrain recipe (`uniforms`, `defines`) so the ground takes the same
+cloud shadows.
+
+**Terrain** (`engine/terrain.js`): a recipe is GLSL for `terrainH(km, lod)`, `terrainMask(...)` and
+`shadeTerrain(...)`, plus the extents of a near and a far baked map. The mesh only writes depth; one
+full-screen pass lights it. In `shadeTerrain`, sample the shared detail texture with `dtex(duv(i), i)`
+(scale slot `i`, stable under the camera). `spec > 0` marks open water (mirror of the sky plus glitter);
+`spec < 0` marks pavement (glossy low-sun lobe, sky sheen at grazing angles). Anything drawn over the
+terrain with alpha below 1 (for example dark shadow streaks under plants) lets that much less terrain
+light through.
+
+**Effects** (`engine/fx.js`): `makePlume` (ray-marched afterburner with shock cells), `makeHeatHaze`,
+`makeShockCone`, `Trail` (stateless particles), `makeGlow`.
+
+**Development tools**: `node tools/shot.mjs <film> <outPrefix> [--w --h --nres --prof=1 --off=a,b
+--cam=x,y,z,lookx,looky,lookz,fov --debug=scene|ao|vel|tile] t1 t2 …` renders stills at film times;
+`--prof=1` prints per-pass timings; `--cam` replaces the shot's camera.
