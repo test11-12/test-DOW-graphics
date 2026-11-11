@@ -289,26 +289,26 @@ def horse_mark(W, H):
     S = 4
     im = Image.new('L', (W * S, H * S), 0); g = ImageDraw.Draw(im)
     P = lambda pts: [(x * W * S, y * H * S) for x, y in pts]
-    # crest: from the trailing tip up to the ear
-    crest = (bez((0.0, 0.46), (0.10, 0.41), (0.20, 0.27), (0.33, 0.175), 16) + bez((0.33, 0.175), (0.42, 0.115), (0.50, 0.075), (0.578, 0.0), 12) +
-             bez((0.60, 0.10), (0.59, 0.15), (0.58, 0.185), (0.565, 0.205), 6) + bez((0.565, 0.205), (0.42, 0.20), (0.28, 0.37), (0.14, 0.465), 16) + [(0.0, 0.50)])
+    # crest: a thick mane streak from the trailing tip up to the ear, two barbs on its back
+    crest = (bez((0.0, 0.46), (0.10, 0.40), (0.20, 0.25), (0.33, 0.165), 16) + bez((0.33, 0.165), (0.42, 0.105), (0.50, 0.07), (0.59, 0.0), 12) +
+             bez((0.615, 0.10), (0.60, 0.16), (0.59, 0.20), (0.57, 0.235), 6) + bez((0.57, 0.235), (0.42, 0.22), (0.28, 0.40), (0.14, 0.49), 16) + [(0.0, 0.52)])
     g.polygon(P(crest), fill=255)
-    for (x0, y0, x1, y1, x2, y2) in ((0.215, 0.275, 0.262, 0.135, 0.305, 0.20), (0.335, 0.18, 0.385, 0.06, 0.42, 0.125)):   # barbs
+    for (x0, y0, x1, y1, x2, y2) in ((0.205, 0.285, 0.255, 0.115, 0.305, 0.20), (0.325, 0.19, 0.38, 0.045, 0.425, 0.125)):   # barbs
         g.polygon(P([(x0, y0), (x1, y1), (x2, y2)]), fill=255)
-    # face line from the ear down to the muzzle
-    face = (bez((0.578, 0.0), (0.70, 0.10), (0.84, 0.40), (0.99, 0.715), 20) + bez((0.968, 0.75), (0.86, 0.575), (0.74, 0.33), (0.605, 0.21), 20))
+    # face: a fine line from the ear down to the muzzle
+    face = (bez((0.59, 0.0), (0.70, 0.11), (0.84, 0.40), (0.975, 0.68), 20) + bez((0.955, 0.70), (0.84, 0.47), (0.72, 0.24), (0.615, 0.125), 20))
     g.polygon(P(face), fill=255)
-    # second mane streak into the cheek
-    st2 = (bez((0.165, 0.715), (0.30, 0.64), (0.42, 0.46), (0.68, 0.43), 20) + bez((0.67, 0.53), (0.50, 0.50), (0.38, 0.66), (0.165, 0.74), 20))
+    # second mane streak, running into the cheek
+    st2 = (bez((0.175, 0.67), (0.30, 0.56), (0.44, 0.38), (0.67, 0.385), 20) + bez((0.66, 0.47), (0.52, 0.47), (0.40, 0.62), (0.175, 0.70), 20))
     g.polygon(P(st2), fill=255)
     # neck stroke
-    neck = (bez((0.335, 0.83), (0.45, 0.76), (0.55, 0.64), (0.62, 0.55), 12) + bez((0.655, 0.66), (0.60, 0.80), (0.54, 0.92), (0.47, 1.0), 12))
+    neck = (bez((0.36, 0.86), (0.46, 0.76), (0.55, 0.62), (0.62, 0.50), 12) + bez((0.66, 0.54), (0.61, 0.72), (0.56, 0.88), (0.49, 0.99), 12))
     g.polygon(P(neck), fill=255)
-    # jaw and muzzle
-    jaw = (bez((0.67, 0.53), (0.76, 0.57), (0.86, 0.68), (0.955, 0.75), 14) + bez((0.955, 0.75), (1.0, 0.77), (1.0, 0.90), (0.955, 0.93), 10) +
-           bez((0.955, 0.93), (0.86, 0.93), (0.76, 0.84), (0.685, 0.70), 14))
+    # cheek and jaw, tapering to the muzzle with its nostril hook
+    jaw = (bez((0.655, 0.40), (0.74, 0.50), (0.84, 0.66), (0.955, 0.72), 14) + bez((0.955, 0.72), (1.0, 0.74), (1.0, 0.90), (0.95, 0.925), 10) +
+           bez((0.95, 0.925), (0.85, 0.91), (0.74, 0.84), (0.675, 0.66), 14))
     g.polygon(P(jaw), fill=255)
-    g.ellipse(P([(0.948, 0.80), (0.975, 0.875)]), fill=0)           # nostril
+    g.ellipse(P([(0.945, 0.775), (0.975, 0.865)]), fill=0)           # nostril
     return im.resize((W, H), Image.LANCZOS)
 
 
@@ -766,6 +766,12 @@ def fus_decals(ff):
         x = np.where(sd < 0, SEAL_S + 0.245 - ss, ss - (SEAL_S - 0.245))
         rgb, al = SD.sample(x, aa - ac + 0.245)
         over_m(L, m, al, rgb, 0.5)
+        # the dark field as 'black metal' like the lettering (no dielectric sheen to grey it in the sun); the pale ring
+        # and emblem stay ordinary paint
+        darkf = al * sstep(0.10, 0.04, rgb.mean(1))
+        L.metal[m] = np.maximum(L.metal[m] * (1 - al), darkf)
+        L.base[m] = L.base[m] * (1 - darkf[:, None]) + (rgb * 1.6 + 0.006) * darkf[:, None]
+        L.rough[m] = L.rough[m] * (1 - darkf) + 0.6 * darkf
         L.h[m] += 0.00007 * al
         L.astr[m] *= (1 - al)
     out.append(badge)
@@ -1226,10 +1232,11 @@ def paint_gear(S, OUTS, skin):
         across = np.cross(Nd, along)
         sd = s[dout]; zd = P[dout, 2]
         panel = (np.abs(P[dout, 1]) > 0.6).astype(np.int64) * 4 + (P[dout, 1] > 0) + 12000
-        skin.metal(sub, sd, zd, panel, ao[dout], along, across, 0.86)
-        sub.rough += 0.14
+        # the doors are flat sheet that faces the low sun square-on: a duller, greyer finish than the skin (as in the
+        # photos), a hinge strip, and bold screw rows keep a surface in them instead of a clipped white card
+        skin.metal(sub, sd, zd, panel, ao[dout], along, across, 0.50)
+        sub.rough += 0.20
         sub.h += 0.0005 * np.sin(sd * 2 * math.pi / 0.42) * np.sin(zd * 2 * math.pi / 0.36) + 0.0003 * (fbm(sd, zd, 0.5, 3, seed=77) - 0.5)
-        # rivet rows round the edge and along two stringers
         for key, (s0d, s1d, z0d, z1d) in (('n', DOORS['nose'][:4]), ('m', DOORS['main'][:4])):
             m = (sd > s0d - 0.02) & (sd < s1d + 0.02)
             if not m.any():
@@ -1237,12 +1244,20 @@ def paint_gear(S, OUTS, skin):
             ex = np.minimum(sd - s0d, s1d - sd); ez = np.minimum(zd - z1d, z0d - zd)
             dmin = np.minimum(ex, ez)
             alongd = np.where(ex < ez, zd, sd)
-            head, ring, rnd = rivet_row(alongd, dmin - 0.016, 0.028, 0.0030, 120)
-            for stz in np.linspace(z1d, z0d, 5)[1:-1]:
-                h2, r2, _ = rivet_row(sd, zd - stz, 0.032, 0.0030, 121)
-                head = np.maximum(head, h2 * 0.8); ring = np.maximum(ring, r2 * 0.8)
-            sub.base[m] *= (1 + 0.02 * head[m][:, None] - 0.28 * ring[m][:, None])
-            sub.h[m] += -0.00004 * ring[m]
+            head, ring, rnd = rivet_row(alongd, dmin - 0.022, 0.045, 0.0055, 120)
+            disc = np.maximum(head, ring)
+            for stz in np.linspace(z1d, z0d, 5)[1:-1]:                      # stringer rows
+                h2, r2, _ = rivet_row(sd, zd - stz, 0.045, 0.0055, 121)
+                disc = np.maximum(disc, np.maximum(h2, r2))
+            for sts in np.linspace(s0d, s1d, 5)[1:-1]:                      # rib rows
+                h2, r2, _ = rivet_row(zd, sd - sts, 0.045, 0.0055, 122)
+                disc = np.maximum(disc, np.maximum(h2, r2))
+            hinge = line_profile(zd - (z0d - 0.05), 0.004)                 # the hinge strip's lower edge
+            edge_d = sstep(0.014, 0.0, dmin)
+            dk = np.clip(0.5 * disc + 0.6 * hinge + 0.3 * edge_d, 0, 0.8)
+            sub.base[m] *= (1 - dk[m])[:, None]
+            sub.rough[m] += 0.1 * disc[m]
+            sub.h[m] += -0.0004 * disc[m] - 0.0006 * hinge[m]
         L.base[dout], L.rough[dout], L.metal[dout], L.h[dout] = sub.base, sub.rough, sub.metal, sub.h
         L.adir[dout], L.astr[dout] = sub.adir, sub.astr
     inner = pid == 60
