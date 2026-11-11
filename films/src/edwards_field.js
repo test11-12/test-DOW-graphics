@@ -60,6 +60,26 @@ export async function buildRamp(pipe, ac) {
   return g;
 }
 
+// The parked aircraft's tyres as they stand on the ramp (blender/fury_ramp.py -> assets/fury/tyres.glb): ribbed tread
+// with dust in the grooves, a scuffed crown, a flattened contact patch. They replace the plain lathe tyres of the
+// code-built airframe, which are found by what they are (a lathe about the axle in near-black rubber); a model
+// that brings its own tyres is left alone. Call before the aircraft is registered as dynamic. Returns the count.
+export async function dressTyres(pipe, acRoot) {
+  if (!hasAsset('fury/tyres.glb')) return 0;
+  const hits = [];
+  acRoot.traverse(o => { if (o.isMesh && o.geometry.type === 'LatheGeometry' && o.material.color && o.material.color.getHex() === 0x0b0b0c) hits.push(o); });
+  if (!hits.length) return 0;
+  const { root } = await loadGLB('fury/tyres.glb', pipe, { envIntensity: 1.0 });
+  const proto = {}; root.traverse(o => { if (o.isMesh) proto[o.name] = o; });
+  let n = 0;
+  for (const old of hits) {
+    old.geometry.computeBoundingBox(); const r = old.geometry.boundingBox.max.y;   // tread radius: the wheel centre stands this far above the pavement
+    const p = r > 0.2 ? proto.tyre_main : proto.tyre_nose; if (!p) continue;
+    const m = p.clone(); m.position.set(old.position.x, old.position.y - r, old.position.z); old.parent.add(m); old.visible = false; n++;
+  }
+  return n;
+}
+
 // ------------------------------------------------------------------ flight-line buildings, masts, lights, signs (field frame)
 // Group origin = runway midpoint at field elevation; local +x east, +z south (world axes).
 export function buildFieldFar(pipe, sunDir) {

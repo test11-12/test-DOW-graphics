@@ -3,8 +3,11 @@
 # airfield furniture only: no unit markings and no text. Every prop is one mesh with its own baked glTF set (base
 # colour, ORM, normal) built from CC0 photoscans (ambientCG): worn at convex edges, grimy where enclosed, dusted where
 # it faces up and near the ground. Exported to assets/fury/ramp.glb, one node per prop, origin on the ground.
+# Also the parked aircraft's tyres as they stand on the ramp (assets/fury/tyres.glb): ribbed tread, dust in the
+# grooves, scuffed crown, flattened contact patch; plain sidewalls (no lettering).
 # Frame: Blender +X towards the parked aircraft's nose (engine +x), +Z up, -Y to its right (engine +z).
 #   node tools/blender.mjs fury_ramp [--only=cone,chocks_main] [--preview] [--fast]
+# A file is exported when all of its props were baked in the run (--only=tyre_main,tyre_nose rebuilds tyres.glb alone).
 import math, os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib'))
 import bpy
@@ -283,9 +286,21 @@ def edge_material(name, radius):
 
 
 # ---------------------------------------------------------------- baking one prop
-def bake_prop(ob, name, size, edge_r, ao_dist, build_mats):
+def upsize(img, size, name):
+    """A resized copy of a baked image (through its pixels: a datablock copy of an unsaved bake comes back blank)."""
+    from PIL import Image
+    a = d.pixels(img)[..., 0]
+    b = np.asarray(Image.fromarray(a, mode='F').resize((size, size), Image.BILINEAR), np.float32)
+    out = d.new_image(name, size, non_color=True)
+    d.set_pixels(out, np.stack([b, b, b, np.ones_like(b)], -1))
+    return out
+
+
+def bake_prop(ob, name, size, edge_r, ao_dist, build_mats, shape_masks=True):
     """Bake the shape masks (occlusion, convex edges), then the full glTF set from source materials built on them.
-    Materials on ob are placeholders whose names key build_mats' result."""
+    Materials on ob are placeholders whose names key build_mats' result. shape_masks=False leaves the masks blank
+    (no occlusion grime, no edge wear, no baked occlusion): the flight-line props in ramp.glb were baked and
+    reviewed that way, so they keep it; the tyres use the masks."""
     size = max(256, size // (4 if FAST else 1))
     bm = bmesh.new()                              # triangles: the exported tangent frame is the one the normal map is baked in
     bm.from_mesh(ob.data)
@@ -296,19 +311,23 @@ def bake_prop(ob, name, size, edge_r, ao_dist, build_mats):
     d.pack_uv([ob], margin=0.004)
     d.log(name, d.stats(ob), 'texel', round(d.texel_density(ob, size) * 1000, 2), 'mm')
     keys = [s.material.name for s in ob.material_slots]
-    w = d.ensure_world((1, 1, 1))
-    w.light_settings.distance = ao_dist
-    ao = d.new_image(f'{name}_aomask', size // 2, non_color=True, color=(1, 1, 1, 1))
-    d.bake([ob], 'AO', ao, samples=16 if FAST else 48)
-    d.blur(ao, 1.3)
-    ao = d.resize(ao, size, f'{name}_aofull')
-    em = edge_material(f'{name}_edgemat', edge_r)
-    for s in ob.material_slots:
-        s.material = em
-    edge = d.new_image(f'{name}_edge', size // 2, non_color=True)
-    d.bake_socket([ob], 'Base Color', edge, samples=2 if FAST else 6)
-    d.blur(edge, 1.0)
-    edge = d.resize(edge, size, f'{name}_edgefull')
+    if shape_masks:
+        w = d.ensure_world((1, 1, 1))
+        w.light_settings.distance = ao_dist
+        ao = d.new_image(f'{name}_aomask', size // 2, non_color=True, color=(1, 1, 1, 1))
+        d.bake([ob], 'AO', ao, samples=16 if FAST else 48)
+        d.blur(ao, 1.3)
+        ao = upsize(ao, size, f'{name}_aofull')
+        em = edge_material(f'{name}_edgemat', edge_r)
+        for s in ob.material_slots:
+            s.material = em
+        edge = d.new_image(f'{name}_edge', size // 2, non_color=True)
+        d.bake_socket([ob], 'Base Color', edge, samples=2 if FAST else 6)
+        d.blur(edge, 1.0)
+        edge = upsize(edge, size, f'{name}_edgefull')
+    else:
+        ao = d.new_image(f'{name}_aofull', size, non_color=True, color=(1, 1, 1, 1))
+        edge = d.new_image(f'{name}_edgefull', size, non_color=True)
     mats = build_mats({'ao': ao, 'edge': edge})
     for i, s in enumerate(ob.material_slots):
         s.material = mats[keys[i]]
@@ -531,6 +550,87 @@ def build_tray():
     return put(ob, M['tray'])
 
 
+def build_tyre(tag, r, w, grooves, defl=0.006):
+    """An aircraft tyre standing on z = 0, axle along Y: crowned tread with circumferential grooves, rounded
+    shoulders, bulged plain sidewalls, beads at the rim (0.535 r). The tread radius is r + defl
+    and the bottom is pressed flat, so the wheel centre stays r above the ground and the sidewall bulges at the patch."""
+    ro, hw = r + defl, w / 2
+    side = [(0.522 * r, 0.36 * w), (0.535 * r, 0.405 * w), (0.575 * r, 0.448 * w), (0.66 * r, 0.485 * w), (0.78 * r, 0.5 * w),
+            (0.875 * r, 0.487 * w), (0.94 * r, 0.448 * w), (0.976 * ro, 0.398 * w), (0.992 * ro, 0.35 * w)]
+    sw = [(v.x, v.y) for v in catmull([(a, b, 0.0) for a, b in side], 6)]
+    tread, n = [], max(40, int(0.7 * w / 0.0016))
+    gw, gd = 0.0052, 0.0034                                         # groove width and depth (part worn)
+    for i in range(1, n):
+        y = 0.35 * w * (1 - 2 * i / n)
+        rho = ro * (1 - 0.008 * (y / (0.35 * w)) ** 2)
+        for g in grooves:
+            t = abs(y - g * w) / (gw / 2)
+            rho -= gd * (1.0 if t < 0.62 else max(0.0, (1.0 - t) / 0.38))
+        tread.append((rho, y))
+    prof = sw + tread + [(rho, -y) for rho, y in reversed(sw)]
+    segs = 112
+    bm = bmesh.new()
+    rings = []
+    for i in range(segs):
+        a = 2 * math.pi * i / segs
+        ring = []
+        for rho, y in prof:
+            x, z = rho * math.cos(a), r + rho * math.sin(a)
+            zf = 0.5 * (z + math.sqrt(z * z + 0.003 ** 2))        # pressed against the ground
+            k = max(0.0, 1.0 - zf / 0.07)                          # the load bulges the sidewall near the patch
+            ring.append(bm.verts.new((x, y * (1 + 0.075 * k * k), zf)))
+        rings.append(ring)
+    for i in range(segs):
+        A, B = rings[i], rings[(i + 1) % segs]
+        for j in range(len(prof) - 1):
+            bm.faces.new((A[j], A[j + 1], B[j + 1], B[j]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    ob = link(tag, bm)
+    d.smooth(ob, 38)
+    return put(ob, M['rubber'])
+
+
+def tyre_mats(r, defl=0.006):
+    """Carbon-black rubber from a scan; the crown scuffed grey by the runway, pale dust packed into the grooves and
+    hazing the sidewalls (more towards the ground), nothing glossy."""
+    def make(m):
+        mat = surface('ty_rub', 'Rubber004', color=(0.027, 0.026, 0.025, 1), scale=7.0, rough_add=0.06, nstr=0.8, grime=0.0,
+                      dust=0.06, ground_dirt=0.3, ground_h=0.085, tone=0.6, masks=m)
+        nt = mat.node_tree
+        bsdf = nt.nodes['Principled BSDF']
+        tc = d.texcoord(nt)
+        sep = node(nt, 'ShaderNodeSeparateXYZ')
+        nt.links.new(tc.outputs['Object'], sep.inputs['Vector'])
+        dz = d.math_node(nt, 'SUBTRACT', sep.outputs['Z'], r)
+        rr = d.math_node(nt, 'SQRT', d.math_node(nt, 'ADD', d.math_node(nt, 'MULTIPLY', sep.outputs['X'], sep.outputs['X']), d.math_node(nt, 'MULTIPLY', dz, dz)))
+        ro = r + defl
+        crown = smoothstep(nt, rr, 0.945 * ro, 0.972 * ro)             # tread and shoulders
+        big = noise(nt, 9.0, 4.0, 0.6, tc.outputs['Object'])
+        fine = noise(nt, 90.0, 6.0, 0.7, tc.outputs['Object'])
+        A = d.tex(nt, m['ao'])
+        enc = d.math_node(nt, 'POWER', d.math_node(nt, 'SUBTRACT', 1.0, A.outputs['Color'], True), 0.8)
+        base = bsdf.inputs['Base Color'].links[0].from_socket
+        rough = bsdf.inputs['Roughness'].links[0].from_socket
+        # the crown: abraded to a dull grey, patchy
+        scuff = d.math_node(nt, 'MULTIPLY', crown, d.math_node(nt, 'ADD', 0.3, d.math_node(nt, 'MULTIPLY', big, 0.35)))
+        base = d.mix_rgb(nt, base, (0.066, 0.063, 0.059, 1), scuff)
+        rough = d.mix_rgb(nt, rough, (0.82,) * 3 + (1,), scuff)
+        # dust packed into the grooves
+        gr = d.math_node(nt, 'MINIMUM', d.math_node(nt, 'MULTIPLY', d.math_node(nt, 'MULTIPLY', crown, enc), 2.2), 0.8)
+        base = d.mix_rgb(nt, base, (0.3, 0.255, 0.2, 1), gr)
+        rough = d.mix_rgb(nt, rough, (0.96,) * 3 + (1,), gr)
+        # a haze of dust on the sidewalls, in drifts
+        haze = d.math_node(nt, 'MULTIPLY', d.math_node(nt, 'SUBTRACT', 1.0, crown, True),
+                           smoothstep(nt, d.math_node(nt, 'ADD', big, d.math_node(nt, 'MULTIPLY', fine, 0.3)), 0.3, 0.95))
+        haze = d.math_node(nt, 'MULTIPLY', haze, 0.2)
+        base = d.mix_rgb(nt, base, (0.17, 0.145, 0.115, 1), haze)
+        rough = d.mix_rgb(nt, rough, (0.95,) * 3 + (1,), haze)
+        nt.links.new(base, bsdf.inputs['Base Color'])
+        nt.links.new(rough, bsdf.inputs['Roughness'])
+        return {'rubber': mat}
+    return make
+
+
 def cone_mats(m):
     """PVC cone: orange with two retro-reflective white collars (by height), black rubber base."""
     pvc = surface('k_pvc', 'Plastic006', color=(0.80, 0.13, 0.015, 1), scale=2.5, rough_add=0.22, rough_mul=0.6, wear=0.35, wear_color=(0.9, 0.45, 0.25, 1), wear_rough=0.6, grime=0.6, dust=0.4, ground_dirt=0.6, ground_h=0.14, tone=0.22, masks=m)
@@ -578,6 +678,8 @@ BAKES = {   # prop: (builder, texture size, convex-edge radius (m), occlusion di
               lambda m: {'alu': surface('s_alu', 'Metal032', color=(0.78, 0.78, 0.78, 1), scale=2.0, metal=1.0, rough_add=0.08, grime=0.6, dust=0.35, ground_dirt=0.5, ground_h=0.1, tone=0.5, masks=m),
                          'tread': surface('s_tread', 'DiamondPlate008C', scale=3.2, metal=1.0, grime=0.5, dust=0.7, masks=m),
                          'rubber': surface('s_rub', 'Rubber004', scale=5.0, grime=0.4, dust=0.6, masks=m)}),
+    'tyre_main': (lambda: build_tyre('tyre_main', MAIN_R, MAIN_W, (-0.215, -0.072, 0.072, 0.215)), 2048, 0.003, 0.03, tyre_mats(MAIN_R)),
+    'tyre_nose': (lambda: build_tyre('tyre_nose', NOSE_R, NOSE_W, (-0.17, 0.0, 0.17)), 2048, 0.003, 0.03, tyre_mats(NOSE_R)),
     'driptray': (build_tray, 512, 0.004, 0.15,
                  lambda m: {'tray': surface('d_steel', 'Metal032', color=(0.16, 0.155, 0.15, 1), scale=2.0, metal=1.0, rough_mul=0.6, grime=1.0, grime_color=(0.008, 0.008, 0.008, 1), dust=0.2, ground_h=0.0, masks=m)}),
 }
@@ -585,14 +687,15 @@ BAKES = {   # prop: (builder, texture size, convex-edge radius (m), occlusion di
 # ---------------------------------------------------------------- run
 d.reset(samples=16)
 d.ensure_world()
-M = {k: bpy.data.materials.new(k) for k in ('urethane', 'rope', 'pvc', 'rubber', 'yellow', 'steel', 'red', 'brass', 'white', 'dark', 'alu', 'tread', 'tray')}
-out = []
+# placeholders need node trees: the occlusion bake writes to an image node in each material
+M = {k: d.new_material(k)[0] for k in ('urethane', 'rope', 'pvc', 'rubber', 'yellow', 'steel', 'red', 'brass', 'white', 'dark', 'alu', 'tread', 'tray')}
+out, done = [], {}
 for name, (builder, size, er, aod, mats) in BAKES.items():
     if ONLY and name not in ONLY:
         continue
     ob = builder()
     d.log('built', d.stats(ob))
-    bake_prop(ob, name, size, er, aod, mats)
+    bake_prop(ob, name, size, er, aod, mats, shape_masks=name.startswith('tyre_'))
     if PREVIEW:
         os.makedirs(PREV, exist_ok=True)
         dims = ob.dimensions
@@ -601,7 +704,13 @@ for name, (builder, size, er, aod, mats) in BAKES.items():
     ob.location.x += 50.0 * (len(out) + 1)     # out of the way of the next prop's occlusion bake
     ob.hide_render = True
     out.append(ob)
+    done[name] = ob
 for o in out:
     o.location.x = 0.0
     o.hide_render = False
-d.export_glb(d.out_path('fury', 'ramp.glb') if not ONLY else os.path.join(BAKE, 'ramp_partial.glb'), out)
+FILES = {'tyres.glb': [k for k in BAKES if k.startswith('tyre_')]}
+FILES['ramp.glb'] = [k for k in BAKES if k not in FILES['tyres.glb']]
+for fn, names in FILES.items():
+    got = [done[k] for k in names if k in done]
+    if got:
+        d.export_glb(d.out_path('fury', fn) if len(got) == len(names) else os.path.join(BAKE, fn.replace('.glb', '_partial.glb')), got)
