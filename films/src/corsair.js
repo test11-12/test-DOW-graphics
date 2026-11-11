@@ -54,7 +54,7 @@ async function build(film) {
   pipe.atmo.setSun(SUN.az, SUN.el);
   pipe.atmo.uniforms.uHaze.value = +film.params.get('haze') || 70; pipe.atmo.uniforms.uHazeH.value = 550; pipe.atmo.groundAlbedo.setRGB(0.05, 0.08, 0.09);
   const clouds = new CloudLayer(pipe, { base: 1500, top: 3100, div: +film.params.get('cdiv') || 4 });
-  const P = film.params, sea = { wind: 50, amp: +P.get('seaamp') || 1.0, long: +P.get('sealong') || 1, chop: +P.get('seachop') || 0.8, spread: 40 };
+  const P = film.params, sea = { wind: 50, amp: +P.get('seaamp') || 2.4, long: +P.get('sealong') || 0.45, chop: +P.get('seachop') || 0.85, spread: 40 };
   const ocean = new Ocean(pipe, { clouds, sea });
   ocean.setShelter(15, 70, 150, 340, 0.3);      // the basin behind the breakwaters
   const boats = [0, 1, 2].map(() => { const b = buildCorsair(pipe); pipe.scene.add(b); pipe.registerDynamic(b); return b; });
@@ -96,18 +96,32 @@ async function build(film) {
   return W;
 }
 
-// a boat riding the sea: position on the surface, trim from speed and from the local wave slope
+// A boat riding the sea. A planing hull rides the crests rather than averaging through them, and it has inertia:
+// sample the surface along the keel and abeam at three earlier moments of its own track and fit height, pitch
+// and roll from them. Pure function of time.
 const tmp = v3();
-function placeBoat(film, b, p, t) {
-  const O = W.ocean, r = p.hdg * D2R, fx = Math.sin(r), fz = -Math.cos(r), L = 2.6, x = p.x, z = p.z;
-  const h = O.heightAt(x, z, t), hb = O.heightAt(x + fx * L, z + fz * L, t), hs = O.heightAt(x - fx * L, z - fz * L, t);
-  const hr = O.heightAt(x - fz * 0.9, z + fx * 0.9, t), hl = O.heightAt(x + fz * 0.9, z - fx * 0.9, t);
-  const plane = smooth(4, 14, p.v);
-  const pitch = Math.atan2(hb - hs, 2 * L) / D2R * 0.8 + 3.6 * plane + 0.5 * wobble(t * 2.3, 3 + x * 0.01);
-  const roll = Math.atan2(hr - hl, 1.8) / D2R * 0.6 + 0.8 * wobble(t * 1.7, 9 + z * 0.01);
-  tmp.set(x, (h + hb + hs) / 3 * 0.85 + 0.10 * plane, z); film.place(b, tmp);
+const KEEL = [-3.0, -1.5, 0, 1.5, 3.0], KW = [0.5, 0.3, 0.2], KDT = [0, 0.09, 0.18];
+function seaPose(tr, t) {
+  const O = W.ocean; let H = 0, P = 0, R = 0;
+  for (let k = 0; k < 3; k++) {
+    const tt = t - KDT[k], p = tr(tt), r = p.hdg * D2R, fx = Math.sin(r), fz = -Math.cos(r);
+    let sum = 0, mx = -1e9, sxy = 0;
+    for (const a of KEEL) { const h = O.heightAt(p.x + fx * a, p.z + fz * a, tt); sum += h; mx = Math.max(mx, h); sxy += a * h; }
+    const mean = sum / KEEL.length, slope = sxy / KEEL.reduce((q, a) => q + a * a, 0);
+    const hr = O.heightAt(p.x - fz * 0.95, p.z + fx * 0.95, tt), hl = O.heightAt(p.x + fz * 0.95, p.z - fx * 0.95, tt);
+    H += KW[k] * (mean + 0.45 * (mx - mean)); P += KW[k] * Math.atan(slope); R += KW[k] * Math.atan2(hr - hl, 1.9);
+  }
+  return { h: H, pitch: P / D2R, roll: R / D2R };
+}
+function placeBoat(film, b, tr, t) {
+  const p = tr(t), s = seaPose(tr, t), plane = smooth(4, 14, p.v);
+  const pitch = s.pitch * 0.85 + 3.6 * plane + 0.4 * wobble(t * 2.3, 3 + p.x * 0.01);
+  const roll = s.roll * 0.7 + 0.7 * wobble(t * 1.7, 9 + p.z * 0.01);
+  tmp.set(p.x, s.h + 0.22 * plane, p.z); film.place(b, tmp);
   attitude(p.hdg, pitch, roll, b.quaternion);
 }
+// height of a camera boat or a hand-held camera riding the swell at (x, z)
+const ride = (x, z, t, k = 0.75) => W ? W.ocean.heightAt(x, z, t - 0.12) * k : 0;
 // a point given in a boat's own axes [forward, up, right], in world coordinates
 function boatPoint(p, off, out) { const r = p.hdg * D2R, fx = Math.sin(r), fz = -Math.cos(r); return out.set(p.x + fx * off[0] - fz * off[2], off[1], p.z + fz * off[0] + fx * off[2]); }
 function updateSpray(film, i, track, t, on) {
@@ -148,11 +162,11 @@ const shots = [
     post: { ...UP_SUN, exposure: 0.21 } },
   { id: 's02', name: 'Corsair', t0: 6.5, t1: 14.5, note: 'Chase off the port quarter, low: the boat at speed against the sun path.',
     tracks: [LEAD],
-    camera: (lt, t) => { const p = LEAD(t), k = ease(lt / 8); return { pos: v3(p.x - 17 + 5 * k, 3.4 - 1.1 * k, p.z + 15 - 5.5 * k), look: v3(p.x + 2, 0.7, p.z - 1), fov: 30, shake: { rot: 0.14, freq: 0.9, seed: 2, jolt: 0.03 }, focus: v3(p.x, 0.5, p.z), focusRadius: 9 }; },
+    camera: (lt, t) => { const p = LEAD(t), k = ease(lt / 8); const cx = p.x - 17 + 5 * k, cz = p.z + 15 - 5.5 * k; return { pos: v3(cx, 3.4 - 1.1 * k + ride(cx, cz, t, 0.6), cz), look: v3(p.x + 2, 0.7 + ride(p.x, p.z, t, 0.4), p.z - 1), fov: 30, shake: { rot: 0.14, freq: 0.9, seed: 2, jolt: 0.03 }, focus: v3(p.x, 0.5, p.z), focusRadius: 9 }; },
     post: { ...UP_SUN }, wakeSize: 130 },
   { id: 's03', name: 'Head-on', t0: 14.5, t1: 21, note: 'Water-level long lens: the boat comes at the camera, spray flying, and goes by close.',
     tracks: [PASS],
-    camera: (lt, t) => { const p = PASS(t), cam = v3(SEA.x + 1.5, 1.9, SEA.z - 160), d = Math.hypot(p.x - cam.x, p.z - cam.z), fov = clamp(2 * Math.atan(5.2 / d) / D2R, 5, 46); return { pos: cam, look: v3(p.x, 0.9, p.z), fov, shake: { rot: 0.05 * Math.min(1, fov / 14), freq: 1.1, seed: 3 }, focus: v3(p.x, 0.5, p.z), focusRadius: 9 }; },
+    camera: (lt, t) => { const p = PASS(t), cam = v3(SEA.x + 1.5, 2.4 + ride(SEA.x + 1.5, SEA.z - 160, t), SEA.z - 160), d = Math.hypot(p.x - cam.x, p.z - cam.z), fov = clamp(2 * Math.atan(5.2 / d) / D2R, 5, 46); return { pos: cam, look: v3(p.x, 1.1 + ride(p.x, p.z, t, 0.5), p.z), fov, shake: { rot: 0.05 * Math.min(1, fov / 14), freq: 1.1, seed: 3 }, focus: v3(p.x, 0.5, p.z), focusRadius: 9 }; },
     post: { ...SEA_POST, exposure: 0.22, shutter: 0.3 }, wakeSize: 150 },
   { id: 's04', name: 'Three', t0: 21, t1: 28.5, note: 'From the air, down-sun: three boats, three white wakes on dark water.',
     tracks: TRIO,
@@ -250,7 +264,7 @@ function score(m) {
 // boats, port and ship are posed here so the engine sees them at the previous frame's time as well (motion vectors)
 function poseAll(shot, t, film) {
   const trs = shot.tracks || [];
-  W.boats.forEach((b, i) => { const tr = trs[i], p = tr && tr(t), on = !!(p && p.on); b.visible = on; if (on) placeBoat(film, b, p, t); });
+  W.boats.forEach((b, i) => { const tr = trs[i], p = tr && tr(t), on = !!(p && p.on); b.visible = on; if (on) placeBoat(film, b, tr, t); });
   tmp.set(0, 0, 0); film.place(W.port, tmp); film.place(W.hills, tmp);
   W.ship.visible = !!shot.ship; if (shot.ship) { tmp.set(shot.ship[0], 0, shot.ship[1]); film.place(W.ship, tmp); W.ship.rotation.y = (90 - shot.ship[2]) * D2R; }
 }
