@@ -11,7 +11,7 @@ import { CloudLayer } from '../engine/clouds.js';
 import { attitude } from '../engine/geo.js';
 import { makePlume, makeHeatHaze, makeGlow } from '../engine/fx.js';
 import { MOJAVE_TERRAIN, FIELD_ALT, RWY_HDG, SPOT } from './terrain_mojave.js';
-import { buildFury, buildAmraam, FURY } from './fury_model.js';
+import { buildFury, buildAmraam, FURY } from './fury_assets.js';
 import { buildRamp, buildFieldFar, buildScrub, fieldXZ } from './edwards_field.js';
 import { makeMissileTrail } from './fury_fx.js';
 
@@ -87,13 +87,13 @@ async function build(film) {
   field.add(far, scrub, ramp); pipe.scene.add(field);
   lap('field');
   // aircraft
-  const ac = buildFury(pipe); pipe.scene.add(ac);
+  const ac = await buildFury(pipe); pipe.scene.add(ac);
   const haze = makeHeatHaze(pipe, { length: 24, radius: FURY.nozzleR, spread: 3.0, strength: 0.0028 }); haze.position.set(FURY.nozzleX, FURY.nozzleY, 0); ac.add(haze);
   const nav = ac.userData.navPos.map((p, i) => { const g = makeGlow(pipe, { color: i ? [1.0, 0.07, 0.04] : [0.08, 1.0, 0.3], size: 0.3, depthSoft: 0.3 }); g.position.copy(p); ac.add(g); return g; });
   pipe.registerDynamic(ac);
   lap('aircraft');
   // missile, its motor and its trail
-  const msl = buildAmraam(pipe); pipe.scene.add(msl);
+  const msl = await buildAmraam(pipe); pipe.scene.add(msl);
   const tx = msl.userData.tailX;
   const plume = makePlume(pipe, { length: 7.5, radius: 0.085, diamonds: 9, color: [1.0, 0.42, 0.13], core: [1.0, 0.86, 0.6] }); plume.position.set(tx + 0.02, 0, 0); msl.add(plume);
   const glow = makeGlow(pipe, { color: [1.0, 0.7, 0.4], size: 1.4, depthSoft: 0.5 }); glow.position.set(tx - 0.3, 0, 0); msl.add(glow);

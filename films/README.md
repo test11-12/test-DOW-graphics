@@ -98,6 +98,14 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   material node helpers (tri-planar scanned materials, edge-wear and occlusion masks), PBR baking
   (base colour, ORM, normal, emissive; occlusion denoised), glTF export, a quick Cycles preview, and
   downloads of CC0 photoscans from Poly Haven and ambientCG.
+- `blender/lib/acpaint.py`: building and painting hard-surface vehicles: a small geometry kit in the
+  engine's body frame (lofts, wings, lathes), per-part ids, and projection painting: the livery, panel
+  breaks, fasteners and sealant are drawn with Pillow in metres in side elevation and plan, where the
+  reference photographs show them, and projected onto the baked position of every texel.
+- `blender/fury.py` (+ `fury_geo.py`) builds `assets/fury/fury.glb`, the YFQ-44A (nodes `body`, `wings`,
+  `misc`, `gear` and the `nav_*` light positions); `blender/amraam.py` builds `assets/fury/amraam.glb`
+  (nodes `aim120`, `motor_glow`). `fury geo` / `fury paint` run the Cycles bakes and the repaint
+  separately. `src/fury_assets.js` loads both behind the interface of `src/fury_model.js`.
 - Conventions: metres; vehicles modelled nose along +X, up +Z, starboard along -Y (the engine's +x forward,
   +y up, +z right after export); per-material maps: base colour (sRGB), ORM (R occlusion, G roughness,
   B metal), OpenGL normal.
