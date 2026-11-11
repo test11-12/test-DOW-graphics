@@ -122,6 +122,8 @@ export function makeMissileTrail(pipe, noise3, K) {
         // each scattering order is dimmer, reaches deeper and forgets more of the sun's direction
         float ph0 = mix(hg(cv, 0.72), hg(cv, -0.25), 0.35), ph1 = mix(hg(cv, 0.36), hg(cv, -0.12), 0.35), ph2 = 0.0796;
         vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb*0.3183;
+        // smoke this white photographs paler than the low sun's own colour (thin edges are lit by the whole sky as well)
+        vec3 sunC = mix(uSunColor, vec3(dot(uSunColor, vec3(0.3, 0.55, 0.15))), 0.5);
         float jit = hash12(gl_FragCoord.xy+fract(uFrame*0.618)*61.0), perp = length(rd.yz);   // grain, not a hatch pattern
         float t = tN, T = 1.0; vec3 C = vec3(0.0); bool inside = false;
         for (int i=0;i<128;i++){
@@ -141,7 +143,7 @@ export function makeMissileTrail(pipe, noise3, K) {
               ps += uSunT*sl; vec2 qs; float pfs; vec4 ts = tube(ps, qs, pfs);
               tau += density(ps, ts, pfs, lod)*sl; sl *= 1.9;
             }
-            vec3 sun = uSunColor*(ph0*exp(-tau)+0.32*ph1*exp(-tau*0.4)+0.09*ph2*exp(-tau*0.13));
+            vec3 sun = sunC*(ph0*exp(-tau)+0.32*ph1*exp(-tau*0.4)+0.09*ph2*exp(-tau*0.13));
             float up = clamp(0.5+0.5*q.x/max(R*1.2, 1e-3), 0.0, 1.0), sky = 0.35+0.65*exp(-tau*0.35);
             vec3 L = (sun*3.14159+amb*(0.35+0.75*up)*sky+uDeck*amb*(1.0-up)*0.5)*uAlbedo;
             // the flame lights the youngest smoke from inside

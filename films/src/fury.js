@@ -231,7 +231,7 @@ const shots = [
     post: { ...AIR_POST, exposure: 0.19, rays: 0.4, flare: FLARE, sunDisk: SUN_AIR, bloom: 0.08 } },
 ];
 
-for (const s of shots) { const c = s.camera; s.camera = (lt, t, f) => { const o = c(lt, t, f), w = DEV().wheel; return w ? { ...o, pos: park(FURY.mainGear.x + w[0], w[1], -FURY.mainGear.z + w[2]), look: park(FURY.mainGear.x, w[4] ?? 0.2, -FURY.mainGear.z), fov: w[3] || o.fov, shake: null } : o; }; }
+for (const s of shots) { const c = s.camera; s.camera = (lt, t, f) => { const o = c(lt, t, f), w = DEV().wheel; return w ? { ...o, pos: park(FURY.mainGear.x + w[0], w[1], -FURY.mainGear.z + w[2]), look: park(FURY.mainGear.x, w[4] ?? 0.2, -FURY.mainGear.z), fov: w[3] || o.fov, shake: null, focus: park(FURY.mainGear.x, 0.3, -FURY.mainGear.z), focusRadius: 5 } : o; }; }
 for (const s of shots) { const p = s.post; s.post = (lt, t, f) => ({ ...(typeof p === 'function' ? p(lt, t, f) : p), ...DEV().post }); }   // look development overrides
 
 // ------------------------------------------------------------------ overlays
@@ -322,8 +322,8 @@ function drawPlot(t) {
     g.beginPath(); g.moveTo(TG[0], TG[1] - 22); g.lineTo(TG[0] + 22, TG[1]); g.lineTo(TG[0], TG[1] + 22); g.lineTo(TG[0] - 22, TG[1]); g.closePath(); g.stroke(); g.shadowBlur = 0;
     const ring = 44 + 34 * (1 - trk) + (second ? 0 : 6 * Math.sin(t * 3.1));
     g.setLineDash([2, 7]); g.lineWidth = 1.2; g.globalAlpha = A * trk * 0.8; g.beginPath(); g.arc(TG[0], TG[1], ring, 0, 6.2832); g.stroke(); g.setLineDash([]);
-    label(g, 'TRACK 01 · DIGITAL TARGET', TG[0] - 64, TG[1] - 8, { align: 'right', size: 20, w: 700, color: AMBER, A: A * trk, glow: 6, type: second ? 1 : (t - tTrk - 0.1) / 0.7 });
-    label(g, 'SIMULATED · NO PHYSICAL AIRCRAFT', TG[0] - 64, TG[1] + 17, { align: 'right', size: 14, a: 0.7, A: A * trk, type: second ? 1 : (t - tTrk - 0.5) / 0.8 });
+    label(g, 'TRACK 01 · DIGITAL TARGET', TG[0] + 110, TG[1] - 92, { align: 'right', size: 20, w: 700, color: AMBER, A: A * trk, glow: 6, type: second ? 1 : (t - tTrk - 0.1) / 0.7 });
+    label(g, 'SIMULATED · NO PHYSICAL AIRCRAFT', TG[0] + 110, TG[1] - 68, { align: 'right', size: 14, a: 0.7, A: A * trk, type: second ? 1 : (t - tTrk - 0.5) / 0.8 });
     // the sensor track: a dotted line from the aircraft to the target
     g.strokeStyle = INK; g.globalAlpha = 0.3 * A * trk; g.setLineDash([1, 8]); g.lineWidth = 1.2; drawOn(g, [[ac[0] + 12, ac[1] - 18], [TG[0] - 28, TG[1] + 16]], second ? 1 : smooth(tTrk + 0.3, tTrk + 1.3, t)); g.setLineDash([]);
   }
@@ -350,8 +350,8 @@ function drawPlot(t) {
     if (done > 0) {
       const e = t - 62.9; g.strokeStyle = AMBER; g.lineWidth = 2;
       for (const k of [0, 0.4, 0.8]) { const r = 28 + (e - k) * 80; if (e > k && r < 220) { g.globalAlpha = A * Math.max(0, 1 - r / 220); g.beginPath(); g.arc(TG[0], TG[1], r, 0, 6.2832); g.stroke(); } }
-      label(g, 'ENGAGEMENT COMPLETE', TG[0] - 64, TG[1] + 104, { align: 'right', size: 21, w: 700, color: AMBER, A: A * done, glow: 8, type: (t - 62.9) / 0.6 });
-      label(g, 'THE TARGET EXISTED ONLY AS DATA · NOTHING WAS HIT', TG[0] - 64, TG[1] + 130, { align: 'right', size: 14, a: 0.72, A: A * done, type: (t - 63.3) / 0.9 });
+      label(g, 'ENGAGEMENT COMPLETE', TG[0] - 30, TG[1] + 104, { align: 'center', size: 21, w: 700, color: AMBER, A: A * done, glow: 8, type: (t - 62.9) / 0.6 });
+      label(g, 'THE TARGET EXISTED ONLY AS DATA · NOTHING WAS HIT', TG[0] - 30, TG[1] + 130, { align: 'center', size: 14, a: 0.72, A: A * done, type: (t - 63.3) / 0.9 });
     }
     const q = smooth(61.0, 61.6, t) * (1 - smooth(64.4, 64.9, t));
     if (q > 0) {
