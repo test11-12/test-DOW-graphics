@@ -88,6 +88,7 @@ def build():
     G.tag(inlet, 2); G.tag(fan, 3)
     wings = [G.tag(G.build_wing(C['wing'], s), 10 if s > 0 else 11) for s in (1, -1)]
     elev = [G.tag(o, 12) for s in (1, -1) for o in G.build_elevons(C['wing'], s)]
+    fair = [G.tag(G.build_fairing(C['wing'], sd), 19) for sd in (1, -1)]
     fin = G.tag(G.build_fin(C['wing']), 13)
     rud = G.tag(G.build_rudder(C['wing']), 14)
     boom = G.tag(G.build_boom(C['wing']), 15)
@@ -148,7 +149,7 @@ def build():
         smart_metric(o, 1.0, 50)
     # --- join per texture set / node
     skin = G.join([fus], 'airframe_skin')
-    wing = G.join(wings + elev + [fin, rud, boom, dors, adb] + blades, 'airframe_wing')
+    wing = G.join(wings + elev + fair + [fin, rud, boom, dors, adb] + blades, 'airframe_wing')
     hot = G.join([nozzle, inlet, fan], 'airframe_hot')
     gear = G.join(gparts + doors + wells, 'gear_parts')
     glow = {'liner': liner, 'holder': holder}
@@ -321,7 +322,62 @@ def export_glb():
     # film origin on the fuselage reference axis (as the film's shots are framed): nozzle axis at y = -0.155
     bpy.data.objects['quarterhorse'].location = (0.0, 0.0, ORIGIN_DZ)
     d.export_glb(GLB, objs)
+    # only the anisotropic skins need stored tangents; the rest shade from derivative tangent frames
+    glb_drop_attribute(GLB, 'TANGENT', keep=('airframe_skin', 'airframe_wing'))
+    log(f'{os.path.basename(GLB)} {os.path.getsize(GLB) / 1e6:.2f} MB')
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(WORK, 'qh_final.blend'))
+
+
+def glb_drop_attribute(path, attr, keep=()):
+    """Rewrite a .glb without vertex attribute `attr` on every mesh not named in `keep` (unused accessors and
+    buffer views are removed and the binary chunk is repacked)."""
+    import json
+    import struct
+    with open(path, 'rb') as f:
+        magic, ver, _ = struct.unpack('<III', f.read(12))
+        n, _t = struct.unpack('<II', f.read(8)); js = json.loads(f.read(n))
+        n, _t = struct.unpack('<II', f.read(8)); blob = f.read(n)
+    for m in js['meshes']:
+        if m.get('name') in keep:
+            continue
+        for pr in m['primitives']:
+            pr['attributes'].pop(attr, None)
+    used = set()
+    for m in js['meshes']:
+        for pr in m['primitives']:
+            used.update(pr['attributes'].values())
+            if 'indices' in pr:
+                used.add(pr['indices'])
+    amap = {old: new for new, old in enumerate(sorted(used))}
+    js['accessors'] = [js['accessors'][i] for i in sorted(used)]
+    for m in js['meshes']:
+        for pr in m['primitives']:
+            pr['attributes'] = {k: amap[v] for k, v in pr['attributes'].items()}
+            if 'indices' in pr:
+                pr['indices'] = amap[pr['indices']]
+    vused = sorted({a['bufferView'] for a in js['accessors']} | {im['bufferView'] for im in js.get('images', []) if 'bufferView' in im})
+    vmap = {old: new for new, old in enumerate(vused)}
+    out = bytearray(); views = []
+    for i in vused:
+        bv = dict(js['bufferViews'][i]); o = bv.get('byteOffset', 0)
+        while len(out) % 4:
+            out.append(0)
+        bv['byteOffset'] = len(out); out += blob[o:o + bv['byteLength']]; views.append(bv)
+    while len(out) % 4:
+        out.append(0)
+    js['bufferViews'] = views
+    for a in js['accessors']:
+        a['bufferView'] = vmap[a['bufferView']]
+    for im in js.get('images', []):
+        if 'bufferView' in im:
+            im['bufferView'] = vmap[im['bufferView']]
+    js['buffers'] = [{'byteLength': len(out)}]
+    jb = json.dumps(js, separators=(',', ':')).encode()
+    jb += b' ' * (-len(jb) % 4)
+    with open(path, 'wb') as f:
+        f.write(struct.pack('<III', magic, ver, 12 + 8 + len(jb) + 8 + len(out)))
+        f.write(struct.pack('<II', len(jb), 0x4E4F534A)); f.write(jb)
+        f.write(struct.pack('<II', len(out), 0x004E4942)); f.write(out)
 
 
 # ------------------------------------------------------------------ previews

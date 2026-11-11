@@ -308,10 +308,11 @@ def build_fuselage(coll, N=FUS_N):
 
 
 def build_inlet(coll, N=FUS_N):
-    """Rolled inlet lip running into the dark duct, and a compressor face deep inside."""
+    """Thin rolled inlet lip (the photos show a sharp plain-metal edge) running into the dark duct, and a compressor
+    face deep inside."""
     s_ref = FUS_S0
     zc, hw, ht, hb, nt, nb = [float(a[0]) for a in fus_params([s_ref])]
-    rho = 0.024
+    rho = 0.013
     prof = [(s_ref - rho * math.sin(k / 12 * math.pi), rho * (1 - math.cos(k / 12 * math.pi))) for k in range(13)]
     prof += [(0.09, 2 * rho + 0.004), (0.4, 2 * rho + 0.016), (1.0, 2 * rho + 0.03), (2.0, 2 * rho + 0.05), (2.75, 2 * rho + 0.06)]
     # the lip ring at s_ref must match the fuselage's first station ring exactly
@@ -437,6 +438,28 @@ def build_elevons(coll, side=1):
         apply_xform(ob)
         out.append(ob)
     return out
+
+
+# ------------------------------------------------------------------ wing-root / strake fairing
+def build_fairing(coll, side=1):
+    """Concave shoulder blending the fuselage side into the strake and the wing's upper surface (qh_shape.fairing_*)."""
+    S = np.unique(np.round(np.concatenate([np.linspace(2.50, 7.6, 60), np.linspace(7.6, 12.4, 50), np.linspace(12.4, 13.34, 16)]), 4))
+    K = FAIR_K
+    rows, arcs = [], []
+    for s in S:
+        sec = fairing_section(float(s), K)
+        rows.append(np.stack([np.full(K, X0 - s), side * sec[:, 0], sec[:, 1]], 1))
+        arcs.append(np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(sec, axis=0), axis=1))]))
+    V = np.concatenate(rows)
+    F = grid_faces(len(S), K)
+    uv = np.array([(S[vi // K], arcs[vi // K][vi % K]) for f in F for vi in f])
+    ob = mesh_object('fairing_' + ('L' if side > 0 else 'R'), V, F, coll, True, uv_loops=uv)
+    recalc_normals(ob)
+    bm = bmesh.new(); bm.from_mesh(ob.data)
+    if sum(f.normal.z * f.calc_area() for f in bm.faces) < 0:
+        bmesh.ops.reverse_faces(bm, faces=bm.faces)
+    bm.to_mesh(ob.data); bm.free(); ob.data.update()
+    return ob
 
 
 # ------------------------------------------------------------------ fin and rudder
@@ -576,19 +599,22 @@ def build_dorsal_fairing(coll):
 
 
 def build_airdata_boom(coll):
+    """Air-data boom as photographed (side view and overhead): a 47 mm tube leaving the nose of the black dorsal
+    fairing, stepping down to 30 mm just ahead of the inlet lip, alpha and beta vanes 0.9 m ahead of the lip, a
+    fine probe to 1.45 m ahead."""
     zc = ADB_Z
-    parts = [tube('adb_root', (X(0.86), 0, zc), (X(-0.02), 0, zc), 0.029, 0.028, seg=24, coll=coll, caps=True, bevel=0.003),
-             tube('adb_mid', (X(-0.02), 0, zc), (X(-1.03), 0, zc), 0.026, 0.022, seg=24, coll=coll, caps=True, bevel=0.002),
-             tube('adb_tip', (X(-1.03), 0, zc), (X(-1.44), 0, zc), 0.022, 0.010, seg=24, coll=coll, caps=True, bevel=0.002),
-             tube('adb_collar', (X(-0.62), 0, zc), (X(-0.70), 0, zc), 0.032, seg=24, coll=coll, bevel=0.005),
-             tube('adb_collar2', (X(-1.04), 0, zc), (X(-1.13), 0, zc), 0.028, seg=24, coll=coll, bevel=0.004)]
+    parts = [tube('adb_root', (X(0.86), 0, zc), (X(-0.07), 0, zc), 0.027, 0.027, seg=24, coll=coll, caps=True, bevel=0.003),
+             tube('adb_step', (X(-0.06), 0, zc), (X(-0.13), 0, zc), 0.027, 0.016, seg=24, coll=coll, caps=False),
+             tube('adb_mid', (X(-0.12), 0, zc), (X(-1.26), 0, zc), 0.016, 0.014, seg=20, coll=coll, caps=True, bevel=0.002),
+             tube('adb_tip', (X(-1.26), 0, zc), (X(-1.45), 0, zc), 0.014, 0.004, seg=20, coll=coll, caps=True, bevel=0.002),
+             tube('adb_collar', (X(-0.86), 0, zc), (X(-0.94), 0, zc), 0.020, seg=20, coll=coll, bevel=0.004)]
     for k, (dy, dz) in enumerate(((1, 0), (-1, 0), (0, 1), (0, -1))):
         out = Vector((0, dy, dz))
-        base = Vector((X(-1.085), 0, zc)) + out * 0.026
-        parts.append(tube(f'vane_shaft{k}', base, base + out * 0.035, 0.0045, seg=10, coll=coll, bevel=0.001))
-        v0 = base + out * 0.035
-        pts = [v0 + Vector((0.014, 0, 0)), v0 + out * 0.085 + Vector((-0.022, 0, 0)), v0 + out * 0.085 + Vector((-0.062, 0, 0)), v0 + Vector((-0.046, 0, 0))]
-        side = Vector((1, 0, 0)).cross(out).normalized() * 0.0019
+        base = Vector((X(-0.90), 0, zc)) + out * 0.017
+        parts.append(tube(f'vane_shaft{k}', base, base + out * 0.030, 0.0035, seg=10, coll=coll, bevel=0.001))
+        v0 = base + out * 0.030
+        pts = [v0 + Vector((0.012, 0, 0)), v0 + out * 0.070 + Vector((-0.018, 0, 0)), v0 + out * 0.070 + Vector((-0.050, 0, 0)), v0 + Vector((-0.038, 0, 0))]
+        side = Vector((1, 0, 0)).cross(out).normalized() * 0.0016
         bm = bmesh.new()
         vs = [bm.verts.new(p + side) for p in pts] + [bm.verts.new(p - side) for p in pts]
         bm.faces.new(vs[:4]); bm.faces.new(vs[4:][::-1])
@@ -801,7 +827,7 @@ def build_gear(coll):
     out.append(tube('nose_line', top + Vector((0.055, 0.04, 0)), crown + Vector((0.05, 0.05, 0.04)), 0.005, seg=8, coll=coll))
     mw = MAIN_WHEEL
     for sy in (1, -1):
-        cM = Vector((X(mw['s']), sy * mw['y'], GROUND + mw['r']))
+        cM = Vector((X(mw['s']), sy * mw['y'], GROUND - MAIN_DROP + mw['r']))
         out.append(tyre(f'main_tyre{sy}', cM, (0, sy, 0), mw['r'], mw['w'], coll, seg=84))
         out.append(wheel_hub(f'main_hub{sy}', cM, (0, sy, 0), mw['r'], mw['w'], coll, holes=12))
         bc = cM + Vector((0, -sy * 0.035, 0))
@@ -873,16 +899,16 @@ def build_doors(coll):
     s0, s1, z0, z1, yy = DOORS['nose']
     for sy in (1, -1):
         out.append(curved_door(f'nose_door{sy}', s0, s1, z0, z1, sy * yy, sy, coll))
-        for s in (4.62, 4.98, 5.34):
+        for s in (4.76, 5.10, 5.44):
             out.append(bar(f'nose_door_rib{sy}{s}', (X(s), sy * (yy - 0.03), z0 - 0.04), (X(s), sy * (yy - 0.03), z1 + 0.05), 0.018, 0.03, up=(0, sy, 0), coll=coll, bevel=0.003))
-        for s in (4.55, 5.5):
+        for s in (4.70, 5.60):
             out.append(bar(f'nose_door_arm{sy}{s}', (X(s), sy * (yy - 0.02), z0 + 0.02), (X(s), sy * 0.12, -0.52), 0.02, 0.012, up=(1, 0, 0), coll=coll, bevel=0.002))
     s0, s1, z0, z1, yy = DOORS['main']
     for sy in (1, -1):
         out.append(curved_door(f'main_door{sy}', s0, s1, z0, z1, sy * yy, sy, coll, bulge=0.012, thick=0.024))
-        for s in (7.95, 8.45, 8.95):
+        for s in (8.30, 8.75, 9.20):
             out.append(bar(f'main_door_rib{sy}{s}', (X(s), sy * (yy - 0.03), z0 - 0.05), (X(s), sy * (yy - 0.03), z1 + 0.06), 0.02, 0.035, up=(0, sy, 0), coll=coll, bevel=0.003))
-        for s in (7.85, 9.05):
+        for s in (8.20, 9.30):
             out.append(bar(f'main_door_arm{sy}{s}', (X(s), sy * (yy - 0.02), z0 - 0.03), (X(s), sy * 1.05, -0.03), 0.022, 0.014, up=(1, 0, 0), coll=coll, bevel=0.002))
     return out
 
@@ -890,7 +916,7 @@ def build_doors(coll):
 def build_wells(coll, N=FUS_N):
     """Dark well openings 3 mm proud of the skin: a lowered gear shows an open bay."""
     out = []
-    ss = np.linspace(4.38, 5.70, 16)
+    ss = np.linspace(4.455, 5.775, 16)
     R, g = fus_ring(ss, N)
     jw = int(round(0.235 / (g.mean() / N)))
     rows = []
@@ -908,7 +934,7 @@ def build_wells(coll, N=FUS_N):
     out.append(ob)
     for sy in (1, -1):
         ys = np.linspace(0.70, 1.29, 8)
-        ss = np.linspace(7.60, 9.30, 12)
+        ss = np.linspace(7.83, 9.55, 12)
         V = np.array([(X0 - s, sy * y, float(wing_surface_z(np.array([s]), y, upper=False)[0]) - 0.003) for s in ss for y in ys])
         F = grid_faces(len(ss), len(ys))
         ob = mesh_object(f'main_well{sy}', V, F, coll, True, uv_loops=np.array([(X0 - V[vi][0], V[vi][1]) for f in F for vi in f]))

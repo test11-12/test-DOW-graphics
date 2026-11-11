@@ -6,7 +6,8 @@ import numpy as np
 
 X0 = 8.3                 # inlet lip at X = 8.3; nozzle exit 14.6 m aft (X = -6.3)
 NOZ_Z = 0.06             # nozzle axis height
-GROUND = -1.495          # tyre contact plane
+GROUND = -1.495          # nose-tyre contact height
+MAIN_DROP = 0.13         # the main tyres stand this much lower in the body frame: the aircraft sits about 1.5 deg nose-down
 NOZZLE_EXIT_S = 14.58
 
 
@@ -108,6 +109,7 @@ ROOT_Y, ROOT_TE = 0.50, 13.31
 ELEVONS = [(0.98, 2.00), (2.02, 3.02), (3.04, 4.29)]
 HINGE_GAP = 0.010
 ELEVON_DROOP = 2.0
+ANHEDRAL = 4.2
 
 
 def wing_le(y):
@@ -132,9 +134,10 @@ def wing_tau(y):
 
 
 def wing_camber_z(s, y):
-    """Mean-surface height: the strake rises forward along the fuselage chine; 2 deg anhedral outboard."""
+    """Mean-surface height: the strake rises forward along the fuselage chine; anhedral outboard (the side photos show
+    the near wing's upper surface from a camera barely above it: the tip sits about a quarter metre below the root)."""
     zr = pchip([2.40, 2.8, 4.0, 5.5, 7.6, 10.0, 13.4], [0.47, 0.45, 0.33, 0.22, 0.12, 0.06, 0.02], s)
-    return zr - np.maximum(np.asarray(y, float) - 0.72, 0) * math.tan(math.radians(2.0))
+    return zr - np.maximum(np.asarray(y, float) - 0.72, 0) * math.tan(math.radians(ANHEDRAL))
 
 
 def naca_t(x, tau, te=0.0):
@@ -182,10 +185,11 @@ def wing_loop(y, K, x_cut=None):
     return np.concatenate([up, lo], 0)
 
 
-FIN_Z0, FIN_Z1 = 1.205, 3.145
-FIN_LE = (10.30, 14.83)
-FIN_TE = (14.60, 15.60)
-FIN_HINGE = (13.36, 15.12)
+# fin: re-measured with a camera matched to the 4K side photograph (82 m away, 11 deg aft of the beam, 2.7 m up)
+FIN_Z0, FIN_Z1 = 1.205, 3.09
+FIN_LE = (10.30, 14.90)
+FIN_TE = (14.77, 15.85)
+FIN_HINGE = (13.55, 15.22)
 FIN_TAU = 0.030
 
 
@@ -205,18 +209,66 @@ def fin_loop(z, K, x0, x1):
     return p, q, s, t
 
 
-BOOM_END_TOP, BOOM_END_BOT, BOOM_ZB = 15.50, 15.36, 0.735
+BOOM_END_TOP, BOOM_END_BOT, BOOM_ZB = 15.56, 15.32, 0.735
 
 
-ADB_Z = 0.955
+ADB_Z = 0.925
 
 
 NF = 16
 
 
 NOSE_WHEEL = dict(s=4.47, y=0.0, r=0.200, w=0.127)
-MAIN_WHEEL = dict(s=9.20, y=1.15, r=0.305, w=0.190)
+MAIN_WHEEL = dict(s=9.40, y=1.15, r=0.305, w=0.190)
 
 
-DOORS = dict(nose=(4.40, 5.68, -0.60, -1.13, 0.255), main=(7.62, 9.28, -0.10, -0.91, 1.30))
+DOORS = dict(nose=(4.56, 5.755, -0.60, -1.13, 0.255), main=(8.02, 9.51, -0.20, -0.80, 1.30))
 
+
+
+# ------------------------------------------------------------------ wing-root / strake fairing
+# The fuselage is not a tube with a plate stuck to it: a concave shoulder rises from the strake and the wing's upper
+# surface to a junction line well up the fuselage side (the bright sloping band under the upper fuselage in the side
+# photos). FAIR_H: height of that junction above the root mean surface; FAIR_W: width of the blend on the wing.
+FAIR_S = [2.50, 3.2, 4.2, 6.0, 7.6, 9.0, 11.0, 12.4, 13.0, 13.34]
+FAIR_H = [0.0, 0.07, 0.15, 0.27, 0.37, 0.45, 0.52, 0.47, 0.30, 0.03]
+FAIR_W = [0.30, 0.40, 0.50, 0.70, 0.85, 0.85, 0.80, 0.48, 0.42, 0.05]
+FAIR_K = 12
+
+
+def wing_le_span(s):
+    """Spanwise position of the leading edge at station s (inverse of wing_le)."""
+    s = np.asarray(s, float)
+    a = np.interp(s, STRAKE[:, 1], STRAKE[:, 0])
+    b = 1.65 + (s - 7.57) / (TIP_LE - 7.57) * (TIP_Y - 1.65)
+    return np.where(s <= 7.57, a, b)
+
+
+def fairing_ends(s):
+    """Inner (on the fuselage) and outer (on the wing's upper surface) ends of the fairing section at stations s:
+    returns yf, zj, yo, zo (arrays)."""
+    s = np.atleast_1d(np.asarray(s, float))
+    zc, hw, ht, hb, nt, nb = fus_params(s)
+    zw = wing_camber_z(s, np.full_like(s, 0.72))
+    zj = np.minimum(zw + pchip(FAIR_S, FAIR_H, s), zc + 0.93 * ht)
+    yf = hw * np.maximum(1 - (np.maximum(zj - zc, 0) / ht) ** nt, 1e-4) ** (1 / nt)
+    yo = np.minimum(yf + pchip(FAIR_S, FAIR_W, s), wing_le_span(s) - 0.02)
+    y_te = ROOT_Y + (ROOT_TE - s) / (ROOT_TE - TIP_TE) * (TIP_Y - ROOT_Y)          # span where the trailing edge is at s
+    yo = np.where(s > 12.5, np.minimum(yo, np.minimum(0.955, y_te - 0.015)), yo)   # stay inboard of the elevon
+    yo = np.maximum(yo, yf + 0.015)
+    zo = np.array([float(wing_surface_z(np.array([si]), yi, upper=True)[0]) for si, yi in zip(s, yo)]) + 0.004
+    return yf, zj, yo, zo
+
+
+def fairing_section(s, K=FAIR_K):
+    """K points (y, z) across the fairing at station s, from the fuselage junction out to the wing."""
+    yf, zj, yo, zo = [float(a[0]) for a in fairing_ends([s])]
+    yc = yf + 0.30 * (yo - yf)
+    zc_ = zo + (yo - yc) * math.tan(math.radians(ANHEDRAL))
+    zc_ = min(zc_, zj)
+    t = np.linspace(0, 1, K)
+    y = (1 - t) ** 2 * yf + 2 * t * (1 - t) * yc + t ** 2 * yo
+    z = (1 - t) ** 2 * zj + 2 * t * (1 - t) * zc_ + t ** 2 * zo
+    zu = np.array([float(wing_surface_z(np.array([s]), yi, upper=True)[0]) if yi >= 0.5 else -9.0 for yi in y]) + 0.004
+    z = np.maximum(z, np.where(t > 0.02, zu, -9.0))
+    return np.stack([y, z], 1)

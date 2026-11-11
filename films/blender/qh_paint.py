@@ -206,6 +206,7 @@ class Layers:
         self.adir = np.zeros((n, 3), np.float32)  # anisotropy direction (object space, tangent to the surface)
         self.astr = np.zeros(n, np.float32)
         self.emis = None
+        self.aomul = None
 
 
 def over(L, mask, col=None, rough=None, metal=None, h=None, astr=None):
@@ -282,48 +283,56 @@ def bez(p0, p1, p2, p3, n=24):
 
 
 def horse_mark(W, H):
-    """Hermeus-style horse head facing right (+x), mane streaming back to the left: unit box -> pixels."""
-    im = Image.new('L', (W, H), 0); g = ImageDraw.Draw(im)
-    P = lambda pts: [(x * W, y * H) for x, y in pts]
-    # head: forehead, face to the muzzle, jaw, throat into the neck
-    head = (bez((0.50, 0.30), (0.62, 0.16), (0.74, 0.20), (0.86, 0.44), 20) +
-            bez((0.86, 0.44), (0.92, 0.55), (0.99, 0.66), (0.985, 0.80), 16) +
-            bez((0.985, 0.80), (0.98, 0.92), (0.90, 0.95), (0.84, 0.90), 12) +
-            bez((0.84, 0.90), (0.76, 0.86), (0.70, 0.86), (0.62, 0.92), 12) +
-            bez((0.62, 0.92), (0.52, 0.98), (0.40, 0.97), (0.30, 0.90), 14) +
-            bez((0.30, 0.90), (0.40, 0.80), (0.46, 0.62), (0.50, 0.30), 14))
-    g.polygon(P(head), fill=255)
-    # ear
-    g.polygon(P([(0.555, 0.25), (0.60, 0.02), (0.665, 0.22)]), fill=255)
-    # mane: three long tapering streaks trailing left, with gaps
-    for (y0, y1, x_end, th) in ((0.20, 0.34, 0.00, 0.10), (0.42, 0.52, 0.08, 0.09), (0.62, 0.72, 0.18, 0.08)):
-        top = bez((0.58, y0), (0.42, y0 - 0.06), (0.22, y0 - 0.02), (x_end, y1 - 0.03), 20)
-        bot = bez((x_end + 0.06, y1 + th * 0.2), (0.24, y1 + th * 0.6), (0.42, y1 + th * 0.4), (0.56, y0 + th + 0.06), 20)
-        g.polygon(P(top + bot), fill=255)
-    # negative space: eye notch and nostril
-    g.polygon(P([(0.70, 0.36), (0.79, 0.40), (0.72, 0.42)]), fill=0)
-    g.ellipse(P([(0.915, 0.74), (0.955, 0.80)]), fill=0)
-    g.line(P([(0.62, 0.55), (0.80, 0.66)]), fill=0, width=max(2, int(0.025 * H)))
-    return im
+    """The horse-head mark beside the wordmark, traced from the starboard-side photo: head at the right facing
+    forward, a long crest streak with two barbs, a second mane streak, a bold neck stroke and the jaw ending in
+    the muzzle. Unit box -> pixels (box aspect about 3.0 : 1)."""
+    S = 4
+    im = Image.new('L', (W * S, H * S), 0); g = ImageDraw.Draw(im)
+    P = lambda pts: [(x * W * S, y * H * S) for x, y in pts]
+    # crest: from the trailing tip up to the ear
+    crest = (bez((0.0, 0.46), (0.10, 0.41), (0.20, 0.27), (0.33, 0.175), 16) + bez((0.33, 0.175), (0.42, 0.115), (0.50, 0.075), (0.578, 0.0), 12) +
+             bez((0.60, 0.10), (0.59, 0.15), (0.58, 0.185), (0.565, 0.205), 6) + bez((0.565, 0.205), (0.42, 0.20), (0.28, 0.37), (0.14, 0.465), 16) + [(0.0, 0.50)])
+    g.polygon(P(crest), fill=255)
+    for (x0, y0, x1, y1, x2, y2) in ((0.215, 0.275, 0.262, 0.135, 0.305, 0.20), (0.335, 0.18, 0.385, 0.06, 0.42, 0.125)):   # barbs
+        g.polygon(P([(x0, y0), (x1, y1), (x2, y2)]), fill=255)
+    # face line from the ear down to the muzzle
+    face = (bez((0.578, 0.0), (0.70, 0.10), (0.84, 0.40), (0.99, 0.715), 20) + bez((0.968, 0.75), (0.86, 0.575), (0.74, 0.33), (0.605, 0.21), 20))
+    g.polygon(P(face), fill=255)
+    # second mane streak into the cheek
+    st2 = (bez((0.165, 0.715), (0.30, 0.64), (0.42, 0.46), (0.68, 0.43), 20) + bez((0.67, 0.53), (0.50, 0.50), (0.38, 0.66), (0.165, 0.74), 20))
+    g.polygon(P(st2), fill=255)
+    # neck stroke
+    neck = (bez((0.335, 0.83), (0.45, 0.76), (0.55, 0.64), (0.62, 0.55), 12) + bez((0.655, 0.66), (0.60, 0.80), (0.54, 0.92), (0.47, 1.0), 12))
+    g.polygon(P(neck), fill=255)
+    # jaw and muzzle
+    jaw = (bez((0.67, 0.53), (0.76, 0.57), (0.86, 0.68), (0.955, 0.75), 14) + bez((0.955, 0.75), (1.0, 0.77), (1.0, 0.90), (0.955, 0.93), 10) +
+           bez((0.955, 0.93), (0.86, 0.93), (0.76, 0.84), (0.685, 0.70), 14))
+    g.polygon(P(jaw), fill=255)
+    g.ellipse(P([(0.948, 0.80), (0.975, 0.875)]), fill=0)           # nostril
+    return im.resize((W, H), Image.LANCZOS)
 
 
 def wing_mark(W, H):
-    """Hermeus wing mark as it is painted on the fin's starboard side: four feathered elements whose rounded ends
-    trail left (aft) and converge to a point at lower right."""
-    im = Image.new('L', (W, H), 0); g = ImageDraw.Draw(im)
-    P = lambda pts: [(x * W, y * H) for x, y in pts]
-    tip = (0.985, 0.985)
-    els = [((0.00, 0.035), 0.155, (0.47, 0.04), (0.86, 0.30)),
-           ((0.07, 0.275), 0.125, (0.48, 0.28), (0.80, 0.50)),
-           ((0.19, 0.495), 0.105, (0.52, 0.50), (0.78, 0.66)),
-           ((0.33, 0.685), 0.085, (0.58, 0.69), (0.78, 0.80))]
-    for (p0, th, c1, c2) in els:
-        x0, y0 = p0
-        upper = bez((x0 + 0.02, y0), c1, c2, tip, 30)
-        lower = bez(tip, (c2[0] - 0.05, c2[1] + th * 0.9), (c1[0] - 0.02, c1[1] + th), (x0 + 0.02, y0 + th), 30)
-        cap = [(x0 + 0.02 - th * 0.5 * math.sin(a), y0 + th * 0.5 - th * 0.5 * math.cos(a)) for a in np.linspace(math.pi, 0, 10)]
-        g.polygon(P(upper + lower + cap), fill=255)
-    return im
+    """Hermeus wing mark as painted on the fin's starboard side (traced from the tail photo): a bold top feather from
+    a point at upper left that wraps round the right side and comes down to a point at lower right, with three
+    shorter feathers tucked under it."""
+    S = 4
+    im = Image.new('L', (W * S, H * S), 0); g = ImageDraw.Draw(im)
+    P = lambda pts: [(x * W * S, y * H * S) for x, y in pts]
+    top = (bez((0.0, 0.0), (0.10, 0.20), (0.40, 0.33), (0.70, 0.40), 24) + bez((0.70, 0.40), (0.84, 0.44), (0.95, 0.50), (1.0, 0.60), 14) +
+           bez((1.0, 0.60), (0.93, 0.68), (0.90, 0.84), (0.985, 1.0), 16) + bez((0.985, 1.0), (0.86, 0.90), (0.80, 0.74), (0.84, 0.615), 16) +
+           bez((0.84, 0.615), (0.74, 0.555), (0.50, 0.525), (0.30, 0.475), 20) + bez((0.30, 0.475), (0.14, 0.42), (0.03, 0.22), (0.0, 0.0), 16))
+    g.polygon(P(top), fill=255)
+    f2 = (bez((0.055, 0.375), (0.20, 0.505), (0.50, 0.545), (0.70, 0.605), 22) + bez((0.70, 0.605), (0.77, 0.635), (0.82, 0.69), (0.835, 0.78), 10) +
+          bez((0.835, 0.78), (0.76, 0.70), (0.62, 0.675), (0.48, 0.67), 14) + bez((0.48, 0.67), (0.30, 0.665), (0.13, 0.58), (0.055, 0.375), 18))
+    g.polygon(P(f2), fill=255)
+    f3 = (bez((0.195, 0.655), (0.32, 0.725), (0.55, 0.705), (0.70, 0.735), 18) + bez((0.70, 0.735), (0.76, 0.755), (0.81, 0.80), (0.83, 0.865), 8) +
+          bez((0.83, 0.865), (0.74, 0.815), (0.62, 0.81), (0.50, 0.815), 12) + bez((0.50, 0.815), (0.36, 0.82), (0.25, 0.77), (0.195, 0.655), 14))
+    g.polygon(P(f3), fill=255)
+    f4 = (bez((0.375, 0.875), (0.48, 0.905), (0.62, 0.875), (0.74, 0.865), 14) + bez((0.74, 0.865), (0.79, 0.865), (0.83, 0.885), (0.85, 0.915), 6) +
+          bez((0.85, 0.915), (0.74, 0.925), (0.64, 0.975), (0.54, 0.975), 12) + bez((0.54, 0.975), (0.46, 0.97), (0.40, 0.93), (0.375, 0.875), 10))
+    g.polygon(P(f4), fill=255)
+    return im.resize((W, H), Image.LANCZOS)
 
 
 def us_flag(W, H, union_left=True):
@@ -355,7 +364,7 @@ def seal(W):
     im = Image.new('RGB', (W, W), (0, 0, 0)); g = ImageDraw.Draw(im)
     al = Image.new('L', (W, W), 0); ga = ImageDraw.Draw(al)
     c = W / 2
-    navy = (24, 32, 58)
+    navy = (11, 14, 26)
     ga.ellipse([0, 0, W - 1, W - 1], fill=255)
     g.ellipse([0, 0, W - 1, W - 1], fill=(222, 224, 226))
     r1 = W * 0.47
@@ -368,11 +377,11 @@ def seal(W):
             x, y = c + math.cos(a) * W * 0.40, c + math.sin(a) * W * 0.40
             ca, sa = math.cos(a + math.pi / 2), math.sin(a + math.pi / 2)
             pts = [(x + ca * dx - sa * dy, y + sa * dx + ca * dy) for dx, dy in ((-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2))]
-            g.polygon(pts, fill=(196, 200, 206))
+            g.polygon(pts, fill=(150, 154, 162))
     r2 = W * 0.335
-    g.ellipse([c - r2, c - r2, c + r2, c + r2], outline=(200, 204, 210), width=max(2, int(W * 0.012)))
+    g.ellipse([c - r2, c - r2, c + r2, c + r2], outline=(120, 124, 134), width=max(2, int(W * 0.008)))
     # emblem: a stylised bird with spread wings over a small shield, light grey
-    lg = (206, 210, 216)
+    lg = (176, 180, 188)
     for sgn in (-1, 1):
         wing = [(c, c - W * 0.03)] + [(c + sgn * W * (0.05 + 0.2 * t), c - W * (0.04 + 0.11 * math.sin(t * 2.6))) for t in np.linspace(0, 1, 12)] + \
                [(c + sgn * W * (0.25 - 0.18 * t), c - W * (0.0 - 0.03 * t)) for t in np.linspace(0, 1, 8)]
@@ -502,8 +511,9 @@ def fill_from_valid(a, ok, iters=8):
 FRAMES = [0.06, 0.97, 1.95, 2.93, 4.20, 5.45, 6.50, 7.68, 8.85, 9.95, 10.55, 11.25, 12.05, 12.75, 13.37]
 MAIN_FRAMES = {2.93, 7.68, 12.75, 13.37, 0.06}
 INNER = [0.52, 1.46, 2.44, 3.57, 4.83, 5.98, 7.09, 8.27, 9.40, 10.25, 10.90, 11.65, 12.40, 13.06]
-LONGI = [0.0, 31.0, 58.0, 86.0, 111.0, 130.0, 154.0, 180.0]     # joint around-angles (deg from the top)
+LONGI = [0.0, 31.0, 58.0, 92.0, 111.0, 130.0, 154.0, 180.0]     # joint around-angles (deg from the top)
 STRING = [15.0, 44.0, 72.0, 98.0, 121.0, 142.0, 167.0]          # stringer rivet rows between them
+WATERLINE = 92.0         # the joint below which the lower-fuselage alloy starts
 
 
 def nearest(sorted_vals, x):
@@ -537,35 +547,40 @@ class Skin:
         for sc in (self.mottle, self.mottle_c, self.cloud, self.smear, self.brush, self.scratch):
             a = sc.a; sc.a = (a - a.mean()) / (a.std() + 1e-6)     # zero-mean, unit-variance detail
 
-    def metal(self, L, u, v, panel, ao, along_dir, across_dir, base_tone=0.80, hot=None):
-        """Bare aluminium: per-panel tone, roughness and grain, scan mottling, polishing scratches."""
-        n = len(u)
+    def metal(self, L, u, v, panel, ao, along_dir, across_dir, base_tone=0.90, lower=None, cross_frac=0.06, tone_var=0.028):
+        """Clean satin brushed aluminium. Sheets differ by a percent or two in tone and by their brushing direction
+        and sheen (which is what tells panels apart on the real aircraft), never by blotches; the photoscans add only
+        faint mill-finish variation to the roughness. `lower` (0..1 per texel) is the darker, warmer lower-fuselage
+        alloy."""
         r1, r2, r3, r4, r5, r6 = (hash01(panel, k) for k in range(6))
-        tone = base_tone * (1 + (r1 - 0.5) * 0.08)                        # per-sheet brightness
-        warm = (r2 - 0.5) * 0.025                                         # slight hue drift between sheets
-        rough = 0.19 + 0.08 * r3 ** 1.3                                   # satin-polished sheets
-        rough = np.where(r3 > 0.97, 0.31 + 0.05 * r4, rough)              # an odd milky sheet
-        ang = (r4 - 0.5) * 0.22 + np.where(r5 > 0.9, math.pi / 2, 0.0)    # grain direction per sheet
+        tone = base_tone * (1 + (r1 - 0.5) * tone_var)                    # per-sheet brightness, +-1.4 %
+        warm = (r2 - 0.5) * 0.006                                         # barely perceptible hue drift
+        rough = 0.48 + 0.03 * (r3 - 0.5)                                  # satin mill finish
+        cross = (r5 > 1 - cross_frac)                                     # the odd sheet is brushed across
+        ang = (r4 - 0.5) * 0.16 + np.where(cross, math.pi / 2, 0.0)       # brushing direction per sheet
         offu, offv = r5 * 37.0, r6 * 29.0
         mot = self.mottle.sample(u, v, None, offu, offv)
-        clo = self.cloud.sample(u, v, r2 * 6.28, offv, offu)
-        mc = self.mottle_c.sample(u, v, None, offv * 0.7, offu * 1.3)
         br = self.brush.sample(u, v, ang, offu * 0.3, offv * 0.5)
         scr = self.scratch.sample(u, v, r1 * 6.28, offu * 0.2, offv * 0.9)
-        lum = tone * (1 + 0.018 * mc + 0.010 * clo)
-        col = np.stack([lum * (1 + warm), lum * (1 + warm * 0.3), lum * (1 - warm * 0.8)], 1) * np.array([0.985, 0.99, 1.0], np.float32)
+        lum = tone * (1 + 0.003 * np.clip(mot, -2, 2))
+        col = np.stack([lum * (1 + warm), lum * (1 + warm * 0.3), lum * (1 - warm * 0.8)], 1) * np.array([0.992, 0.995, 1.0], np.float32)
+        rr = rough * (1 + 0.006 * np.clip(mot, -2, 2)) + 0.012 * np.clip(br, -2, 2) + 0.005 * np.clip(scr, 0, 2)
+        if lower is not None:
+            lo = lower[:, None]
+            col = col * (1 - lo) + col * np.array([0.66, 0.648, 0.632], np.float32) * lo
+            rr = rr + 0.05 * lower
         L.base[:] = col
-        L.rough[:] = np.clip(rough * (1 + 0.06 * mot + 0.045 * clo) + 0.015 * br + 0.012 * np.maximum(scr, 0), 0.08, 0.7)
+        L.rough[:] = np.clip(rr, 0.12, 0.7)
         L.metal[:] = 1.0
-        # anisotropic grain: along the sheet's rolling direction
+        # anisotropic sheen: the sheets are brushed lengthwise, so the highlight spreads across the grain (the glTF
+        # anisotropy direction is the direction of the stretched highlight)
         c, s = np.cos(ang), np.sin(ang)
-        L.adir[:] = along_dir * c[:, None] + across_dir * s[:, None]
-        L.astr[:] = 0.28 + 0.3 * r6
-        # occlusion grime: dull and darken in crevices and under the wing root
-        # (the occlusion itself goes to the ORM map; here only the grime that collects in enclosed spots)
+        L.adir[:] = across_dir * c[:, None] + along_dir * s[:, None]
+        L.astr[:] = 0.32 + 0.10 * r6
+        # the occlusion itself goes to the ORM map; enclosed corners are only a touch duller
         g = np.clip(1 - ao, 0, 1) ** 1.5
-        L.base *= (1 - 0.12 * g)[:, None]
-        L.rough += 0.10 * g
+        L.base *= (1 - 0.035 * g)[:, None]
+        L.rough += 0.03 * g
         return r1, r3
 
     def seam(self, L, d, strength=1.0, width=None, sealant=True, step=0.0):
@@ -583,8 +598,8 @@ class Skin:
         head, ring, rnd = rivet_row(along, across, pitch, r, seed, stagger)
         head = head * strength; ring = ring * strength
         # heads: slightly lighter, rougher (sanded flush); the countersink ring holds a little dirt
-        L.base *= (1 + (0.05 + 0.06 * rnd)[:, None] * head[:, None] - 0.18 * ring[:, None])
-        L.rough += 0.10 * head + 0.06 * ring
+        L.base *= (1 + (0.01 + 0.02 * rnd)[:, None] * head[:, None] - 0.26 * ring[:, None])
+        L.rough += 0.05 * head + 0.08 * ring
         L.astr *= (1 - 0.8 * head)
         L.h += (-0.00004 * ring + 0.000015 * head * (rnd - 0.3))
 
@@ -609,7 +624,9 @@ def paint_fuselage(S, OUTS, skin, ff, decals):
     along = np.zeros((n, 3), np.float32); along[:, 0] = -1.0
     along -= N * (along * N).sum(1, keepdims=True); along /= np.linalg.norm(along, axis=1, keepdims=True) + 1e-9
     across = np.cross(N, along)
-    skin.metal(L, s, a, panel, ao, along, across, 0.80)
+    # lower fuselage: the darker, warmer alloy below the waterline joint (a crisp sheet edge)
+    lower = sstep(-0.003, 0.003, a - ff.lookup(s, np.full_like(s, math.radians(WATERLINE))))
+    skin.metal(L, s, a, panel, ao, along, across, 0.90, lower=lower)
     # oil canning: each bay between rivet lines pillows slightly
     rows_s = sorted(FRAMES + INNER)
     s0, s1, js = bracket(rows_s, s)
@@ -619,11 +636,11 @@ def paint_fuselage(S, OUTS, skin, ff, decals):
     a0 = ff.lookup(s, np.radians(p0)); a1 = ff.lookup(s, np.radians(p1))
     bv = np.clip((a - a0) / np.maximum(a1 - a0, 1e-3), 0, 1)
     bay = js.astype(np.int64) * 64 + jp * 2 + (side > 0)
-    amp = 0.00025 + 0.00045 * hash01(bay, 3) ** 2
+    amp = 0.00016 + 0.00030 * hash01(bay, 3) ** 2
     pil = np.sin(math.pi * bu) * np.sin(math.pi * bv)
     L.h += amp * pil * np.where(hash01(bay, 5) > 0.25, 1.0, -0.6)
-    L.h += 0.0002 * (fbm(s, a, 0.9, 3, seed=11) - 0.5)
-    L.h += 0.00012 * (hash01(panel, 9) - 0.5)          # sheet-to-sheet level mismatch
+    L.h += 0.00006 * (fbm(s, a, 0.9, 3, seed=11) - 0.5)
+    L.h += 0.00010 * (hash01(panel, 9) - 0.5)          # sheet-to-sheet level mismatch
     # joints
     k, dsf = nearest(FRAMES, s)
     present = ~((hash01(k, li, 7) > 0.72) & ~np.isin(np.array(FRAMES)[k], list(MAIN_FRAMES)))
@@ -634,7 +651,7 @@ def paint_fuselage(S, OUTS, skin, ff, decals):
     top_seam = np.where((jcol < 1) & (s > 9.2), 0.0, 1.0)     # no dorsal seam under the boom
     skin.seam(L, dl, strength=top_seam)
     # fastener rows: double rows either side of frame joints, single rows at inner frames and stringers
-    pr = 0.0024
+    pr = 0.0029
     for off, stg in ((0.016, 0.0), (-0.016, 0.0125)):
         skin.rivets(L, a, dsf - off, 0.025, pr, 11 + (off > 0), strength=present.astype(np.float32), stagger=stg)
     for off in (0.014, -0.014):
@@ -668,36 +685,26 @@ def paint_fuselage(S, OUTS, skin, ff, decals):
             alongp = np.where(np.minimum(ss_ - sa_, sb_ - ss_) < np.minimum(aa_ - aa0, aa1 - aa_), aa_, ss_)
             head, ring, rnd = rivet_row(alongp, dist - 0.018, 0.045, 0.0034, 900 + i)
             ins = (dist > 0.004).astype(np.float32)
-            sub.base *= (1 - 0.35 * ring[:, None] * ins[:, None]) * (1 - 0.25 * head[:, None] * ins[:, None])
-            sub.rough += 0.12 * head * ins
+            sub.base *= (1 - 0.30 * ring[:, None] * ins[:, None]) * (1 - 0.10 * head[:, None] * ins[:, None])
+            sub.rough += 0.08 * head * ins
             sub.h += (-0.00012 * ring + 0.00002 * head) * ins
-            tint = 1 + (hash01(i, sd) - 0.5) * 0.05
+            tint = 1 + (hash01(i, sd) - 0.5) * 0.02
             sub.base *= np.where(dist > 0, tint, 1.0)[:, None]
             L.base[m], L.rough[m], L.h[m], L.astr[m] = sub.base, sub.rough, sub.h, sub.astr
-    # handling smudges near the access panels, the nose and the belly
+    # faint handling marks round the access panels: sheen only, no colour
     sm = skin.smear.sample(s, a, None, 3.0, 7.0)
     hot = np.zeros(n, np.float32)
     for (sa_, sb_, pa_, pb_) in access:
         cs, cp = 0.5 * (sa_ + sb_), 0.5 * (pa_ + pb_)
-        hot += np.exp(-(((s - cs) / 0.7) ** 2 + ((deg - cp) / 22) ** 2))
-    hot += 0.5 * np.exp(-((s - 4.9) / 1.2) ** 2) * sstep(120, 175, deg)
-    hot = np.clip(hot, 0, 1) * sstep(0.2, 1.4, sm + 0.6 * fbm(s, a, 0.6, 3, seed=5))
-    L.rough += 0.06 * hot
-    L.base *= (1 - 0.03 * hot)[:, None]
-    # flow streaks aft of fasteners and vents, stronger on the belly
-    st = fbm(s * 0.04, a * 2.2, 0.08, 3, seed=17)
-    stre = sstep(0.62, 0.85, st) * (0.35 + 0.65 * sstep(90, 170, deg)) * sstep(1.0, 3.0, s)
-    L.base *= (1 - 0.035 * stre)[:, None]; L.rough += 0.025 * stre
-    # heat: straw and bronze tint toward the nozzle, exhaust soot on the last metre
-    heat = sstep(11.4, 13.4, s)
-    tint = np.array([1.02, 0.93, 0.80], np.float32)
-    L.base *= (1 + heat[:, None] * (tint - 1) * (0.6 + 0.4 * fbm(s, a, 0.5, 3, seed=23))[:, None])
-    soot = sstep(12.6, 13.38, s) * (0.5 + 0.5 * fbm(s, a, 0.35, 4, seed=29))
-    over(L, soot * 0.55, col=np.array([0.05, 0.048, 0.045], np.float32), rough=0.6, metal=0.4)
-    L.astr *= (1 - 0.7 * heat)
-    # oil and hydraulic weeping on the belly behind the engine-bay doors
-    oil = sstep(150, 178, deg) * sstep(9.0, 10.5, s) * sstep(0.55, 0.8, fbm(s * 0.15, a * 1.5, 0.12, 3, seed=31))
-    over(L, oil * 0.25, col=np.array([0.10, 0.085, 0.06], np.float32), rough=0.25, metal=0.6)
+        hot += np.exp(-(((s - cs) / 0.5) ** 2 + ((deg - cp) / 16) ** 2))
+    L.rough += 0.02 * np.clip(hot, 0, 1) * sstep(0.2, 1.4, sm)
+    # heat: an even straw tint toward the engine, a little more on the lower alloy; faint exhaust dulling at the tail
+    heat = sstep(10.8, 13.4, s) * (0.55 + 0.45 * lower)
+    tint = np.array([1.0, 0.97, 0.905], np.float32)
+    L.base *= (1 + heat[:, None] * (tint - 1))
+    L.astr *= (1 - 0.4 * heat)
+    soot = sstep(13.0, 13.4, s) * (0.7 + 0.3 * fbm(s * 0.05, a * 2.0, 0.1, 2, seed=29))
+    over(L, soot * 0.16, col=np.array([0.10, 0.095, 0.09], np.float32), rough=0.5, metal=0.7)
     # markings
     for dc in decals:
         dc(L, s, a, side, deg)
@@ -708,21 +715,23 @@ def fus_decals(ff):
     """Markings as photographed: wordmark + horse (horse forward, facing the nose, both sides), unit badge,
     EXPERIMENTAL, four flush ports per side, the dorsal antenna patch."""
     out = []
-    black = hexlin('#101112')
-    # wordmark: text cap height 0.205 m (projected 0.20 on the curved upper side); horse 0.67 m long ahead of it
-    TH = 0.245
-    tm, tw = text_mask('QUARTERHORSE', TH, 600, track=0.035, width_m=1.86)
-    hm = np.asarray(horse_mark(int(0.70 * DECAL_PX_PER_M), int(0.33 * DECAL_PX_PER_M)), np.float32) / 255.0
+    black = hexlin('#1b1b1c')                    # painted as black metal: F0 ~ 1 %, no diffuse, so full sun does not grey it
+    # wordmark, measured on the 4K side view: 1.86 m long, cap height 0.175 m as projected (0.20 m along the skin at
+    # the 50 deg line), upright, widely tracked; the horse mark 0.71 x 0.21 m starts 0.078 m ahead of the last letter
+    TH = 0.202
+    tm, tw = text_mask('QUARTERHORSE', TH, 700, track=0.055, width_m=1.86)
+    HW, HH = 0.71, 0.238
+    hm = np.asarray(horse_mark(int(HW * DECAL_PX_PER_M), int(HH * DECAL_PX_PER_M)), np.float32) / 255.0
     T = Decal(None, tm, tw, TH)
-    Hs = Decal(None, hm, 0.70, 0.33)
-    Hp = Decal(None, hm[:, ::-1].copy(), 0.70, 0.33)
-    s_txt_aft, s_txt_fwd = 5.55, 5.55 - tw       # text spans s from ~3.7 to 5.55
-    s_h_aft, s_h_fwd = s_txt_fwd - 0.07, s_txt_fwd - 0.07 - 0.70
-    phi_c = 50.0                                  # centre around-angle of the wordmark band (z = 0.75 m)
+    Hs = Decal(None, hm, HW, HH)
+    Hp = Decal(None, hm[:, ::-1].copy(), HW, HH)
+    s_txt_aft, s_txt_fwd = 5.79, 5.79 - tw       # text spans s from ~3.93 to 5.79 (matched-camera overlay)
+    s_h_aft, s_h_fwd = s_txt_fwd - 0.078, s_txt_fwd - 0.078 - HW
+    phi_c = 50.0                                  # centre around-angle of the wordmark band
 
-    def paint_coat(L, m, alpha, col=black, rough=0.42, thick=0.00006):
+    def paint_coat(L, m, alpha, col=black, rough=0.62, thick=0.00006):
         sub_a = alpha
-        over_m(L, m, sub_a, col, rough)
+        over_m(L, m, sub_a, col, rough, metal=1.0)
         L.h[m] += thick * sub_a
         L.astr[m] *= (1 - sub_a)
 
@@ -737,25 +746,26 @@ def fus_decals(ff):
         xt = np.where(sd < 0, s_txt_aft - ss, ss - s_txt_fwd)
         _, at = T.sample(xt, y)
         xh = np.where(sd < 0, s_h_aft - ss, ss - s_h_fwd)
-        yh = aa - ac + 0.17
+        yh = aa - ac + HH / 2 - 0.016
         _, ah_s = Hs.sample(xh, yh)
         _, ah_p = Hp.sample(xh, yh)
         ah = np.where(sd < 0, ah_s, ah_p)
         paint_coat(L, m, np.maximum(at, ah))
     out.append(wordmark)
 
+    SEAL_S = 1.73                                 # badge centre station (matched-camera overlay)
     srgb, salpha = seal(int(0.49 * DECAL_PX_PER_M))
     SD = Decal(srgb, salpha, 0.49, 0.49)
 
     def badge(L, s, a, side, deg):
-        m = (deg > 70) & (deg < 112) & (s > 1.25) & (s < 1.85)
+        m = (deg > 70) & (deg < 112) & (s > SEAL_S - 0.30) & (s < SEAL_S + 0.30)
         if not m.any():
             return
         ss, aa, sd = s[m], a[m], side[m]
         ac = ff.arc_at(ss, 88.0)
-        x = np.where(sd < 0, 1.54 + 0.245 - ss, ss - (1.54 - 0.245))
+        x = np.where(sd < 0, SEAL_S + 0.245 - ss, ss - (SEAL_S - 0.245))
         rgb, al = SD.sample(x, aa - ac + 0.245)
-        over_m(L, m, al, rgb, 0.38)
+        over_m(L, m, al, rgb, 0.5)
         L.h[m] += 0.00007 * al
         L.astr[m] *= (1 - al)
     out.append(badge)
@@ -764,19 +774,19 @@ def fus_decals(ff):
     ED = Decal(None, em, ew, 0.084)
 
     def experimental(L, s, a, side, deg):
-        m = (deg > 52) & (deg < 84) & (s > 0.3) & (s < 1.25)
+        m = (deg > 52) & (deg < 84) & (s > 0.4) & (s < 1.45)
         if not m.any():
             return
         ss, aa, sd = s[m], a[m], side[m]
         ac = ff.arc_at(ss, 68.0)
-        s_fwd, s_aft = 0.49, 0.49 + ew
+        s_fwd, s_aft = 0.63, 0.63 + ew
         x = np.where(sd < 0, s_aft - ss, ss - s_fwd)
         _, al = ED.sample(x, aa - ac + 0.042)
         paint_coat(L, m, al)
     out.append(experimental)
 
     def ports(L, s, a, side, deg):
-        for (sc, pc) in ((1.61, 44.0), (2.57, 47.5), (1.59, 135.0), (2.56, 134.5)):
+        for (sc, pc) in ((1.67, 44.0), (2.74, 47.5), (1.65, 135.0), (2.73, 134.5)):
             m = (np.abs(s - sc) < 0.12) & (np.abs(deg - pc) < 14)
             if not m.any():
                 continue
@@ -786,19 +796,21 @@ def fus_decals(ff):
             r = np.hypot(dx, dy)
             ang = np.arctan2(dy, dx)
             hexr = 0.040 / np.maximum(np.cos(((ang + math.pi / 6) % (math.pi / 3)) - math.pi / 6), 0.5)
-            ring = sstep(0.087, 0.080, r) * sstep(0.058, 0.066, r)
-            disc = sstep(0.066, 0.060, r)
-            hexm = sstep(hexr + 0.003, hexr - 0.002, r)
-            col = np.zeros((len(r), 3), np.float32) + 0.86
-            over_m(L, m, ring, np.array([0.30, 0.31, 0.32], np.float32), 0.35)           # dark seal ring
-            over_m(L, m, disc * (1 - hexm), np.array([0.88, 0.88, 0.87], np.float32), 0.12, metal=1.0)  # polished insert
-            over_m(L, m, hexm, np.array([0.70, 0.71, 0.72], np.float32), 0.3, metal=1.0)
-            L.h[m] += -0.0003 * hexm - 0.00015 * ring
+            lw = 0.0028
+            band = sstep(0.086, 0.082, r) * sstep(0.056, 0.060, r)                          # the ring itself
+            lines = np.maximum(np.exp(-((r - 0.085) / lw) ** 2), np.exp(-((r - 0.057) / lw) ** 2))
+            hexm = sstep(hexr + 0.002, hexr - 0.002, r)
+            hexl = np.exp(-((r - hexr) / lw) ** 2)
+            over_m(L, m, band, np.array([0.80, 0.80, 0.79], np.float32), 0.50, metal=1.0)   # bead-blasted ring
+            over_m(L, m, hexm, np.array([0.93, 0.93, 0.92], np.float32), 0.38, metal=1.0)   # pale insert
+            over_m(L, m, np.maximum(lines, hexl) * 0.8, np.array([0.12, 0.12, 0.125], np.float32), 0.5, metal=0.3)
+            L.h[m] += -0.0002 * np.maximum(lines, hexl)
+            L.astr[m] *= (1 - np.maximum(band, hexm))
     out.append(ports)
 
     def vents(L, s, a, side, deg):
         # small flush features seen on the photos: an aft-facing slot, drains, a round flush antenna
-        for (sc, pc, kind) in ((1.15, 112.0, 'slot'), (2.2, 103.0, 'drain'), (2.25, 106.0, 'drain'), (3.26, 125.0, 'round'), (5.85, 129.0, 'drain'), (4.1, 128.0, 'slot')):
+        for (sc, pc, kind) in ((1.30, 112.0, 'slot'), (2.34, 103.0, 'drain'), (2.39, 106.0, 'drain'), (3.42, 125.0, 'round'), (6.0, 129.0, 'drain'), (4.25, 128.0, 'slot')):
             m = (np.abs(s - sc) < 0.1) & (np.abs(deg - pc) < 10)
             if not m.any():
                 continue
@@ -821,13 +833,14 @@ def fus_decals(ff):
     out.append(vents)
 
     def dorsal_patch(L, s, a, side, deg):
-        m = (deg < 12) & (s > 1.5) & (s < 1.9)
+        m = (deg < 16) & (s > 1.45) & (s < 1.95)
         if not m.any():
             return
         ss, aa = s[m], a[m]
-        q = sstep(0.003, 0.0, np.maximum(np.abs(ss - 1.70) - 0.125, 0) + np.maximum(aa - 0.06, 0))
-        over_m(L, m, q, hexlin('#1a2a5c'), 0.35, metal=0.0)
+        q = sstep(0.003, 0.0, np.maximum(np.abs(ss - 1.69) - 0.15, 0) + np.maximum(aa - 0.095, 0))
+        over_m(L, m, q, hexlin('#1d3a8c'), 0.45, metal=0.0)
         L.h[m] += 0.0002 * q
+        L.astr[m] *= (1 - q)
     out.append(dorsal_patch)
     return out
 
@@ -867,14 +880,14 @@ def paint_wing_set(S, OUTS, skin):
         along -= N * (along * N).sum(1, keepdims=True); along /= np.linalg.norm(along, axis=1, keepdims=True) + 1e-9
         across = np.cross(N, along)
         u, v = s, y + up * 7.0
-        skin.metal(L, u, v, panel, ao, along, across, 0.79)
+        skin.metal(L, u, v, panel, ao, along, across, 0.90, lower=(~up).astype(np.float32), cross_frac=0.0)
         # bay pillowing between rib and spar rows
         r0, r1, _ = bracket(WING_RIBS, y)
         x0, x1, _ = bracket(WING_SPARS + [0.86], x)
         bu = np.clip((y - r0) / (r1 - r0), 0, 1); bv = np.clip((x - x0) / np.maximum(x1 - x0, 1e-3), 0, 1)
         bay = panel * 3
-        L.h += (0.00022 + 0.0004 * hash01(bay, 2) ** 2) * np.sin(math.pi * bu) * np.sin(math.pi * bv) * np.where(up, 1, -0.7)
-        L.h += 0.0002 * (fbm(u, v, 0.8, 3, seed=41) - 0.5)
+        L.h += (0.00010 + 0.0002 * hash01(bay, 2) ** 2) * np.sin(math.pi * bu) * np.sin(math.pi * bv) * np.where(up, 1, -0.7)
+        L.h += 0.00006 * (fbm(u, v, 0.8, 3, seed=41) - 0.5)
         # joints and fastener rows
         k, dr = nearest(WING_RIBS, y)
         skin.seam(L, dr)
@@ -890,18 +903,42 @@ def paint_wing_set(S, OUTS, skin):
         dh = (x - xh) * c
         skin.rivets(L, y, dh - 0.03, 0.03, 0.0023, 71, strength=elev.astype(np.float32))
         skin.rivets(L, y, (1 - x) * c - 0.03, 0.03, 0.0021, 72, strength=elev.astype(np.float32))
-        # leading edge: polished, a little erosion and bug/dust spatter on the strake chine
+        # leading edge: a touch more polished; the trailing edge and hinge gap a little duller; faint straw near the nozzle
         lez = sstep(0.04, 0.0, x * c)
-        L.rough = L.rough * (1 - 0.5 * lez) + 0.1 * lez
-        spat = sstep(0.75, 0.9, fbm(s * 4, y * 4, 0.05, 2, seed=43)) * sstep(0.10, 0.0, x * c)
-        over(L, spat * 0.6, col=np.array([0.42, 0.38, 0.33], np.float32), rough=0.6, metal=0.0)
-        # trailing edge and the hinge gap darken (grime), elevon heat near the nozzle
-        L.base *= (1 - 0.25 * sstep(0.03, 0.0, (1 - x) * c))[:, None]
-        heat = sstep(1.4, 0.7, y) * sstep(11.8, 13.2, s)
-        L.base *= (1 + heat[:, None] * (np.array([1.02, 0.94, 0.82], np.float32) - 1))
-        # dust on the upper surfaces, streaks behind the elevon actuator fairings below
-        dust = (up & ~elev) * sstep(0.55, 0.8, fbm(u, v, 1.4, 3, seed=47))
-        over(L, dust * 0.18, col=np.array([0.55, 0.50, 0.44], np.float32), rough=0.5, metal=0.0)
+        L.rough = L.rough * (1 - 0.25 * lez) + 0.26 * 0.25 * lez
+        L.base *= (1 - 0.08 * sstep(0.02, 0.0, (1 - x) * c))[:, None]
+        heat = sstep(1.3, 0.7, y) * sstep(11.8, 13.2, s)
+        L.base *= (1 + 0.6 * heat[:, None] * (np.array([1.0, 0.97, 0.905], np.float32) - 1))
+        write(OUTS, idx, L)
+    # --- wing-root / strake fairings: long formed strips, joints at the fuselage frames, fastener rows down both edges
+    idx, P, N, pid, ao = S.gather([19])
+    if len(idx):
+        n = len(idx)
+        s = (X0 - P[:, 0]).astype(np.float32)
+        y = np.abs(P[:, 1]).astype(np.float32)
+        sd = np.where(P[:, 1] >= 0, 1, -1)
+        st = np.linspace(2.5, 13.34, 500)
+        yf_t, zj_t, yo_t, zo_t = fairing_ends(st)
+        yf = np.interp(s, st, yf_t).astype(np.float32); yo = np.interp(s, st, yo_t).astype(np.float32)
+        wid = np.maximum(np.hypot(yo - yf, np.interp(s, st, zj_t - zo_t)), 0.03).astype(np.float32)
+        t = np.clip((y - yf) / np.maximum(yo - yf, 1e-3), 0, 1)
+        L = Layers(n)
+        fr = np.array([2.93, 4.20, 5.45, 6.50, 7.68, 8.85, 9.95, 11.25, 12.05, 12.75], np.float32)
+        fi = np.searchsorted(fr, s)
+        panel = fi * 2 + (sd > 0) + 15000
+        along = np.zeros((n, 3), np.float32); along[:, 0] = -1.0
+        along -= N * (along * N).sum(1, keepdims=True); along /= np.linalg.norm(along, axis=1, keepdims=True) + 1e-9
+        across = np.cross(N, along)
+        skin.metal(L, s, y + (sd > 0) * 9.0, panel, ao, along, across, 0.90, cross_frac=0.0)
+        k, dsf = nearest(fr, s)
+        skin.seam(L, dsf)
+        for off, stg in ((0.014, 0.0), (-0.014, 0.0125)):
+            skin.rivets(L, t * wid, dsf - off, 0.026, 0.0024, 131 + (off > 0), stagger=stg)
+        wide = (wid > 0.10).astype(np.float32)
+        skin.rivets(L, s, t * wid - 0.016, 0.026, 0.0023, 133, strength=wide)
+        skin.rivets(L, s, (1 - t) * wid - 0.016, 0.026, 0.0023, 134, strength=wide)
+        heat = sstep(11.8, 13.2, s)
+        L.base *= (1 + 0.6 * heat[:, None] * (np.array([1.0, 0.97, 0.905], np.float32) - 1))
         write(OUTS, idx, L)
     # --- fin and rudder
     idx, P, N, pid, ao = S.gather([13, 14])
@@ -925,12 +962,12 @@ def paint_wing_set(S, OUTS, skin):
         along -= N * (along * N).sum(1, keepdims=True); along /= np.linalg.norm(along, axis=1, keepdims=True) + 1e-9
         across = np.cross(N, along)
         u, v = s, z + (sd > 0) * 9.0
-        skin.metal(L, u, v, panel, ao, along, across, 0.80)
+        skin.metal(L, u, v, panel, ao, along, across, 0.90, cross_frac=0.16, tone_var=0.05)
         r0, r1, _ = bracket([FIN_Z0] + ribs + [FIN_Z1], z)
         bu = np.clip((z - r0) / (r1 - r0), 0, 1)
         x0, x1, _ = bracket(spars + [1.0], x)
         bv = np.clip((x - x0) / np.maximum(x1 - x0, 1e-3), 0, 1)
-        L.h += (0.00022 + 0.00035 * hash01(panel, 2) ** 2) * np.sin(math.pi * bu) * np.sin(math.pi * bv)
+        L.h += (0.00010 + 0.00018 * hash01(panel, 2) ** 2) * np.sin(math.pi * bu) * np.sin(math.pi * bv)
         k, dz = nearest(ribs, z)
         skin.seam(L, dz)
         for off, stg in ((0.013, 0.0), (-0.013, 0.012)):
@@ -953,7 +990,7 @@ def paint_wing_set(S, OUTS, skin):
         # markings: wing mark (feathers trail aft on both sides) and the flag (union forward on both sides)
         wm = np.asarray(wing_mark(int(1.14 * DECAL_PX_PER_M), int(0.87 * DECAL_PX_PER_M)), np.float32) / 255.0
         WS, WP = Decal(None, wm, 1.14, 0.87), Decal(None, wm[:, ::-1].copy(), 1.14, 0.87)
-        s_fwd, s_aft, z_top = 12.80, 13.94, 2.47
+        s_fwd, s_aft, z_top = 12.86, 14.00, 2.43
         m = (s > s_fwd - 0.05) & (s < s_aft + 0.05) & (z > 1.55) & (z < 2.52)
         if m.any():
             ss, zz, sdm = s[m], z[m], sd[m]
@@ -961,10 +998,10 @@ def paint_wing_set(S, OUTS, skin):
             _, a_s = WS.sample(s_aft - ss, z_top - zz)
             _, a_p = WP.sample(ss - s_fwd, z_top - zz)
             al = np.where(sdm < 0, a_s, a_p)
-            over_m(L, m, al, hexlin('#0e0f10'), 0.40)
+            over_m(L, m, al, hexlin('#1b1b1c'), 0.62, metal=1.0)
             L.h[m] += 0.00007 * al; L.astr[m] *= (1 - al)
         fw, fh = 0.55, 0.31
-        fs_f, fz_t = 12.36, 1.625
+        fs_f, fz_t = 12.17, 1.625
         flag_s = us_flag(int(fw * DECAL_PX_PER_M), int(fh * DECAL_PX_PER_M), union_left=False)   # starboard: union at right = forward
         flag_p = us_flag(int(fw * DECAL_PX_PER_M), int(fh * DECAL_PX_PER_M), union_left=True)    # port: union at left = forward
         FS = Decal(flag_s, np.ones(flag_s.shape[:2], np.float32), fw, fh)
@@ -981,7 +1018,7 @@ def paint_wing_set(S, OUTS, skin):
         tipm = sstep(0.006, 0.0, np.maximum(z - (FIN_Z1 - 0.05), 0) * 0 + np.maximum((FIN_Z1 - 0.04) - z, 0)) * sstep(0.004, 0.0, np.maximum(x - 0.12, 0))
         over(L, tipm, col=np.array([0.03, 0.03, 0.03], np.float32), rough=0.4, metal=0.0)
         heat = sstep(1.5, 1.2, z) * sstep(13.8, 14.6, s)
-        over(L, heat * 0.4, col=np.array([0.07, 0.065, 0.06], np.float32), rough=0.55, metal=0.4)
+        over(L, heat * 0.08, col=np.array([0.10, 0.095, 0.09], np.float32), rough=0.5, metal=0.7)
         write(OUTS, idx, L)
     # --- chute boom
     idx, P, N, pid, ao = S.gather([15])
@@ -991,7 +1028,7 @@ def paint_wing_set(S, OUTS, skin):
         sd = np.where(N[:, 1] >= 0, 1, -1)
         sideface = np.abs(N[:, 1]) > 0.6
         L = Layers(n)
-        frames = [10.30, 10.95, 11.62, 12.35, 13.0, 13.63, 14.37, 15.0]
+        frames = [10.30, 10.95, 11.45, 12.15, 13.0, 13.63, 14.37, 15.0]
         fi = np.searchsorted(np.array(frames, np.float32), s)
         band = (z > 0.955).astype(np.int64)
         panel = ((fi * 4 + band * 2 + sideface) * 2 + (sd > 0)) + 9000
@@ -999,7 +1036,7 @@ def paint_wing_set(S, OUTS, skin):
         along -= N * (along * N).sum(1, keepdims=True); along /= np.linalg.norm(along, axis=1, keepdims=True) + 1e-9
         across = np.cross(N, along)
         u, v = s, np.where(sideface, z, y) + (sd > 0) * 5.0
-        skin.metal(L, u, v, panel, ao, along, across, 0.80)
+        skin.metal(L, u, v, panel, ao, along, across, 0.90)
         k, dsf = nearest(frames, s)
         skin.seam(L, dsf)
         skin.rivets(L, v, dsf - 0.014, 0.025, 0.0023, 101)
@@ -1010,22 +1047,22 @@ def paint_wing_set(S, OUTS, skin):
         # N21QH: both sides, reads left to right from outside
         rm, rw = text_mask('N21QH', 0.225, 600, track=0.04, width_m=0.66)
         R = Decal(None, rm, rw, 0.225)
-        s_c, z_c = 11.68, 1.015
+        s_c, z_c = 11.75, 1.015
         m = sideface & (np.abs(s - s_c) < rw / 2 + 0.05) & (np.abs(z - z_c) < 0.15)
         if m.any():
             ss, zz, sdm = s[m], z[m], sd[m]
             x = np.where(sdm < 0, (s_c + rw / 2) - ss, ss - (s_c - rw / 2))
             _, al = R.sample(x, (z_c + 0.1125) - zz)
-            over_m(L, m, al, hexlin('#0e0f10'), 0.42)
+            over_m(L, m, al, hexlin('#1b1b1c'), 0.62, metal=1.0)
             L.h[m] += 0.00007 * al; L.astr[m] *= (1 - al)
         # exhaust soot and heat on the boom's underside above the nozzle
         under = sstep(-0.2, -0.8, N[:, 2])
         soot = (under * 0.7 + 0.3 * sstep(0.85, 0.74, z)) * sstep(13.0, 14.6, s) * (0.6 + 0.4 * fbm(s, y, 0.3, 3, seed=53))
-        over(L, soot * 0.7, col=np.array([0.045, 0.043, 0.04], np.float32), rough=0.62, metal=0.3)
-        L.base *= (1 + sstep(13.2, 14.6, s)[:, None] * (np.array([1.03, 0.95, 0.84], np.float32) - 1))
+        over(L, soot * 0.22, col=np.array([0.10, 0.095, 0.09], np.float32), rough=0.5, metal=0.7)
+        L.base *= (1 + 0.6 * sstep(13.2, 14.6, s)[:, None] * (np.array([1.0, 0.97, 0.905], np.float32) - 1))
         write(OUTS, idx, L)
     # --- nose fairing (black), air-data boom (steel), blade antennas (dark composite)
-    for pidv, col, rough, metal in ((16, hexlin('#0c0d0e'), 0.28, 0.0), (17, np.array([0.55, 0.56, 0.57], np.float32), 0.22, 1.0), (18, hexlin('#2a2b2d'), 0.5, 0.0)):
+    for pidv, col, rough, metal in ((16, hexlin('#0c0d0e'), 0.28, 0.0), (17, np.array([0.66, 0.67, 0.68], np.float32), 0.30, 1.0), (18, hexlin('#2a2b2d'), 0.5, 0.0)):
         idx, P, N, pid, ao = S.gather([pidv])
         if not len(idx):
             continue
@@ -1033,15 +1070,15 @@ def paint_wing_set(S, OUTS, skin):
         L = Layers(n)
         u, v = P[:, 0] * 3.1, P[:, 1] * 3.1 + P[:, 2] * 2.3
         nz = fbm(u, v, 0.5, 4, seed=pidv)
-        L.base[:] = col[None, :] * (0.9 + 0.2 * nz)[:, None]
-        L.rough[:] = rough * (0.85 + 0.35 * nz)
+        L.base[:] = col[None, :] * (0.96 + 0.08 * nz)[:, None]
+        L.rough[:] = rough * (0.92 + 0.16 * nz)
         L.metal[:] = metal
         if pidv == 17:   # the tip and the vanes darker, a heat-blued collar band
-            tip = sstep(-1.0, -1.2, X0 - P[:, 0])
-            L.base *= (1 - 0.55 * tip)[:, None]
+            tip = sstep(-1.28, -1.40, X0 - P[:, 0])
+            L.base *= (1 - 0.35 * tip)[:, None]
         g = np.clip(1 - ao, 0, 1)
-        L.base *= (1 - 0.35 * g)[:, None]
-        L.h += 0.00012 * (nz - 0.5)
+        L.base *= (1 - 0.15 * g)[:, None]
+        L.h += 0.00004 * (nz - 0.5)
         write(OUTS, idx, L)
 
 
@@ -1089,13 +1126,19 @@ def paint_hot(S, OUTS):
     over(L, soot, col=np.array([0.028, 0.027, 0.025], np.float32), rough=0.72, metal=0.2)
     # rubbed, slightly brighter edges on the mechanism (links, clevises, rib tops)
     over(L, np.clip(edge * 2.5, 0, 1) * np.isin(pid, [33, 34]) * 0.45, col=np.array([0.26, 0.255, 0.25], np.float32), rough=0.32, metal=1.0)
-    # inlet: lip polished like the skin, duct a matte grey that darkens with depth; compressor face dark titanium
-    lip = (pid == 2) & (s < 0.035) & ~inward
-    duct = (pid == 2) & ~lip
-    L.base[lip] = 0.78; L.rough[lip] = 0.18; L.metal[lip] = 1.0
-    depth = np.clip(s / 2.7, 0, 1)
-    L.base[duct] = (srgb_to_lin(np.array([0.42, 0.42, 0.41], np.float32)) * (1 - 0.7 * depth[duct])[:, None]).astype(np.float32)
-    L.rough[duct] = 0.6; L.metal[duct] = 0.0
+    # inlet: the lip roll is plain skin metal; inside, the duct falls quickly to a dark matte grey (a dark intake
+    # face, as photographed); compressor face dark titanium
+    inl = pid == 2
+    dk = sstep(0.034, 0.10, s[inl])                          # 0 on the lip roll .. 1 in the duct
+    depth = np.clip(s[inl] / 1.2, 0, 1)
+    duct_col = srgb_to_lin(np.array([0.20, 0.20, 0.205], np.float32))[None, :] * (1 - 0.8 * depth)[:, None]
+    L.base[inl] = (0.89 * (1 - dk))[:, None] + duct_col * dk[:, None]
+    L.rough[inl] = 0.33 * (1 - dk) + 0.62 * dk
+    L.metal[inl] = 1 - dk
+    aomul = np.ones(n, np.float32)
+    aomul[inl] = 1 - 0.9 * sstep(0.05, 0.6, s[inl])
+    aomul[np.isin(pid, [3, 36, 37])] = 0.15
+    L.aomul = aomul
     fan = pid == 3
     L.base[fan] = srgb_to_lin(np.array([0.34, 0.34, 0.35], np.float32)) * (0.8 + 0.4 * nz[fan])[:, None]
     L.rough[fan] = 0.35; L.metal[fan] = 1.0
@@ -1128,35 +1171,44 @@ def paint_gear(S, OUTS, skin):
     L.rough[:] = 0.42 + 0.12 * nz2
     L.metal[:] = 0.0
     g = np.clip(1 - ao, 0, 1)
-    # tyres: rubber, tread lighter where worn, a dusty lower half
+    # tyres: matte rubber (dark grey, never black), a slightly scrubbed tread band, moulded sidewall rings, and the
+    # pale dust a desert runway leaves on the sidewalls and in the grooves (the wheel turns: dust is even all round)
     ty = pid == 50
     if ty.any():
-        L.base[ty] = srgb_to_lin(np.array([0.085, 0.085, 0.09], np.float32)) * (0.85 + 0.3 * nz2[ty])[:, None]
-        L.rough[ty] = 0.82 - 0.1 * nz[ty]
-        # tread band: worn lighter grey; sidewall: subtle moulded rings
-        wheel_c = np.where(np.abs(P[ty, 1]) > 0.5, GROUND + MAIN_WHEEL['r'], GROUND + NOSE_WHEEL['r'])
-        sx = np.where(np.abs(P[ty, 1]) > 0.5, X(MAIN_WHEEL['s']), X(NOSE_WHEEL['s']))
-        rad = np.hypot(P[ty, 0] - sx, P[ty, 2] - wheel_c)
-        R = np.where(np.abs(P[ty, 1]) > 0.5, MAIN_WHEEL['r'], NOSE_WHEEL['r'])
-        tread = sstep(R - 0.03, R - 0.012, rad)
-        L.base[ty] *= (1 + 0.45 * tread)[:, None]
-        L.rough[ty] = np.clip(L.rough[ty] - 0.08 * tread, 0, 1)
+        main = np.abs(P[ty, 1]) > 0.5
+        wheel_c = np.where(main, GROUND - MAIN_DROP + MAIN_WHEEL['r'], GROUND + NOSE_WHEEL['r'])
+        sx = np.where(main, X(MAIN_WHEEL['s']), X(NOSE_WHEEL['s']))
+        dx_, dz_ = P[ty, 0] - sx, P[ty, 2] - wheel_c
+        rad = np.hypot(dx_, dz_)
+        R = np.where(main, MAIN_WHEEL['r'], NOSE_WHEEL['r'])
+        angc = np.arctan2(dz_, dx_) * R                       # metres round the circumference
+        fine = fbm(angc * 6.0, rad * 6.0, 0.05, 3, seed=74)
+        patch = fbm(angc, rad * 2.0, 0.25, 3, seed=75)
+        rubber = srgb_to_lin(np.array([0.150, 0.150, 0.155], np.float32))
+        tread = sstep(R - 0.034, R - 0.014, rad)
+        L.base[ty] = rubber[None, :] * (0.90 + 0.20 * fine)[:, None] * (1 + 0.22 * tread)[:, None]
+        L.rough[ty] = 0.90 - 0.06 * tread
+        L.metal[ty] = 0.0
         rings = 0.5 + 0.5 * np.cos(rad * 2 * math.pi / 0.009)
-        L.h[ty] += 0.00008 * rings * (1 - tread) + 0.0004 * (nz2[ty] - 0.5) * tread
-        dust = sstep(-0.3, -0.9, (P[ty, 2] - wheel_c) / R) * 0.5
-        L.base[ty] = L.base[ty] * (1 - dust[:, None]) + srgb_to_lin(np.array([0.36, 0.32, 0.27], np.float32)) * dust[:, None]
+        L.h[ty] += 0.00008 * rings * (1 - tread) * sstep(0.62, 0.72, rad / R) + 0.00025 * (fine - 0.5) * tread
+        dustc = srgb_to_lin(np.array([0.47, 0.43, 0.37], np.float32))
+        dust = (1 - tread) * (0.12 + 0.22 * patch) * sstep(0.55, 0.80, rad / R) + tread * 0.08 * sstep(0.45, 0.75, fine)
+        dust += 0.35 * np.clip(1 - ao[ty], 0, 1) * tread        # packed into the grooves
+        dust = np.clip(dust, 0, 0.6)
+        L.base[ty] = L.base[ty] * (1 - dust[:, None]) + dustc[None, :] * dust[:, None]
+        L.rough[ty] = L.rough[ty] * (1 - dust) + 0.95 * dust
     hub = pid == 51
     if hub.any():
         L.base[hub] = srgb_to_lin(np.array([0.74, 0.74, 0.72], np.float32)) * (0.9 + 0.15 * nz[hub])[:, None]
         L.rough[hub] = 0.38
         bd = np.clip(1 - ao[hub], 0, 1)
-        over_m(L, hub, 0.6 * bd + 0.25 * nz2[hub], np.array([0.12, 0.10, 0.08], np.float32), 0.6)   # brake dust
+        over_m(L, hub, 0.35 * bd + 0.06 * nz2[hub], np.array([0.12, 0.10, 0.08], np.float32), 0.6)   # brake dust
     chrome = pid == 54
     if chrome.any():
         L.base[chrome] = 0.92; L.metal[chrome] = 1.0
         L.rough[chrome] = 0.06 + 0.06 * nz2[chrome]
         oil = sstep(0.5, 0.8, nz[chrome])
-        over_m(L, chrome, oil * 0.5, np.array([0.5, 0.45, 0.35], np.float32), 0.15, metal=1.0)
+        over_m(L, chrome, oil * 0.15, np.array([0.5, 0.45, 0.35], np.float32), 0.15, metal=1.0)
     brake = pid == 56
     if brake.any():
         L.base[brake] = srgb_to_lin(np.array([0.36, 0.34, 0.32], np.float32)) * (0.85 + 0.3 * nz[brake])[:, None]
@@ -1174,7 +1226,9 @@ def paint_gear(S, OUTS, skin):
         across = np.cross(Nd, along)
         sd = s[dout]; zd = P[dout, 2]
         panel = (np.abs(P[dout, 1]) > 0.6).astype(np.int64) * 4 + (P[dout, 1] > 0) + 12000
-        skin.metal(sub, sd, zd, panel, ao[dout], along, across, 0.80)
+        skin.metal(sub, sd, zd, panel, ao[dout], along, across, 0.86)
+        sub.rough += 0.14
+        sub.h += 0.0005 * np.sin(sd * 2 * math.pi / 0.42) * np.sin(zd * 2 * math.pi / 0.36) + 0.0003 * (fbm(sd, zd, 0.5, 3, seed=77) - 0.5)
         # rivet rows round the edge and along two stringers
         for key, (s0d, s1d, z0d, z1d) in (('n', DOORS['nose'][:4]), ('m', DOORS['main'][:4])):
             m = (sd > s0d - 0.02) & (sd < s1d + 0.02)
@@ -1183,11 +1237,11 @@ def paint_gear(S, OUTS, skin):
             ex = np.minimum(sd - s0d, s1d - sd); ez = np.minimum(zd - z1d, z0d - zd)
             dmin = np.minimum(ex, ez)
             alongd = np.where(ex < ez, zd, sd)
-            head, ring, rnd = rivet_row(alongd, dmin - 0.016, 0.028, 0.0024, 120)
+            head, ring, rnd = rivet_row(alongd, dmin - 0.016, 0.028, 0.0030, 120)
             for stz in np.linspace(z1d, z0d, 5)[1:-1]:
-                h2, r2, _ = rivet_row(sd, zd - stz, 0.032, 0.0023, 121)
+                h2, r2, _ = rivet_row(sd, zd - stz, 0.032, 0.0030, 121)
                 head = np.maximum(head, h2 * 0.8); ring = np.maximum(ring, r2 * 0.8)
-            sub.base[m] *= (1 + 0.06 * head[m][:, None] - 0.2 * ring[m][:, None])
+            sub.base[m] *= (1 + 0.02 * head[m][:, None] - 0.28 * ring[m][:, None])
             sub.h[m] += -0.00004 * ring[m]
         L.base[dout], L.rough[dout], L.metal[dout], L.h[dout] = sub.base, sub.rough, sub.metal, sub.h
         L.adir[dout], L.astr[dout] = sub.adir, sub.astr
@@ -1201,11 +1255,12 @@ def paint_gear(S, OUTS, skin):
         L.rough[wells] = 0.75
     painted = np.isin(pid, [51, 52, 53, 60])
     # grime in crevices, hydraulic fluid stains below joints, worn edges showing metal
-    L.base *= (1 - 0.45 * g * painted - 0.25 * g * ~painted)[:, None]
-    L.rough += 0.15 * g * painted
+    tyre_m = pid == 50
+    L.base *= (1 - 0.25 * g * painted - 0.10 * g * (~painted & ~tyre_m))[:, None]
+    L.rough += 0.08 * g * painted
     stain = sstep(0.62, 0.82, fbm(u * 0.5, v * 4.0, 0.15, 3, seed=73)) * painted
-    over(L, stain * 0.5, col=np.array([0.22, 0.17, 0.10], np.float32), rough=0.25)
-    wear = np.clip(edge * 2.2 - 0.2, 0, 1) * painted * sstep(0.4, 0.7, nz2)
+    over(L, stain * 0.10, col=np.array([0.30, 0.25, 0.18], np.float32), rough=0.3)
+    wear = 0.5 * np.clip(edge * 2.2 - 0.2, 0, 1) * painted * sstep(0.5, 0.75, nz2)
     over(L, wear, col=np.array([0.55, 0.55, 0.54], np.float32), rough=0.3, metal=1.0)
     L.h += 0.00012 * (nz2 - 0.5) * painted
     write(OUTS, idx, L)
@@ -1219,6 +1274,10 @@ def write(OUTS, idx, L):
     OUTS['h'].ravel()[idx] = L.h
     OUTS['adir'].reshape(-1, 3)[idx] = L.adir
     OUTS['astr'].ravel()[idx] = L.astr
+    if L.aomul is not None:
+        if 'aomul' not in OUTS:
+            OUTS['aomul'] = np.ones_like(OUTS['rough'])
+        OUTS['aomul'].ravel()[idx] = L.aomul
     if L.emis is not None:
         if 'emis' not in OUTS:
             OUTS['emis'] = np.zeros_like(OUTS['base'])
@@ -1291,7 +1350,12 @@ def finish(S, OUTS):
     base = pad(OUTS['base'], pidx)
     rough = pad(OUTS['rough'], pidx)
     metal = pad(OUTS['metal'], pidx)
-    ao = pad(np.clip(0.35 + 0.65 * S.ao, 0, 1), pidx)
+    aov = np.clip(0.35 + 0.65 * S.ao, 0, 1)
+    if key in ('skin', 'wing'):
+        aov = aov * (1 - 0.68 * sstep(0.10, -0.60, S.nrm[..., 2]))
+    if 'aomul' in OUTS:
+        aov = aov * OUTS['aomul']
+    ao = pad(aov, pidx)
     nn = pad(n_ts, pidx)
     nn[~np.isfinite(nn).all(2) | (np.linalg.norm(nn, axis=2) < 0.5)] = (0, 0, 1)
     an = pad(np.stack([ax, ay, OUTS['astr']], 2), pidx)

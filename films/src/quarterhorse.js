@@ -194,7 +194,7 @@ function poseAir(t, film, o = {}) {
   return s;
 }
 function poseGround(film, z, y, pitch, ab, haze = 1, abGain = 15) {
-  tmp.set(0, y, z); film.place(W.ac, tmp); attitude(0, pitch, 0, W.ac.quaternion);
+  tmp.set(0, y, z); film.place(W.ac, tmp); attitude(0, pitch + QH.sitPitch, 0, W.ac.quaternion);
   W.ac.userData.setGear(true); W.ac.userData.setAfterburner(ab); W.plume.userData.set(ab, abGain); W.haze.userData.set(haze);
   for (const sh of W.shocks) sh.userData.set(0, 0, 0);
   W.field.group.visible = true; tmp.set(0, FIELD_ALT, 0); film.place(W.field.group, tmp);

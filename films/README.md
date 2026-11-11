@@ -105,15 +105,20 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   files are, so the films build without Blender.
 - `blender/quarterhorse.py` (with `qh_shape.py`, `qh_geo.py`, `qh_paint.py`) builds film 1's aircraft:
   `node tools/blender.mjs quarterhorse all` (or the stages `geo`, `bake`, `paint`, `export`). The airframe is lofted
-  from stations measured on Hermeus photography; every part gets metric UVs, data maps (position, normal, part id,
-  occlusion) are baked per texture set, and `qh_paint.py` (numpy only, also runs as `python3 -I
-  blender/qh_paint.py`) paints the skin as a function of the surface: panel joints, rivet rows, oil canning, sheet
-  tone and grain (KHR_materials_anisotropy), smudges, soot and temper colours, and the markings, over ambientCG
-  metal scans. The GLB carries the nodes `gear` (landing gear, open doors, wells) and `ab_glow` (afterburner
-  surfaces whose emissive the film drives).
+  from stations measured on Hermeus photography (checked by rendering the model through a camera matched to the 4K
+  side photograph and overlaying its edges on the photo); every part gets metric UVs, data maps (position, normal,
+  part id, occlusion) are baked per texture set, and `qh_paint.py` (numpy only, also runs as `python3 -I
+  blender/qh_paint.py`) paints the skin as a function of the surface: clean satin aluminium whose sheets differ by a
+  percent or two in tone and by brushing direction (KHR_materials_anisotropy), crisp joints, flush fastener rows,
+  access panels, the darker lower-fuselage alloy, a faint heat tint aft, and the markings. Weathering is kept
+  minimal on purpose: the real aircraft is clean. The GLB carries the nodes `gear` (landing gear, open doors, wells)
+  and `ab_glow` (afterburner surfaces whose emissive the film drives); only the two anisotropic skins keep stored
+  tangents, which keeps the file near 10 MB.
 - `src/lookdev.js` is a turntable for checking any packed asset under the films' sky and grade:
-  `node tools/shot.mjs lookdev <prefix> --q="glb=quarterhorse/quarterhorse.glb&el=10&dist=20" t` (t from 0 to 12
-  orbits once; `--q` passes any URL parameters to the page).
+  `node tools/shot.mjs lookdev <prefix> --q="glb=quarterhorse/quarterhorse.glb&el=10&dist=20" t` (t from 0.1 to 12
+  orbits once; `--q` passes any URL parameters to the page). For photo comparisons: `el`/`az` (sun), `gc` (ground
+  colour, e.g. `c4c0b6` pale concrete), `ga` (ground albedo the sky model reflects), `origin=1` with
+  `--cam=x,y,z,lookx,looky,lookz,fov` in model coordinates, `pitch`, `roll`, `emis=0`.
 
 Photoscanned materials and models come from [Poly Haven](https://polyhaven.com) and
 [ambientCG](https://ambientcg.com), both CC0.
