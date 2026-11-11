@@ -38,7 +38,7 @@ export function makeMissileTrail(pipe, noise3, K) {
     // x: extinction (1/m) of smoke at radius 1 m, y: wisps (interior erosion), z: break-up into puffs, w: burst at ignition
     uMass: { value: new THREE.Vector4(1.6, 0.75, 0.85, 1.1) },
     uPlume: { value: new THREE.Vector3(1.0, 0.6, 0.28) }, uPlumeK: { value: 1 },
-    uDeck: { value: new THREE.Vector3(0.5, 0.45, 0.4) }, uBlur: { value: 0 }, uStretch: { value: 1 }, uPix: { value: 0.002 }, uAlbedo: { value: new THREE.Vector3(0.9, 0.92, 0.95) },
+    uDeck: { value: new THREE.Vector3(0.45, 0.45, 0.45) }, uLight: { value: new THREE.Vector4(0.16, 0.03, 1.6, 0.8) }, uBlur: { value: 0 }, uStretch: { value: 1 }, uPix: { value: 0.002 }, uAlbedo: { value: new THREE.Vector3(0.9, 0.92, 0.95) },
   };
   const ENV = 1.62;      // the smoke surface never lies outside this many radii
   const mat = new THREE.ShaderMaterial({
@@ -57,7 +57,7 @@ export function makeMissileTrail(pipe, noise3, K) {
       ${NOISE}
       ${DEPTH}
       uniform sampler2D tDepth, tAmbient; uniform sampler3D tNoise3; uniform vec2 uRes; uniform float uFrame;
-      uniform vec3 uSunColor, uSunT, uCamT, uBoxMin, uBoxMax, uClimb, uPlume, uDrift, uDeck, uAlbedo; uniform vec4 uKin, uRad, uShape, uMass;
+      uniform vec3 uSunColor, uSunT, uCamT, uBoxMin, uBoxMax, uClimb, uPlume, uDrift, uDeck, uAlbedo; uniform vec4 uKin, uRad, uShape, uMass, uLight;   // uLight: second and third scattering orders, sky light, how far the sun's colour is paled
       uniform float uNow, uANow, uPlumeK, uBlur, uStretch, uPix;
       varying vec3 vT; varying float vZ;
       const float ENV = ${ENV.toFixed(2)};
@@ -123,7 +123,7 @@ export function makeMissileTrail(pipe, noise3, K) {
         float ph0 = mix(hg(cv, 0.72), hg(cv, -0.25), 0.35), ph1 = mix(hg(cv, 0.36), hg(cv, -0.12), 0.35), ph2 = 0.0796;
         vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb*0.3183;
         // smoke this white photographs paler than the low sun's own colour (thin edges are lit by the whole sky as well)
-        vec3 sunC = mix(uSunColor, vec3(dot(uSunColor, vec3(0.3, 0.55, 0.15))), 0.5);
+        vec3 sunC = mix(uSunColor, vec3(dot(uSunColor, vec3(0.3, 0.55, 0.15))), uLight.w);
         float jit = hash12(gl_FragCoord.xy+fract(uFrame*0.618)*61.0), perp = length(rd.yz);   // grain, not a hatch pattern
         float t = tN, T = 1.0; vec3 C = vec3(0.0); bool inside = false;
         for (int i=0;i<128;i++){
@@ -143,9 +143,9 @@ export function makeMissileTrail(pipe, noise3, K) {
               ps += uSunT*sl; vec2 qs; float pfs; vec4 ts = tube(ps, qs, pfs);
               tau += density(ps, ts, pfs, lod)*sl; sl *= 1.9;
             }
-            vec3 sun = sunC*(ph0*exp(-tau)+0.32*ph1*exp(-tau*0.4)+0.09*ph2*exp(-tau*0.13));
+            vec3 sun = sunC*(ph0*exp(-tau)+uLight.x*ph1*exp(-tau*0.4)+uLight.y*ph2*exp(-tau*0.13));
             float up = clamp(0.5+0.5*q.x/max(R*1.2, 1e-3), 0.0, 1.0), sky = 0.35+0.65*exp(-tau*0.35);
-            vec3 L = (sun*3.14159+amb*(0.35+0.75*up)*sky+uDeck*amb*(1.0-up)*0.5)*uAlbedo;
+            vec3 L = (sun*3.14159+amb*uLight.z*((0.35+0.75*up)*sky+uDeck*(1.0-up)*0.5))*uAlbedo;
             // the flame lights the youngest smoke from inside
             L += uPlume*(uPlumeK*dot(uSunColor, vec3(0.1))*(exp(-age/0.03)*3.0+exp(-age/0.1)*0.08))*(0.35+0.65*(1.0-clamp(tb.w, 0.0, 1.0)));
             float a = 1.0-exp(-rho*ds);
@@ -167,14 +167,14 @@ export function makeMissileTrail(pipe, noise3, K) {
   const ahead = t => t < K.T1 ? 0.5 * K.A1 * t * t : 0.5 * K.A1 * K.T1 * K.T1 + K.A1 * K.T1 * (t - K.T1) + 0.5 * K.A2 * (t - K.T1) * (t - K.T1);
   const climb = t => { const u = Math.max(t - K.climbT0, 0); return u < K.climbT1 ? K.climbK * u * u : K.climbK * K.climbT1 * (2 * u - K.climbT1); };
   // now: seconds since the motor lit; ignRel: ignition point relative to the render origin; hdg: launch heading (deg)
-  // o: { density, plume (glow in the young smoke), blur (m of travel during the exposure), stretch, deck: [r,g,b] light from
+  // o: { density, plume (glow in the young smoke), blur (m of travel during the exposure), stretch, light, deck: [r,g,b] light from
   //      below, rad, shape, mass (look development: replace uRad, uShape, uMass) }
   mesh.userData.set = (now, ignRel, hdg, sunDir, o = {}) => {
     if (now <= 0.002) { mesh.visible = false; return; }
     mesh.visible = true;
     mesh.position.copy(ignRel); attitude(hdg, 0, 0, mesh.quaternion);
     U.uSunT.value.copy(sunDir).applyQuaternion(qi.copy(mesh.quaternion).invert());
-    if (o.rad) U.uRad.value.fromArray(o.rad); if (o.shape) U.uShape.value.fromArray(o.shape); if (o.mass) U.uMass.value.fromArray(o.mass);
+    if (o.light) U.uLight.value.fromArray(o.light); if (o.rad) U.uRad.value.fromArray(o.rad); if (o.shape) U.uShape.value.fromArray(o.shape); if (o.mass) U.uMass.value.fromArray(o.mass);
     const tb = Math.min(now, K.burn), aNow = K.V * tb + ahead(tb);
     U.uNow.value = now; U.uANow.value = aNow;
     const R = U.uRad.value, M = U.uMass.value, w = Math.min(now, 12), m = 0.2 * w + 0.03 * w * w, dr = U.uDrift.value;
