@@ -41,6 +41,19 @@ sideways, the instruments come back beside it.
 To put a single film inside an article, use the drop-in script:
 [docs/EMBED.md](docs/EMBED.md).
 
+## Publish it behind a password
+
+```bash
+SITE_PASSWORD=... npm run pages
+```
+
+That writes `dist/pages/`: one `index.html` holding the whole site encrypted (AES-GCM,
+key from the password by PBKDF2), a password prompt in the site's own style, and a
+`robots.txt` that turns crawlers away. Push that folder as the `gh-pages` branch and
+GitHub Pages serves it. The password is never written to disk; capitalization does not
+matter. It keeps out casual visitors and search engines, not a determined one, so use a
+long password for anything that must stay private.
+
 ## Build it
 
 ```bash

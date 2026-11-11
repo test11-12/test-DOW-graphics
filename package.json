@@ -15,7 +15,8 @@
     "verify": "node tools/verify.mjs",
     "lint:layout": "node tools/lint-layout.mjs",
     "copy": "node tools/copy.mjs",
-    "export": "node tools/export-pdf.mjs"
+    "export": "node tools/export-pdf.mjs",
+    "pages": "node scripts/build.mjs && node tools/lock-site.mjs"
   },
   "engines": {
     "node": ">=22.18"
