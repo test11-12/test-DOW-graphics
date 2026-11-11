@@ -906,7 +906,7 @@ export class Pipeline {
   // post: { exposure, bloom, bloomTint, vignette, grain, ca, lensK, fade, sat, contrast, wb, lift, tint, shutter, shimmer:[amp,scale,far],
   //         sunDisk, aerial, mode, thermal, sharpen, envKey, envSea (0..1: the probe's ground is open water), cirrus:{alt,cover,opacity,scale,wind}, clouds:{...},
   //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, raysNear:[weight at 0 m, metres to full weight],
-//         flare:{ghost,halo,streak,thr} }
+  //         flare:{ghost,halo,streak,thr} }
   render(time, frameIndex, post = {}) {
     const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene;
     if (this.prof) { this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }

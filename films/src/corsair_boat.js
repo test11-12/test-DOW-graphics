@@ -14,7 +14,7 @@ export const CORSAIR = { length: 7.3, beam: 2.48, stern: -3.65, bow: 3.65, mastT
 // (sun on it), the engine box and its vents hot (the simulated IR grade saturates near 1)
 const THERMAL = { hull: 0.15, deck: 0.32, deck_grip: 0.32, enginebox: 3.0, vent: 5.0, mast: 0.25, gear: 0.3 };
 // materials that get the wet-surface layer, and the plating "fairing" amplitude (m) of each
-const SURFACE = { hull: { fair: 0.0018 }, deck: {}, deck_grip: { grain: true }, enginebox: {} };
+const SURFACE = { hull: { fair: 0.0028 }, deck: {}, deck_grip: { grain: true }, enginebox: {} };
 
 const DROP_TILE = 0.60;   // metres of surface one tile of the droplet texture covers (1024 texels: 0.59 mm; drops 0.7-7 mm across)
 const GRAIN_TILE = 0.20;  // metres per tile of the scanned non-skid grit

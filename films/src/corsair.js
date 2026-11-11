@@ -197,7 +197,7 @@ const shots = [
   { id: 's07', name: 'Bow camera', t0: 43, t1: 50.2, note: 'Simulated bow camera (original graphics, labelled): the dock, the gantry and the hull on it grow in the frame.',
     tracks: RUN_IN, bowcam: true,
     // bolted to the hull: the foredeck holds still in the lower third while the horizon pitches and rolls
-    camera: (lt, t) => { const p = RUN_IN[0](t), tr = RUN_IN[0]; return { pos: onBoat(tr, t, 1.15, 1.30, 0.0), look: onBoat(tr, t, 40, -2.6, 0.0), up: onBoat(tr, t, 0, 1, 0).sub(onBoat(tr, t, 0, 0, 0)), fov: 62, shake: { rot: 0.10, freq: 3.1, seed: 7, jolt: 0.05 }, focus: v3(p.x, 0.5, p.z), focusRadius: 6 }; },
+    camera: (lt, t) => { const p = RUN_IN[0](t), tr = RUN_IN[0]; return { pos: onBoat(tr, t, 1.15, 1.30, 0.0), look: onBoat(tr, t, 40, -5.2, 0.0), up: onBoat(tr, t, 0, 1, 0).sub(onBoat(tr, t, 0, 0, 0)), fov: 62, shake: { rot: 0.10, freq: 3.1, seed: 7, jolt: 0.05 }, focus: v3(p.x, 0.5, p.z), focusRadius: 6 }; },
     post: { ...SEA_POST, exposure: 0.21, contrast: 1.3, sat: 0.86, lensK: 0.12, ca: 0.003, grain: 0.08, vignette: 0.5, shutter: 0.3, sharpen: 0.25 }, wakeSize: 220, wakeAt: t => { const p = RUN_IN[0](t); return [p.x - 10, p.z + 10]; } },
   { id: 's08', name: 'Three hits', t0: 50.2, t1: 57.2, note: 'Long lens from the far breakwater: three detonations along the waterline, a second or so apart. No people in frame.',
     tracks: RUN_IN, blasts: true,
