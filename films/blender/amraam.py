@@ -191,7 +191,7 @@ def build():
 
 # ================================================================ paint
 BODY, RADOME, TIPC = (206, 209, 210), (229, 228, 220), (92, 94, 96)
-YELLOW, BROWN, INK = (204, 160, 40), (112, 76, 50), (44, 46, 50)
+YELLOW, BROWN, INK = (204, 160, 40), (92, 66, 46), (44, 46, 50)
 HOOKC, PLUGC = (60, 62, 64), (150, 128, 74)
 V = (-0.02, 3.68, -0.30, 0.30); PPM = 2600      # unrolled body: x = s, y = arc length round the body from the top
 
