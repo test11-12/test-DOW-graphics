@@ -54,7 +54,8 @@ async function build(film) {
   pipe.atmo.setSun(SUN.az, SUN.el);
   pipe.atmo.uniforms.uHaze.value = +film.params.get('haze') || 70; pipe.atmo.uniforms.uHazeH.value = 550; pipe.atmo.groundAlbedo.setRGB(0.05, 0.08, 0.09);
   const clouds = new CloudLayer(pipe, { base: 1500, top: 3100, div: +film.params.get('cdiv') || 4 });
-  const ocean = new Ocean(pipe, { clouds, sea: { wind: 50, amp: 1.0, long: 1, chop: 0.8, spread: 40 } });
+  const P = film.params, sea = { wind: 50, amp: +P.get('seaamp') || 1.0, long: +P.get('sealong') || 1, chop: +P.get('seachop') || 0.8, spread: 40 };
+  const ocean = new Ocean(pipe, { clouds, sea });
   ocean.setShelter(15, 70, 150, 340, 0.3);      // the basin behind the breakwaters
   const boats = [0, 1, 2].map(() => { const b = buildCorsair(pipe); pipe.scene.add(b); pipe.registerDynamic(b); return b; });
   // spray: two sheets thrown off the chines forward of midships and a rooster tail off the transom, per boat
