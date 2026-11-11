@@ -6,7 +6,7 @@
 // Body frame: +x forward, +y up, +z starboard; s = metres aft of the nose tip. The numbers below mirror
 // films/blender/fury_geo.py: change them there and here together.
 import * as THREE from 'three';
-import { loadGLB } from '../engine/assets.js';
+import { loadGLB, hasAsset } from '../engine/assets.js';
 
 const X0 = 5.2;                 // nose tip is X0 metres ahead of the model origin
 const X = s => X0 - s;          // body-x of a station s metres aft of the nose tip
@@ -32,12 +32,25 @@ const prep = (root, envIntensity) => root.traverse(o => {
 });
 
 // The aircraft. root.userData: gear (the landing-gear group), navPos ([starboard green, port red] wing-tip
-// light positions, body frame), setGear(down).
+// light positions, body frame), setGear(down). The model's own plain tyres give way to the photoscanned ramp tyres
+// (assets/fury/tyres.glb: ribbed tread, dusty sidewalls, flattened contact patch) when that asset is packed.
 export async function buildFury(pipe) {
   const { root: scene } = await loadGLB('fury/fury.glb', pipe, { aniso: 16 });
   const root = new THREE.Group(); root.name = 'fury'; root.add(scene);
   prep(root);
   const gear = scene.getObjectByName('gear');
+  const own = scene.getObjectByName('tyres_own');
+  if (own && hasAsset('fury/tyres.glb')) {
+    const { root: t } = await loadGLB('fury/tyres.glb', pipe, { aniso: 16 });
+    const proto = {}; t.traverse(o => { if (o.isMesh) proto[o.name] = o; });
+    if (proto.tyre_main && proto.tyre_nose) {
+      // wheel centres stand r above the pavement; the tyre models stand on their own origin
+      for (const [x, z, p] of [[X(NOSE_GEAR.s), 0, proto.tyre_nose], [X(MAIN_GEAR.s), MAIN_GEAR.z, proto.tyre_main], [X(MAIN_GEAR.s), -MAIN_GEAR.z, proto.tyre_main]]) {
+        const m = p.clone(); m.position.set(x, GROUND, z); m.frustumCulled = false; gear.add(m);
+      }
+      own.visible = false;
+    }
+  }
   const at = n => { const o = scene.getObjectByName(n); return o ? o.position.clone() : new THREE.Vector3(); };
   const navPos = [at('nav_green'), at('nav_red')];
   // the retracted gear leaves closed doors: nothing else on the model moves

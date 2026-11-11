@@ -70,7 +70,7 @@ def build(shape_only=False):
     for k, pid in (('red', 'lens_r'), ('green', 'lens_g'), ('tail', 'lens_w')):
         part('lens_' + k, G.lens(G.NAV[k], 0.016), pid, 'C', smooth=80)
     gear = G.gear_parts()
-    bev = {'door': (0.003, 2), 'doorin': (0.002, 1), 'strut': None, 'tyre': None}
+    bev = {'door': (0.003, 2), 'doorin': (0.002, 1), 'strut': None, 'tyre': None, 'bay': (0.0015, 1)}
     for k, (mc, mr) in gear.items():
         if mc.f:
             part('gear_' + k, mc, k, 'G', bevel=bev.get(k), smooth=42 if k not in ('door', 'doorin') else 30)
@@ -106,9 +106,12 @@ def build(shape_only=False):
 
 
 # ================================================================ livery, drawn in metres
-BODY, DARK, PALE, MID = (92, 104, 121), (46, 54, 66), (136, 147, 158), (104, 115, 129)
-LOW, FIN_S = (118, 129, 141), (66, 75, 88)     # undersides and lower body (paler; near-black in photographs only where the
-                                               # aircraft's own shadow is under it); the darker starboard face of the fin
+# Tones measured on the take-off photograph of 1003 against its own sunlit base grey: the splinter patches about 0.6
+# of the base (sRGB), the starboard face of the fin about 0.63; the lower fuselage below the chine aft of the wing
+# root and the keel box read near-black there, a darker grey that the low sun leaves in shade.
+BODY, DARK, PALE, MID = (112, 120, 130), (57, 63, 73), (124, 132, 141), (92, 100, 110)
+LOW, FIN_S = (112, 120, 130), (72, 79, 88)     # undersides of the wings and stabilators; the darker starboard face of the fin
+KEEL, LOWAFT = (90, 97, 106), (64, 70, 78)     # keel box sides; lower aft fuselage below the chine
 NOSE_Y = 0.06                              # side-view heights were read from the nose tip, which droops below the wing plane
 INK, DKINK = (214, 219, 222), (36, 40, 45)
 PPM_S, PPM_W = 700, 1000
@@ -176,8 +179,8 @@ def side_layers():
         # fin badge: a shield with a chevron, as far as the photographs resolve it
         bx, by = fin_pt(1.435, 0.30)
         sh = [(bx - 0.070, by + 0.085), (bx + 0.070, by + 0.085), (bx + 0.070, by - 0.010), (bx + 0.045, by - 0.060), (bx, by - 0.090), (bx - 0.045, by - 0.060), (bx - 0.070, by - 0.010)]
-        c.line(sh, 0.008, closed=True)
-        c.poly([(bx - 0.048, by + 0.055), (bx - 0.022, by + 0.055), (bx, by - 0.018), (bx + 0.022, by + 0.055), (bx + 0.048, by + 0.055), (bx + 0.012, by - 0.058), (bx - 0.012, by - 0.058)])
+        c.line(sh, 0.0055, 185, closed=True)
+        c.poly([(bx - 0.040, by + 0.048), (bx - 0.020, by + 0.048), (bx, by - 0.012), (bx + 0.020, by + 0.048), (bx + 0.040, by + 0.048), (bx + 0.010, by - 0.050), (bx - 0.010, by - 0.050)], 170)
 
     def lettering(c, port):
         v = 255; q = 1 if port else -1
@@ -351,12 +354,15 @@ def paint_body(M, texel, S, T):
     ym = y; y = np.where(fin, ym, ym + NOSE_Y).astype(np.float32)
     # ---- tones
     dark = S['dark'](s, y) * (((ID == 1) | (ID == 3)) | fin)
-    low = np.where(box, 1.0, ((ID == 1) & (ym < CH + yoff - 0.004)) * (1 - smoothstep(9.0, 9.5, s))).astype(np.float32)
+    under = ((ID == 1) & (ym < CH + yoff - 0.004)).astype(np.float32)
+    aftw = smoothstep(4.85, 5.45, s).astype(np.float32)
+    low = np.where(box, 1.0, under).astype(np.float32)
     mid = S['mid'](s, y) * sidew * ((ID == 1) | (ID == 4))
     col = np.broadcast_to(lin(BODY), P.shape).copy()
     col = tone(col, PALE, (fin & port).astype(np.float32)); col = tone(col, FIN_S, (fin & ~port).astype(np.float32))
-    col = tone(col, LOW, low); col = tone(col, MID, mid); col = tone(col, DARK, dark)
-    rough = 0.58 + 0.02 * low - 0.04 * dark
+    col = tone(col, LOW, under * (1 - aftw)); col = tone(col, LOWAFT, under * aftw); col = tone(col, KEEL, box.astype(np.float32))
+    col = tone(col, MID, mid); col = tone(col, DARK, dark)
+    rough = 0.56 + 0.02 * low - 0.04 * dark
     # ---- per-panel tone and sheen, paint mottle
     band = np.digitize(y, [-0.095, 0.40]) + 24 * (ym < CH + yoff - 0.004) + 3 * port + 6 * (ny > 0.75) + 12 * (ny < -0.6)
     tA = ap.cell_tint([s, band.astype(np.float32)], [FRAMES, np.arange(0.5, 24, 1.0)], 3)
@@ -370,7 +376,8 @@ def paint_body(M, texel, S, T):
     rough = rough + 0.035 * tB + 0.03 * n1 - 0.02 * n2 + 0.22 * sh
     # ---- markings
     ink = np.where(port, S['inkP'](s, y), S['inkS'](s, y)) * sidew * (fus | fin | (ID == 4))
-    col = tone(col, INK, 0.93 * ink); rough = rough - 0.07 * ink
+    dkl = (y < -0.27).astype(np.float32)           # the lettering low on the aft fuselage is darker than its paint
+    col = tone(col, INK, 0.93 * ink * (1 - dkl)); col = tone(col, DKINK, 0.75 * ink * dkl); rough = rough - 0.07 * ink
     dk = S['dk'](s, y) * sidew * ((ID == 1) | (ID == 4))
     col = tone(col, DKINK, dk); rough = rough - 0.16 * dk
     # ---- panel breaks, fasteners, sealant
@@ -461,9 +468,11 @@ def launcher_layers():
         dts.dot(x, RAIL_Y - 0.004 + rnd.uniform(-0.004, 0.004), 0.0085)
     for x in (4.40, 5.05, 6.12):                                              # latch slots
         dts.rect(x, RAIL_Y - 0.029, x + 0.038, RAIL_Y - 0.022)
-    for i, (x, t) in enumerate(((4.64, 'LAU'), (5.40, 'NO STEP'), (6.02, 'WARNING'))):   # illegible at film scale
-        for k in range(3):
-            ink.rect(x, RAIL_Y + 0.004 - k * 0.011, x + 0.12 - 0.03 * (k == 2), RAIL_Y + 0.0085 - k * 0.011, 255)
+    al = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789'
+    for x, lines, cap in ((4.64, (14, 18, 10), 0.0042), (5.40, (8,), 0.0058), (6.02, (16, 12), 0.0038), (6.48, (6,), 0.0050)):   # stencil blocks: random letter groups
+        for k, n in enumerate(lines):
+            t = ' '.join(''.join(al[rnd.randint(len(al))] for _ in range(rnd.randint(2, 6))) for _ in range(6))[:n]
+            ink.text(t, x, RAIL_Y + 0.010 - k * cap * 1.6, cap, (500, False), 255, 'ls', stretch=0.86)
     L['line'] = c.sampler(); L['dot'] = dts.sampler(); L['ink'] = ink.sampler()
     return L
 
@@ -480,7 +489,8 @@ def paint_misc(M, texel, S, T):
     n1 = ap.noise3(P, 0.35, 31, 2); n2 = ap.noise3(P, 0.05, 32, 2); n3 = ap.noise3(P, 0.012, 33, 1)
     table = {  # pid: colour, roughness, metal
         'pylon': (BODY, 0.56, 0.0), 'tyre': ((24, 24, 25), 0.88, 0.0), 'hub': ((150, 153, 156), 0.46, 0.3), 'strut': ((214, 215, 212), 0.42, 0.0),
-        'chrome': ((232, 234, 236), 0.10, 1.0), 'dark': ((9, 9, 10), 0.9, 0.0), 'door': (LOW, 0.57, 0.0), 'doorin': ((198, 200, 192), 0.55, 0.0),
+        'chrome': ((232, 234, 236), 0.10, 1.0), 'dark': ((9, 9, 10), 0.9, 0.0), 'door': (KEEL, 0.57, 0.0), 'doorin': ((198, 200, 192), 0.55, 0.0),
+        'bay': ((186, 189, 184), 0.62, 0.0),
         'steel': ((128, 131, 134), 0.38, 0.85), 'blade': ((23, 24, 26), 0.48, 0.1), 'probe': ((30, 31, 33), 0.42, 0.4),
         'shroud': ((50, 50, 51), 0.42, 0.85), 'pipe': ((15, 14, 14), 0.78, 0.5), 'cone': ((34, 32, 31), 0.55, 0.8),
         'lens_r': ((40, 8, 8), 0.2, 0.0), 'lens_g': ((8, 36, 14), 0.2, 0.0), 'lens_w': ((40, 40, 38), 0.2, 0.0)}
@@ -502,9 +512,19 @@ def paint_misc(M, texel, S, T):
         side = smoothstep(wr * 0.86, wr * 0.80, rr) * near
         rb = ap.groove(np.abs(rr - wr * 0.70), 0.003) * near
         H = H + 0.0006 * rb; rough = rough - 0.08 * side
-    # ---- gear doors (outer skin): edge seam; bare struts: slight soiling low down
-    low = smoothstep(-0.75, -1.05, y) * ((ID == PID['strut']) | (ID == PID['hub']))
+    # ---- struts and hubs: slight soiling low down, a little hydraulic seep below the oleo glands, brake dust on the hubs
+    gearp = (ID == PID['strut']) | (ID == PID['hub'])
+    low = smoothstep(-0.75, -1.05, y) * gearp
     col = col * (1 - 0.10 * low)[..., None]
+    seep = np.clip(ap.noise3(np.stack([P[..., 0] * 4.0, P[..., 1] * 0.5, P[..., 2] * 4.0], -1), 0.02, 41, 2) - 0.2, 0, 1) * smoothstep(-0.55, -0.85, y) * (ID == PID['strut'])
+    col = tone(col, (120, 92, 58), 0.35 * seep); rough = rough - 0.12 * seep
+    hb = ID == PID['hub']
+    col = np.where(hb[..., None], tone(col, (96, 88, 78), 0.18 * np.clip(1 - M['AO'], 0, 1) * 2.0), col)
+    # ---- bays: primer, grime gathering in the corners and along the frames
+    bay = ID == PID['bay']
+    gb = np.clip(ap.noise3(P, 0.06, 43, 3) * 0.5 + 0.5, 0, 1)
+    col = np.where(bay[..., None], col * (1 - (0.35 * np.clip(1 - M['AO'], 0, 1) + 0.06 * gb))[..., None], col)
+    rough = np.where(bay, rough + 0.06 * gb, rough)
     # ---- nozzle: heat tint on the shroud, soot inside
     sh = ID == PID['shroud']
     heat = ap.noise3(np.stack([P[..., 0] * 3, P[..., 1], P[..., 2]], -1), 0.08, 50, 2)
@@ -518,6 +538,19 @@ def paint_misc(M, texel, S, T):
 
 
 # ================================================================ paint, materials, export
+def split_pid(ob, pid, name):
+    """Move the faces of part `pid` out of ob into a new object."""
+    me = ob.data; v = np.empty(len(me.polygons), np.float32); me.attributes['pid'].data.foreach_get('value', v)
+    sel = np.rint(v).astype(int) == pid
+    d.select([ob], ob)
+    bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.select_all(action='DESELECT'); bpy.ops.object.mode_set(mode='OBJECT')
+    me.polygons.foreach_set('select', sel)
+    bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.separate(type='SELECTED'); bpy.ops.object.mode_set(mode='OBJECT')
+    new = [o for o in bpy.context.selected_objects if o != ob][0]
+    new.name = name; new.data.name = name
+    return new
+
+
 def paint_export():
     bpy.ops.wm.open_mainfile(filepath=BLEND)
     sc = bpy.context.scene
@@ -542,11 +575,12 @@ def paint_export():
     wings = ap.join([obj['B_R'], obj['B_L']], 'wings')
     misc = ap.join([obj['C'], obj['C_R'], obj['C_L']], 'misc')
     gmesh = ap.join([obj['G'], obj['G_R'], obj['G_L']], 'gear_mesh')
-    out = [body, wings, misc, gmesh]
-    gear = bpy.data.objects.new('gear', None); sc.collection.objects.link(gear); gmesh.parent = gear; out.append(gear)
+    tyres = split_pid(gmesh, PID['tyre'], 'tyres_own')      # the film swaps these for the ramp tyres (assets/fury/tyres.glb)
+    out = [body, wings, misc, gmesh, tyres]
+    gear = bpy.data.objects.new('gear', None); sc.collection.objects.link(gear); gmesh.parent = gear; tyres.parent = gear; out.append(gear)
     for k, p in G.NAV.items():
         e = bpy.data.objects.new('nav_' + k, None); sc.collection.objects.link(e); e.location = (p[0], -p[2], p[1]); out.append(e)
-    for o in (body, wings, misc, gmesh):
+    for o in (body, wings, misc, gmesh, tyres):
         d.log(d.stats(o))
     path = d.out_path('fury', 'fury.glb')
     d.export_glb(path, out, quality=int(os.environ.get('FURY_Q', '92')))

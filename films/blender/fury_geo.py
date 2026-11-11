@@ -53,7 +53,7 @@ def stab_te(z):
 # part ids the painter keys on
 PID = dict(fus=1, blister=2, spine=3, box=4, lip=5, duct=6, splitter=7, fin=8, wing=10, stab=11,
            shroud=20, pipe=21, cone=22, rail=30, railhw=31, pylon=32,
-           tyre=40, hub=41, strut=42, chrome=43, dark=44, door=45, doorin=46, steel=47,
+           tyre=40, hub=41, strut=42, chrome=43, dark=44, door=45, doorin=46, steel=47, bay=48,
            blade=50, probe=51, lens_r=52, lens_g=53, lens_w=54)
 
 # fuselage: s, y offset of the chine line, half width, height above, depth below, and the section exponents:
@@ -251,8 +251,10 @@ def wheel(c, r, w, seg=44):
     t = [(r * 0.50, -w * 0.38), (r * 0.56, -w * 0.46), (r * 0.70, -w * 0.50), (r * 0.86, -w * 0.49), (r * 0.955, -w * 0.42), (r * 0.992, -w * 0.28), (r, -w * 0.12),
          (r, w * 0.12), (r * 0.992, w * 0.28), (r * 0.955, w * 0.42), (r * 0.86, w * 0.49), (r * 0.70, w * 0.50), (r * 0.56, w * 0.46), (r * 0.50, w * 0.38)]
     tyre = ap.lathe(t, c, (0, 0, 1), seg)
-    h = [(0.0005, w * 0.30), (r * 0.09, w * 0.30), (r * 0.12, w * 0.22), (r * 0.30, w * 0.16), (r * 0.42, w * 0.26), (r * 0.47, w * 0.385), (r * 0.51, w * 0.40),
-         (r * 0.51, -w * 0.40), (r * 0.47, -w * 0.385), (r * 0.42, -w * 0.26), (r * 0.30, -w * 0.16), (r * 0.12, -w * 0.22), (r * 0.09, -w * 0.30), (0.0005, -w * 0.30)]
+    h = [(0.0005, w * 0.30), (r * 0.09, w * 0.30), (r * 0.12, w * 0.22), (r * 0.30, w * 0.16), (r * 0.42, w * 0.26), (r * 0.47, w * 0.37), (r * 0.52, w * 0.385),
+         (r * 0.548, w * 0.395), (r * 0.556, w * 0.42), (r * 0.548, w * 0.43), (r * 0.53, w * 0.42),
+         (r * 0.53, -w * 0.42), (r * 0.548, -w * 0.43), (r * 0.556, -w * 0.42), (r * 0.548, -w * 0.395),
+         (r * 0.52, -w * 0.385), (r * 0.47, -w * 0.37), (r * 0.42, -w * 0.26), (r * 0.30, -w * 0.16), (r * 0.12, -w * 0.22), (r * 0.09, -w * 0.30), (0.0005, -w * 0.30)]
     hub = ap.lathe(h, c, (0, 0, 1), 32)
     dark = Mesh()
     for k in range(8):
@@ -267,7 +269,7 @@ def wheel(c, r, w, seg=44):
 
 def gear_parts():
     """Landing gear, down. Returns {pid name: (centre mesh, starboard mesh to mirror)}."""
-    out = {k: [Mesh(), Mesh()] for k in ('tyre', 'hub', 'dark', 'strut', 'chrome', 'door', 'doorin', 'steel')}
+    out = {k: [Mesh(), Mesh()] for k in ('tyre', 'hub', 'dark', 'strut', 'chrome', 'door', 'doorin', 'steel', 'bay')}
 
     def put(k, m, side=0):
         out[k][side].add(m)
@@ -296,7 +298,13 @@ def gear_parts():
         put('doorin', ap.plate(inner, n, 0.010).moved(dy=-0.004 * n[1], dz=-sg * 0.009))
         for sx in (3.40, 3.84):
             put('steel', ap.rod((X(sx), top + 0.02, sg * 0.08), (X(sx), top - 0.10, sg * 0.127), 0.006, 6))
-    put('dark', ap.box((X(3.62), top + 0.004, 0), (0.98, 0.006, 0.215)))
+    # nose-gear bay: ceiling, frames across it, two longerons and a pair of hydraulic lines
+    put('bay', ap.box((X(3.62), top + 0.004, 0), (0.98, 0.006, 0.215)))
+    for sx in (3.27, 3.50, 3.74, 3.97):
+        put('bay', ap.box((X(sx), top - 0.014, 0), (0.010, 0.034, 0.205)))
+    for sg in (1, -1):
+        put('bay', ap.box((X(3.62), top - 0.010, sg * 0.094), (0.96, 0.026, 0.010)))
+        put('steel', ap.rod((X(3.16), top - 0.024, sg * 0.055), (X(4.06), top - 0.024, sg * 0.055), 0.006, 8))
     # ---- main gear (starboard; mirrored): trailing arm out of the keel box, shock strut, wheel outboard
     x, z, r, w = X(MAIN_GEAR['s']), MAIN_GEAR['z'], MAIN_GEAR['r'], MAIN_GEAR['w']; ya = GROUND + r; zi = 0.47; yt = CH - 0.37
     ty, hb, dk = wheel((x, ya, z), r, w); put('tyre', ty, 1); put('hub', hb, 1); put('dark', dk, 1)
@@ -316,7 +324,17 @@ def gear_parts():
     put('doorin', ap.plate(inner, n, 0.012).moved(dy=-0.005 * n[1], dz=-0.010), 1)
     for sx in (5.42, 6.12):
         put('steel', ap.rod((X(sx), yt + 0.01, 0.42), (X(sx), yt - 0.20, 0.50), 0.007, 6), 1)
-    put('dark', ap.box((X(5.77), CH - 0.255, 0.4775), (1.24, 0.30, 0.006), ap.rot_x(0.26)), 1)
+    # main-gear bay: the inner wall, frames standing off it, a hydraulic line along it
+    Rw = ap.rot_x(0.26); nw = Rw @ np.array([0.0, 0.0, 1.0])
+    put('bay', ap.box((X(5.77), CH - 0.255, 0.4775), (1.24, 0.30, 0.006), Rw), 1)
+    for sx in (5.27, 5.55, 5.83, 6.10):
+        c = np.array([X(sx), CH - 0.255, 0.4775]) + nw * 0.020
+        put('bay', ap.box(c, (0.010, 0.29, 0.040), Rw), 1)
+    for dy in (-0.085, 0.07):
+        c = np.array([X(5.77), CH - 0.255 + dy, 0.4775]) + nw * 0.012
+        put('bay', ap.box(c, (1.20, 0.022, 0.024), Rw), 1)
+    a = np.array([X(5.20), CH - 0.255 + 0.02, 0.4775]) + nw * 0.034; b = np.array([X(6.30), CH - 0.255 + 0.02, 0.4775]) + nw * 0.034
+    put('steel', ap.rod(a, b, 0.0065, 8), 1)
     return out
 
 
