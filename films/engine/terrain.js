@@ -118,7 +118,16 @@ uniform mat4 uInvProj; uniform mat3 uCamRot;
 uniform vec3 uOrigin, uSunDir, uSunGround; uniform float uTime, uPixAngle; uniform int uDebug; uniform vec2 uRes;
 uniform vec2 uPhase[12]; uniform vec2 uScale[12];
 uniform sampler2D tShadow; uniform mat4 uShadowMat; uniform vec3 uShadowK;   // enabled, texel size, softness (texels)
+uniform sampler2D tSky; uniform float uMieG;
 varying vec2 vUv;
+// sky radiance in direction d, from the pipeline's sky-view table (for reflections off water and pavement)
+vec3 skyRefl(vec3 d){
+  d.y = max(d.y, 0.004); d = normalize(d);
+  float el = asin(d.y), v = clamp(0.5+0.5*sqrt(el/1.5707963), 0.004, 0.996), u = atan(d.z, d.x)/6.2831853+0.5;
+  float c = dot(d, uSunDir), g = uMieG, g2 = g*g;
+  float pR = 0.0596831*(1.0+c*c), pM = 0.1193662*((1.0-g2)*(1.0+c*c))/((2.0+g2)*pow(max(1.0+g2-2.0*g*c, 1e-4), 1.5));
+  return textureLod(tSky, vec2(u, v/3.0), 0.0).rgb*pR+textureLod(tSky, vec2(u, (v+1.0)/3.0), 0.0).rgb*min(pM, 6.0)+textureLod(tSky, vec2(u, (v+2.0)/3.0), 0.0).rgb;
+}
 vec3 vRel; vec2 gGx, gGy;     // camera-relative position (m) and ground-footprint axes (km) of this pixel
 // shadow of the hero objects (the sun's shadow map rendered with the scene pass) falling on the ground
 float heroShadow(vec3 P){
@@ -195,12 +204,21 @@ void main(){
   { // dry-ground sheen towards the sun at grazing angles
     vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0);
     float fr = 0.03+0.97*pow(1.0-max(dot(V,Hh),0.0), 5.0);
-    col += uSunGround*sh*nl*pow(nh, 22.0)*3.6*fr*0.35*(0.4+alb.g);
+    col += uSunGround*sh*nl*pow(nh, 12.0)*1.5*fr*0.35*(0.4+alb.g);
   }
-  if (spec > 0.0){ // open water: sky mirror + sun glitter
+  if (spec < 0.0){ // pavement: a broad glossy lobe towards a low sun, and the sky's sheen at grazing angles
+    float k = -spec;
+    vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0), vh = max(dot(V,Hh),0.0);
+    float fr = 0.04+0.96*pow(1.0-vh, 5.0);
+    float a2 = 0.05, dd = nh*nh*(a2-1.0)+1.0, D = a2/(3.14159*dd*dd);
+    col += uSunGround*sh*D*fr*min(nl/(4.0*max(nv,0.02)*max(nl,0.02)+0.3), 2.0)*nl*k;
+    float fs = pow(1.0-nv, 5.0);
+    col = mix(col, skyRefl(reflect(-V, N)), fs*k*0.2);
+  }
+  if (spec > 0.0){ // open water: mirror of the sky + sun glitter
     vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0);
     float fr = 0.02+0.98*pow(1.0-nv, 5.0);
-    col = mix(col, amb*0.3183*1.4*fr+alb*0.02, spec);
+    col = mix(col, skyRefl(reflect(-V, N))*fr+alb*0.02, spec);
     col += spec*uSunGround*pow(nh, 900.0)*40.0*sh;
   }
   if (uDebug == 1) col = vec3(sh);
@@ -263,7 +281,7 @@ export class Terrain {
       tScene: { value: null }, tDepth: S.tDepth, uLogFar: S.uLogFar, uInvProj: S.uInvProj, uCamRot: S.uCamRot, uRes: S.uRes,
       tM0Near: { value: this.near.m0.texture }, tM0Far: { value: this.far.m0.texture },
       tM1Near: { value: this.near.m1.texture }, tM1Far: { value: this.far.m1.texture },
-      tDetail: S.tDetail, tAmbient: S.tAmbient, uOrigin: S.uOrigin, uSunDir: S.uSunDir, uTime: S.uTime,
+      tDetail: S.tDetail, tAmbient: S.tAmbient, uOrigin: S.uOrigin, uSunDir: S.uSunDir, uTime: S.uTime, tSky: S.tSky, uMieG: pipe.atmo.uniforms.uMieG,
       uSunGround: { value: new THREE.Color() }, uDebug: { value: 0 }, uPixAngle: { value: 0.001 },
       tShadow: { value: pipe.white }, uShadowMat: { value: new THREE.Matrix4() }, uShadowK: { value: new THREE.Vector3(0, 1 / 2048, 1.3) },
       uPhase: { value: Array.from({ length: 12 }, () => new THREE.Vector2()) },

@@ -363,6 +363,7 @@ void main(){
   vec4 q = uInvProj*vec4(vUv*2.0-1.0, 1.0, 1.0);
   vec3 vd = normalize(q.xyz/q.w);
   float dist = d >= 0.999999 ? 4.0e6 : viewZ(d)/max(-vd.z,1e-4);
+  float zs = min(dist, 6.0e4);          // the stored depth must stay inside half-float range
   vec4 dv = texture2D(tVel, vUv);
   vec2 v;
   if (dv.a > 0.5) v = dv.xy;
@@ -372,7 +373,7 @@ void main(){
     v = vUv-(pc.xy/pc.w*0.5+0.5);
     if (pc.w <= 0.0) v = vec2(0.0);
   }
-  gl_FragColor = vec4(v, dist, dv.a);
+  gl_FragColor = vec4(v, zs, dv.a);
 }`;
 const TILEMAX_FRAG = /* glsl */`
 precision highp float;
@@ -496,23 +497,33 @@ const FLARE_FRAG = /* glsl */`
 precision highp float;
 uniform sampler2D tSrc; uniform vec2 uTexel; uniform vec4 uK; // ghost, halo, streak strength, threshold
 varying vec2 vUv;
-vec3 thr(vec2 uv){ vec3 c = texture2D(tSrc, uv).rgb; float l = max(c.r, max(c.g, c.b)); return c*smoothstep(uK.w, uK.w*2.5, l); }
+// bright parts of the frame only, with their intensity capped so a sun in shot gives a flare, not a white-out
+vec3 thr(vec2 uv){
+  vec3 c = texture2D(tSrc, uv).rgb; float l = max(c.r, max(c.g, c.b));
+  return c/max(l, 1e-4)*min(l, uK.w*3.0)*smoothstep(uK.w, uK.w*2.5, l);
+}
 void main(){
   vec3 res = vec3(0.0);
-  vec2 uv = vec2(1.0)-vUv, gv = (vec2(0.5)-uv)*0.34;
-  if (uK.x > 0.0) for (int i=0;i<5;i++){
-    vec2 o = uv+gv*float(i); float w = pow(clamp(1.0-length(vec2(0.5)-o)/0.7071, 0.0, 1.0), 8.0);
-    vec3 tint = i==0 ? vec3(1.0,0.75,0.5) : (i==1 ? vec3(0.5,0.8,1.0) : (i==2 ? vec3(0.8,1.0,0.7) : vec3(0.9,0.7,1.0)));
-    res += thr(o)*w*tint*uK.x;
+  vec2 uv = vec2(1.0)-vUv, gv = (vec2(0.5)-uv);
+  if (uK.x > 0.0){
+    // a few small ghosts strung along the axis through the frame centre, each slightly colour-fringed
+    for (int i=0;i<4;i++){
+      float sc = i==0 ? 0.22 : (i==1 ? 0.46 : (i==2 ? 0.74 : 1.18));
+      vec2 o = uv+gv*sc; float w = pow(clamp(1.0-length(vec2(0.5)-o)/0.7071, 0.0, 1.0), 6.0);
+      vec3 tint = i==0 ? vec3(1.0,0.72,0.45) : (i==1 ? vec3(0.45,0.75,1.0) : (i==2 ? vec3(0.7,1.0,0.75) : vec3(0.85,0.65,1.0)));
+      vec2 ca = gv*0.012;
+      res += vec3(thr(o+ca).r, thr(o).g, thr(o-ca).b)*w*tint*uK.x*(i==3 ? 0.5 : 1.0);
+    }
   }
   if (uK.y > 0.0){
     vec2 hv = normalize(gv+1e-6)*0.43, ho = uv+hv; float hw = pow(clamp(1.0-length(vec2(0.5)-ho)/0.7071, 0.0, 1.0), 5.0);
     res += vec3(thr(ho+hv*0.012).r, thr(ho).g, thr(ho-hv*0.012).b)*hw*uK.y;
   }
   if (uK.z > 0.0){
+    // anamorphic streak: long, thin, fading smoothly
     vec3 st = vec3(0.0); float ws = 0.0;
-    for (int i=-24;i<=24;i++){ float w = exp(-abs(float(i))/9.0); st += thr(vUv+vec2(float(i)*uTexel.x*2.5, 0.0))*w; ws += w; }
-    res += st/ws*vec3(0.55,0.72,1.0)*uK.z;
+    for (int i=-32;i<=32;i++){ float w = exp(-abs(float(i))/7.0); st += thr(vUv+vec2(float(i)*uTexel.x*2.2, 0.0))*w; ws += w; }
+    res += st/ws*vec3(0.5,0.7,1.0)*uK.z;
   }
   gl_FragColor = vec4(res, 1.0);
 }`;

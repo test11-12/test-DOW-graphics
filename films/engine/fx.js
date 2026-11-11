@@ -12,54 +12,76 @@ float sceneDist(){ float d = texture2D(tDepth, gl_FragCoord.xy/uRes).x; return d
 const fxU = pipe => ({ tDepth: pipe.shared.tDepth, uRes: pipe.shared.uRes, uLogFar: pipe.shared.uLogFar, uTime: pipe.shared.uTime, tDetail: pipe.shared.tDetail });
 
 // ---------------------------------------------------------------- afterburner / exhaust plume
-// A body of revolution along -x of the parent. Emission is treated as a thin glowing volume: brighter
-// through the middle, with standing shock diamonds when the nozzle is under-expanded.
+// A glowing, optically thin volume along -x of the parent, ray-marched inside a bounding cylinder: a hot core,
+// a turbulent flame body, standing shock diamonds (the jet is under-expanded) and a faint blue-violet sheath
+// at the nozzle lip.
 export function makePlume(pipe, { length = 9, radius = 0.47, diamonds = 7, color = [1.0, 0.36, 0.09], core = [1.0, 0.74, 0.46] } = {}) {
-  const geo = new THREE.CylinderGeometry(1, 1, 1, 40, 48, true);
+  const geo = new THREE.CylinderGeometry(1, 1, 1, 24, 1, false);
   geo.rotateZ(Math.PI / 2); geo.translate(-0.5, 0, 0); // x in [-1,0], unit radius
+  const uCamL = { value: new THREE.Vector3() };
   const mat = new THREE.ShaderMaterial({
-    transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.BackSide,
     uniforms: { ...fxU(pipe), uLen: { value: length }, uRad: { value: radius }, uPower: { value: 0 }, uDiamonds: { value: diamonds },
-      uColor: { value: new THREE.Vector3(...color) }, uCore: { value: new THREE.Vector3(...core) }, uGain: { value: 1 } },
+      uColor: { value: new THREE.Vector3(...color) }, uCore: { value: new THREE.Vector3(...core) }, uGain: { value: 1 }, uCamL, uFrame: pipe.shared.uFrame },
     vertexShader: /* glsl */`
-      uniform float uLen, uRad, uPower, uDiamonds, uTime;
-      varying float vAx; varying vec3 vN; varying vec3 vV; varying float vZ;
-      float prof(float a){ // radius along the plume (a = 0 nozzle .. 1 tip)
-        float pinch = 1.0-0.16*pow(0.5+0.5*cos(a*uDiamonds*6.2831853), 2.0)*(1.0-a);
-        return (1.0-0.78*a)*pinch*mix(0.8,1.0,smoothstep(0.0,0.05,a));
-      }
+      uniform float uLen, uRad, uPower;
+      varying vec3 vL; varying float vZ;
       void main(){
-        float a = -position.x; vAx = a;
-        float r = uRad*prof(a);
-        vec3 p = vec3(position.x*uLen*(0.35+0.65*uPower), position.y*r, position.z*r);
-        vec4 mv = modelViewMatrix*vec4(p,1.0);
-        vN = normalize(normalMatrix*vec3(0.0, position.y, position.z));
-        vV = normalize(-mv.xyz); vZ = -mv.z;
+        vL = vec3(position.x*uLen*(0.35+0.65*uPower), position.y*uRad*1.9, position.z*uRad*1.9);
+        vec4 mv = modelViewMatrix*vec4(vL,1.0);
+        vZ = -mv.z;
         gl_Position = projectionMatrix*mv;
       }`,
     fragmentShader: /* glsl */`
       precision highp float;
       ${NOISE}
       ${SOFT}
-      uniform float uPower, uDiamonds, uTime, uGain; uniform vec3 uColor, uCore; uniform sampler2D tDetail;
-      varying float vAx; varying vec3 vN; varying vec3 vV; varying float vZ;
+      uniform float uLen, uRad, uPower, uDiamonds, uTime, uGain, uFrame; uniform vec3 uColor, uCore, uCamL; uniform sampler2D tDetail;
+      varying vec3 vL; varying float vZ;
+      vec3 emit(vec3 p, float L){
+        float a = -p.x/L; if (a <= 0.0 || a >= 1.0) return vec3(0.0);
+        float r = length(p.yz)/uRad;
+        float ph = a*uDiamonds, cell = fract(ph);
+        float bulge = sin(cell*3.14159); bulge *= bulge;                         // each shock cell swells, then necks down
+        float Rj = (1.0-0.42*a)*(0.82+0.2*bulge*(1.0-0.6*a));
+        float ang = atan(p.z, p.y);
+        float n = texture2D(tDetail, vec2(a*2.3-uTime*2.9, ang*0.16+r*0.21)).r;
+        float n2 = texture2D(tDetail, vec2(a*6.1-uTime*6.3, ang*0.32+0.4)).g;
+        float body = smoothstep(Rj*(1.02+0.16*(n-0.5)), Rj*0.30, r);
+        float hot = smoothstep(0.62*Rj, 0.0, r);
+        float dia = exp(-pow((cell-0.16)/0.15, 2.0))*smoothstep(Rj*(0.95-0.9*abs(cell-0.16)*2.2), 0.0, r);   // lozenge after each neck
+        float tail = (1.0-a)*(1.0-a);
+        vec3 e = uColor*body*(0.45+0.75*n)*exp(-a*2.4)*0.9
+               + mix(uColor, uCore, 0.75)*hot*exp(-a*4.2)*1.5
+               + mix(uCore, vec3(1.0,0.93,0.82), 0.6)*dia*exp(-a*2.6)*(0.8+0.4*n2)*3.4
+               + uCore*hot*exp(-a*22.0)*3.0;
+        float sheath = exp(-pow((r-Rj)/0.11, 2.0));
+        e += vec3(0.30,0.36,1.0)*sheath*exp(-a*7.5)*0.55;
+        return e*tail;
+      }
       void main(){
-        if (vZ > sceneDist()) discard;
-        float thick = pow(abs(dot(normalize(vN), normalize(vV))), 1.6);
-        float a = vAx;
-        float flick = 0.9+0.1*sin(uTime*71.0+a*30.0)+0.06*sin(uTime*173.0);
-        float dia = pow(0.5+0.5*cos(a*uDiamonds*6.2831853+3.14159), 4.0);
-        float fall = exp(-a*3.2);
-        float n = texture2D(tDetail, vec2(a*1.7-uTime*3.0, atan(vN.y, vN.x)*0.3)).r;
-        float fall2 = exp(-a*3.4)*(1.0-a);
-        vec3 c = uColor*(0.6+0.4*n)*fall2 + mix(uColor, uCore, 0.6)*dia*exp(-a*4.4)*1.5 + uCore*exp(-a*16.0)*2.2;
-        float edge = pow(1.0-abs(dot(normalize(vN), normalize(vV))), 3.0);
-        c += vec3(0.30,0.40,1.0)*edge*exp(-a*9.0)*0.5;
-        c *= 0.55;
-        gl_FragColor = vec4(c*thick*uPower*uPower*flick*uGain, 1.0);
+        float L = uLen*(0.35+0.65*uPower), Rb = uRad*1.9;
+        vec3 ro = uCamL, dv = vL-uCamL; float far = length(dv); vec3 rd = dv/far;
+        // ray against the bounding cylinder (axis x, x in [-L,0], radius Rb)
+        float A = dot(rd.yz, rd.yz), B = dot(ro.yz, rd.yz), C = dot(ro.yz, ro.yz)-Rb*Rb;
+        float t0 = 0.0, t1 = far;
+        if (A > 1e-8){ float disc = B*B-A*C; if (disc <= 0.0) discard; float sq = sqrt(disc); t0 = max(t0, (-B-sq)/A); t1 = min(t1, (-B+sq)/A); }
+        else if (C > 0.0) discard;
+        if (abs(rd.x) > 1e-6){ float ta = (-L-ro.x)/rd.x, tb = (0.0-ro.x)/rd.x; t0 = max(t0, min(ta, tb)); t1 = min(t1, max(ta, tb)); }
+        else if (ro.x > 0.0 || ro.x < -L) discard;
+        t1 = min(t1, sceneDist()*far/max(vZ, 1e-3));                              // stop at solid geometry
+        if (t1 <= t0) discard;
+        const int N = 30;
+        float ds = (t1-t0)/float(N), t = t0+ds*fract(ign(gl_FragCoord.xy)+uFrame*0.618);
+        vec3 acc = vec3(0.0);
+        for (int i=0;i<N;i++){ acc += emit(ro+rd*t, L); t += ds; }
+        float flick = 0.92+0.08*sin(uTime*71.0)+0.05*sin(uTime*173.0);
+        gl_FragColor = vec4(acc*(ds/uRad)*uPower*uPower*flick*uGain*0.5, 1.0);
       }`,
   });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; m.layers.set(LAYER.FX); m.renderOrder = 5;
+  const inv = new THREE.Matrix4();
+  m.onBeforeRender = (renderer, scene, camera) => { inv.copy(m.matrixWorld).invert(); uCamL.value.setFromMatrixPosition(camera.matrixWorld).applyMatrix4(inv); };
   m.userData.set = (power, gain = 1) => { mat.uniforms.uPower.value = power; mat.uniforms.uGain.value = gain; m.visible = power > 0.01; };
   return m;
 }

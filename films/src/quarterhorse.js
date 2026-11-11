@@ -31,33 +31,40 @@ function buildAirfield(pipe) {
     vertexShader: `
       #include <common>
       #include <logdepthbuf_pars_vertex>
-      uniform vec3 uSunDir, uSunColor; uniform sampler2D tAmbient; varying vec3 vCol;
+      uniform vec3 uSunDir, uSunColor; uniform sampler2D tAmbient; varying vec3 vSun, vAmb, vP; varying float vRim;
       void main(){
         vec4 wp = modelMatrix*instanceMatrix*vec4(position,1.0);
-        vec3 n = normalize(mat3(modelMatrix)*mat3(instanceMatrix)*normal);
+        vec3 n = normalize(mat3(modelMatrix)*mat3(instanceMatrix)*normalize(position));
         float up = clamp(position.y*0.7+0.5, 0.0, 1.0);                 // darker towards the base (self-shadowing)
-        float nl = max(dot(n, uSunDir), 0.0)*0.75+0.25*max(dot(n, uSunDir)*0.5+0.5, 0.0);
+        float nl = max(dot(n, uSunDir), 0.0)*0.8+0.2*max(dot(n, uSunDir)*0.5+0.5, 0.0);
         vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb;
-        vCol = instanceColor*0.3183*(uSunColor*nl*(0.35+0.65*up) + amb*(0.35+0.65*up));
-        gl_Position = projectionMatrix*viewMatrix*wp;
+        vSun = instanceColor*0.3183*uSunColor*nl*(0.3+0.7*up); vAmb = instanceColor*0.3183*amb*(0.3+0.7*up);
+        vP = position*(4.0+3.0*fract(instanceColor.r*91.7));
+        vec4 mv = viewMatrix*wp;
+        vRim = abs(dot(normalize(mat3(viewMatrix)*n), normalize(-mv.xyz)));
+        gl_Position = projectionMatrix*mv;
         #include <logdepthbuf_vertex>
       }`,
     fragmentShader: `
       #include <common>
       #include <logdepthbuf_pars_fragment>
-      varying vec3 vCol;
+      varying vec3 vSun, vAmb, vP; varying float vRim;
+      float h3(vec3 p){ p = fract(p*0.3183099+0.1); p *= 17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
       void main(){
+        vec3 c = floor(vP*2.6); float a = h3(c), b = h3(c+7.3);
+        if (vRim < 0.5 && a > vRim*1.7+0.12) discard;               // ragged, twiggy silhouette
         #include <logdepthbuf_fragment>
-        gl_FragColor = vec4(vCol, 1.0);
+        float gap = step(0.3, b);                                    // gaps between leaf clumps fall into shade
+        gl_FragColor = vec4(vSun*(0.25+0.95*gap)*(0.7+0.6*a)+vAmb*(0.55+0.45*gap), 1.0);
       }`,
   });
-  const bushGeo = lumpy(0, 0.3), cells = new Map();
+  const bushGeo = lumpy(1, 0.34), cells = new Map();
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
   const patch = (x, z) => 0.5 + 0.5 * Math.sin(x * 0.011 + Math.sin(z * 0.004) * 2.1) * Math.cos(z * 0.0075 + Math.sin(x * 0.006) * 1.7);
   let n = 0, guard = 0;
   while (n < N && guard++ < N * 30) {
     const near = rnd() < 0.72, x = (rnd() * 2 - 1) * (near ? 420 : 860), z = (rnd() * 2 - 1) * 2280;
-    if (Math.abs(x) < 42 || (x < -30 && x > -350 && z > -1700 && z < -1500)) continue;
+    if (Math.abs(x) < 42 || (x < -30 && x > -350 && z > -1700 && z < -1500) || Math.abs(x + 58) < 9 || (x > -62 && x < -38 && z > RWY_START_Z + 8 && z < RWY_START_Z + 36)) continue;
     if (rnd() > 0.25 + 0.75 * patch(x, z)) continue;
     const grass = rnd() < 0.3, w = grass ? 0.16 + rnd() * 0.2 : 0.28 + rnd() * 0.5, h = grass ? 0.2 + rnd() * 0.22 : w * (0.6 + rnd() * 0.6);
     ps.set(x, h * 0.2, z); q.setFromAxisAngle(up, rnd() * 6.28); sc.set(w, h, w * (0.8 + rnd() * 0.4));
@@ -69,23 +76,51 @@ function buildAirfield(pipe) {
   }
   // one instanced mesh per 180 m cell, so the renderer can skip cells outside the view
   const bush = new THREE.Group(); bush.name = 'scrub';
-  for (const list of cells.values()) {
-    const im = new THREE.InstancedMesh(bushGeo, bushMat, list.length);
-    list.forEach((it, k) => { im.setMatrixAt(k, it.m); im.setColorAt(k, it.c); });
+  // long low-sun shadows: one soft dark streak per plant, laid on the ground away from the sun. They darken the
+  // terrain placeholder (alpha = shadow strength), so the deferred terrain pass lights that much less of it.
+  const sd = pipe.atmo.sunDir, sh = Math.hypot(sd.x, sd.z), tanEl = Math.max(sd.y / sh, 0.05), ax = -sd.x / sh, az = -sd.z / sh;
+  const shGeo = new THREE.PlaneGeometry(1, 1); shGeo.rotateX(-Math.PI / 2); shGeo.translate(0.5, 0, 0);
+  const shMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.ZeroFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+    vertexShader: `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      varying vec2 vUv;
+      void main(){
+        vUv = uv;
+        gl_Position = projectionMatrix*viewMatrix*modelMatrix*instanceMatrix*vec4(position,1.0);
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: `
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      varying vec2 vUv;
+      void main(){
+        #include <logdepthbuf_fragment>
+        float across = 1.0-smoothstep(0.12, 0.5, abs(vUv.y-0.5)*(1.0+vUv.x*0.5));
+        float along = smoothstep(0.0, 0.06, vUv.x)*(1.0-smoothstep(0.45, 1.0, vUv.x));
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 0.62*across*along);
+      }`,
+  });
+  const bx = new THREE.Vector3(), by = new THREE.Vector3(0, 1, 0), bz = new THREE.Vector3();
+  for (const [key, list] of cells) {
+    const im = new THREE.InstancedMesh(bushGeo, bushMat, list.length), sm = new THREE.InstancedMesh(shGeo, shMat, list.length);
+    let cx = 0, cz = 0;
+    list.forEach((it, k) => {
+      im.setMatrixAt(k, it.m); im.setColorAt(k, it.c); cx += it.x; cz += it.z;
+      const L = Math.min(1.25 * it.h / tanEl, 16), wd = it.w * 1.9;
+      bx.set(ax * L, 0, az * L); bz.set(-az * wd, 0, ax * wd); m4.makeBasis(bx, by, bz); m4.setPosition(it.x - ax * it.w * 0.4, 0.03, it.z - az * it.w * 0.4);
+      sm.setMatrixAt(k, m4);
+    });
     im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; im.computeBoundingSphere(); im.frustumCulled = true;
-    bush.add(im);
+    sm.instanceMatrix.needsUpdate = true; sm.computeBoundingSphere(); sm.frustumCulled = true; sm.renderOrder = 2;
+    im.userData = sm.userData = { cx: cx / list.length, cz: cz / list.length, n: list.length };
+    bush.add(im, sm);
   }
   g.add(bush);
 
-  // power line west of the field (H-frame poles), buildings on the west apron
-  const wood = new THREE.MeshStandardMaterial({ color: 0x3a2d22, roughness: 0.95 });
-  const posts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.17, 0.22, 17, 6), wood, 96), arms = new THREE.InstancedMesh(new THREE.BoxGeometry(9.4, 0.3, 0.3), wood, 48);
-  for (let i = 0; i < 48; i++) {
-    const z = -4300 + i * 183, x = -905 + Math.sin(i * 0.4) * 3;
-    for (const s of [-1, 1]) { m4.makeTranslation(x + s * 3.1, 8.3, z); posts.setMatrixAt(i * 2 + (s > 0 ? 1 : 0), m4); }
-    m4.makeTranslation(x, 15.6, z); arms.setMatrixAt(i, m4);
-  }
-  posts.computeBoundingSphere(); arms.computeBoundingSphere(); g.add(posts, arms);
+  // buildings on the west apron
   const bld = (x, z, w, d, h, c) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, metalness: 0.1 })); m.position.set(x, h / 2 - 0.1, z); g.add(m); return m; };
   bld(-640, -1650, 70, 110, 13, 0x8a8478); bld(-600, -1790, 24, 30, 7, 0x9a958c); bld(-720, -1560, 40, 28, 9, 0x6f6a62); bld(-560, -1500, 10, 10, 20, 0xa7a39b);
   g.traverse(o => { if (o.isMesh) { o.layers.set(LAYER.STATIC); o.castShadow = false; } });
@@ -141,8 +176,8 @@ async function build(film) {
   const haze = makeHeatHaze(pipe, { length: 46, radius: 0.5, spread: 3.4, strength: 0.0042 }); haze.position.set(QH.nozzleX, 0.06, 0); ac.add(haze);
   const shocks = [[QH.noseX + 0.3, 0.03, 1.0], [QH.noseX - 7.6, -0.2, 0.7], [QH.nozzleX + 0.6, 0.3, 0.8]].map(([x, y, k]) => { const s = makeShockCone(pipe, { length: 150, strength: 0.0052 * k }); s.position.set(x, y, 0); s.userData.k = k; ac.add(s); return s; });
   pipe.registerDynamic(ac);
-  if (film.off.has('cshadow')) CLOUDS.shadow = 0;
-  if (film.off.has('clouds')) { CLOUDS.cover = 0; CLOUDS.shadow = 0; }
+  if (film.off.has('cshadow')) CLOUDS.shadow = GROUND_CLOUDS.shadow = 0;
+  if (film.off.has('clouds')) { CLOUDS.cover = GROUND_CLOUDS.cover = 0; CLOUDS.shadow = GROUND_CLOUDS.shadow = 0; }
   W = { terrain, field, ac, plume, haze, shocks, clouds };
   return W;
 }
@@ -158,9 +193,9 @@ function poseAir(t, film, o = {}) {
   W.field.group.visible = false;
   return s;
 }
-function poseGround(film, z, y, pitch, ab, haze = 1) {
+function poseGround(film, z, y, pitch, ab, haze = 1, abGain = 15) {
   tmp.set(0, y, z); film.place(W.ac, tmp); attitude(0, pitch, 0, W.ac.quaternion);
-  W.ac.userData.setGear(true); W.ac.userData.setAfterburner(ab); W.plume.userData.set(ab, 8); W.haze.userData.set(haze);
+  W.ac.userData.setGear(true); W.ac.userData.setAfterburner(ab); W.plume.userData.set(ab, abGain); W.haze.userData.set(haze);
   for (const sh of W.shocks) sh.userData.set(0, 0, 0);
   W.field.group.visible = true; tmp.set(0, FIELD_ALT, 0); film.place(W.field.group, tmp);
 }
@@ -171,22 +206,25 @@ function bodyCam(s, off, out) {
 }
 
 const CLOUDS = { cover: 0.5, scale: 0.6, wind: [0.012, 0.004], density: 0.014, tile: 4200, steps: 56, shadow: 0.8 };
-const GROUND_POST = { clouds: CLOUDS, exposure: 0.215, contrast: 1.3, sat: 1.2, wb: [1.05, 1.0, 0.94], aerial: 0.9, grain: 0.04, bloom: 0.07, cirrus: { alt: 13300, cover: 0.42, opacity: 0.5, scale: 1.2, wind: [0.004, 0.001] } };
+// seen from the field, the cloud thins out along the line of sight to the low sun
+const SUN_GAP = (() => { const az = SUN.az * Math.PI / 180, d = (5200 - FIELD_ALT) / Math.tan(SUN.el * Math.PI / 180); return [Math.sin(az) * d, RWY_START_Z - Math.cos(az) * d, 9500, 0.8]; })();
+const GROUND_CLOUDS = { ...CLOUDS, hole: SUN_GAP };
+const GROUND_POST = { clouds: GROUND_CLOUDS, exposure: 0.22, contrast: 1.22, sat: 1.04, wb: [0.985, 1.0, 1.05], aerial: 0.9, grain: 0.04, bloom: 0.08, cirrus: { alt: 13300, cover: 0.42, opacity: 0.5, scale: 1.2, wind: [0.004, 0.001] } };
 const AIR_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.32, sat: 1.24, wb: [1.05, 1.0, 0.93], aerial: 0.82, grain: 0.035, bloom: 0.06, cirrus: { alt: 14200, cover: 0.38, opacity: 0.45, scale: 1.4, wind: [0.003, 0.001] } };
 
 const shots = [
-  { id: 's01', name: 'Threshold', t0: 0, t1: 6.5, terrain: 'ground', note: 'Head-on down the runway through a long lens; heat shimmer off the concrete.',
+  { id: 's01', name: 'First light', t0: 0, t1: 6.5, terrain: 'ground', note: 'Wide and low from the scrub beside the runway, pushing in: the jet against the sunrise, light shafts through the cloud.',
     pose: (lt, t, f) => poseGround(f, RWY_START_Z, GROUND_Y, 0, 0, 1.2),
-    camera: (lt) => ({ pos: v3(-1.2, FIELD_ALT + 1.3, 1175 - lt * 1.0), look: v3(0, FIELD_ALT + 2.0, RWY_START_Z), fov: 2.3 - lt * 0.02, shake: { rot: 0.006, freq: 0.5, seed: 1 }, focus: v3(0, GROUND_Y, RWY_START_Z), focusRadius: 11 }),
-    post: { ...GROUND_POST, shimmer: [3.0, 24, 500], shutter: 0.5, vignette: 0.34 } },
+    camera: (lt) => { const k = ease(lt / 6.5); return { pos: v3(-58.5 + k * 6, FIELD_ALT + 0.85 + k * 0.3, RWY_START_Z + 27 - k * 3), look: v3(-2, FIELD_ALT + 4.6 - k * 1.0, RWY_START_Z - 1), fov: 32, shake: { rot: 0.02, freq: 0.35, seed: 1 }, focus: v3(0, GROUND_Y, RWY_START_Z), focusRadius: 22 }; },
+    post: { ...GROUND_POST, exposure: GROUND_POST.exposure * 0.85, shutter: 0.5, vignette: 0.34, rays: 0.5, flare: { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 }, sunDisk: 0.5, bloom: 0.1, dof: { focus: 60, fstop: 2.0, max: 10 } } },
   { id: 's02', name: 'Walkaround', t0: 6.5, t1: 12.5, terrain: 'ground', note: 'Slow lateral move along the bare-metal fuselage in raking morning light.',
     pose: (lt, t, f) => poseGround(f, RWY_START_Z, GROUND_Y, 0, 0, 1.2),
     camera: (lt) => { const k = ease(lt / 6.2); return { pos: v3(10.2 - k * 0.8, FIELD_ALT + 1.55 + k * 0.25, RWY_START_Z + 4.2 - k * 9.6), look: v3(0.6, GROUND_Y + 0.12, RWY_START_Z + 3.0 - k * 9.0), fov: 21, shake: { rot: 0.03, freq: 0.35, seed: 2 }, focus: v3(0, GROUND_Y, RWY_START_Z), focusRadius: 11 }; },
     post: { ...GROUND_POST, exposure: 0.2, shutter: 0.5 } },
-  { id: 's03', name: 'Light-off', t0: 12.5, t1: 16.6, terrain: 'ground', note: 'Low behind the nozzle as the afterburner lights and the jet starts to roll.',
+  { id: 's03', name: 'Light-off', t0: 12.5, t1: 16.6, terrain: 'ground', note: 'Low off the tail, looking into the sunrise, as the afterburner lights and the jet starts to roll.',
     pose: (lt, t, f) => { const r = Math.max(0, lt - 1.75); poseGround(f, RWY_START_Z - 0.5 * 5.2 * r * r, GROUND_Y, 0, smooth(0.7, 1.25, lt), 1.6); },
-    camera: (lt) => { const r = Math.max(0, lt - 1.75), z = RWY_START_Z - 0.5 * 5.2 * r * r; return { pos: v3(-4.6, FIELD_ALT + 0.95, RWY_START_Z + 21.5), look: v3(-0.4, GROUND_Y + 0.2, lerp(RWY_START_Z + 6, z + 6, 0.55)), fov: 27, shake: { rot: 0.02 + 0.16 * smooth(0.7, 1.4, lt), freq: 2.6, seed: 3, jolt: 0.05 * smooth(0.7, 1.4, lt) }, focus: v3(0, GROUND_Y, z), focusRadius: 12 }; },
-    post: (lt) => ({ ...GROUND_POST, exposure: 0.2 - 0.03 * smooth(0.8, 1.6, lt), bloom: 0.1, shutter: 0.5 }) },
+    camera: (lt) => { const r = Math.max(0, lt - 1.75), z = RWY_START_Z - 0.5 * 5.2 * r * r; return { pos: v3(-19.5 + lt * 0.35, FIELD_ALT + 0.72, RWY_START_Z + 12.5), look: v3(-0.6, GROUND_Y + 0.55, lerp(RWY_START_Z + 2.5, z + 2.5, 0.5)), fov: 30, shake: { rot: 0.02 + 0.16 * smooth(0.7, 1.4, lt), freq: 2.6, seed: 3, jolt: 0.05 * smooth(0.7, 1.4, lt) }, focus: v3(0, GROUND_Y, z), focusRadius: 16 }; },
+    post: (lt) => ({ ...GROUND_POST, exposure: GROUND_POST.exposure * (0.8 - 0.1 * smooth(0.8, 1.6, lt)), bloom: 0.12, shutter: 0.5, rays: 0.6, flare: { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 }, sunDisk: 0.5 }) },
   { id: 's04', name: 'Rotation', t0: 16.6, t1: 22.5, terrain: 'ground', note: 'Tracking camera east of the runway: nose up, wheels off, climbing out.',
     pose: (lt, t, f) => { const r = roll(lt); poseGround(f, r.z, r.y, r.pitch, 1, 1.4); },
     camera: (lt, t) => { const r = roll(lt), l = roll(lt - 0.12); return { pos: v3(330, FIELD_ALT + 7.5, -46), look: v3(0, lerp(l.y, FIELD_ALT + 6, 0.12) + 0.4, l.z - 4), fov: 4.3 - 0.4 * smooth(2, 6, lt), shake: { rot: 0.022, freq: 1.3, seed: 4 }, focus: v3(0, r.y, r.z), focusRadius: 12 }; },
@@ -301,8 +339,16 @@ function score(m) {
 startFilm({
   id: 'quarterhorse', title: 'Mach 1.21', duration: T_END, fps: 30, poster: 49.6, narration: NARRATION,
   build, shots, cues, buildHud, updateHud, score,
-  frame(t, shot, lt, film) {
+  frame(t, shot, lt, film, c) {
     W.terrain.update(shot.terrain); W.field.bush.visible = shot.terrain === 'ground' && !film.off.has('scrub');
+    if (W.field.bush.visible) { // thin the scrub out with distance: plants under about a pixel are skipped
+      const pxPerM = film.pipe.h / (2 * Math.tan(c.fov * Math.PI / 360));
+      for (const im of W.field.bush.children) {
+        const u = im.userData, d = Math.hypot(u.cx - c.pos.x, u.cz - c.pos.z, FIELD_ALT - c.pos.y);
+        const f = clamp((0.55 * pxPerM / Math.max(d - 130, 30) - 0.8) / 1.7, 0, 1);
+        im.count = Math.round(u.n * f); im.visible = im.count > 0;
+      }
+    }
     if (film.off.size) { // dev profiling switches
       if (film.off.has('env')) film.pipe.scene.environment = null;
       if (film.off.has('ac')) W.ac.visible = false;

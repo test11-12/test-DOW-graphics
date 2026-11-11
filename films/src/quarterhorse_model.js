@@ -240,7 +240,7 @@ export function buildQuarterhorse(pipe) {
   // ------------------------------------------------------------ landing gear (ground / take-off shots)
   const gear = new THREE.Group(); gear.name = 'gear'; root.add(gear);
   const tire = new THREE.MeshStandardMaterial({ color: 0x0c0c0d, roughness: 0.85, metalness: 0 });
-  const hub = new THREE.MeshStandardMaterial({ color: 0xc8cacc, roughness: 0.35, metalness: 1 });
+  const hub = new THREE.MeshStandardMaterial({ color: 0x8e9092, roughness: 0.5, metalness: 0.7 });
   const strutM = new THREE.MeshStandardMaterial({ color: 0xd0d2d4, roughness: 0.25, metalness: 1 });
   const wheel = (x, y, z, rad, wd) => {
     const g = new THREE.Group(); g.position.set(x, y, z);
@@ -266,7 +266,7 @@ export function buildQuarterhorse(pipe) {
 
   root.userData = {
     gear,
-    setAfterburner(k) { abMat.emissiveIntensity = 0.15 + 70 * k; linerMat.emissiveIntensity = 0.05 + 30 * k; },
+    setAfterburner(k) { abMat.emissiveIntensity = 0.15 + 60 * k; linerMat.emissiveIntensity = 0.05 + 9 * k; },
     setGear(down) { gear.visible = !!down; },
   };
   root.traverse(o => { if (o.isMesh) { o.frustumCulled = false; } });

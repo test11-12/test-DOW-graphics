@@ -192,12 +192,37 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
   N.xz += vec2(b0-b1, b0-b2)*(1.2*rk+0.05)*smoothstep(900.0, 60.0, fp)*3.0;
   float c0 = t5.r, c1 = dtex(duv(4)+vec2(0.016,0.0), 4).r, c2 = dtex(duv(4)+vec2(0.0,0.016), 4).r;
   N.xz += vec2(c0-c1, c0-c2)*(0.9*rk+0.1)*smoothstep(60.0, 4.0, fp)*2.0;
+  // dirt service track beside the runway: bare, pale, with two wheel ruts
+  float trk = abs(p.x+0.058)*1000.0;
+  if (trk < 9.0 && abs(p.y) < 2.2){
+    float tk = (1.0-smoothstep(3.0, 4.6, trk))*(0.85+0.15*n4);
+    float ruts = exp(-pow((abs(trk-0.0)-0.95)/0.32, 2.0));
+    alb = mix(alb, vec3(0.50,0.43,0.33)*(0.9+0.2*n6), tk*0.85);
+    alb *= 1.0-0.22*ruts*tk;
+  }
+  // close to the lens: gravel, grit and small relief that a low sun picks out
+  if (fp < 0.25){
+    float k = smoothstep(0.25, 0.012, fp);
+    vec4 d5 = dtex(duv(5)+0.13, 5), d6 = dtex(duv(6), 6);
+    float peb = smoothstep(0.30, 0.12, d6.b)*step(0.45, d5.r);                // scattered pebbles
+    alb *= 1.0+k*((d5.b-0.5)*0.30+(d6.a-0.5)*0.22);
+    alb = mix(alb, mix(vec3(0.34,0.31,0.28), vec3(0.62,0.57,0.50), d5.g), peb*k*0.7);
+    float e5 = 0.006, e6 = 0.012;
+    float h5 = d5.r, h6 = d6.r+peb*0.6;
+    vec2 g5 = vec2(dtex(duv(5)+0.13+vec2(e5,0.0), 5).r-h5, dtex(duv(5)+0.13+vec2(0.0,e5), 5).r-h5);
+    vec2 g6 = vec2(dtex(duv(6)+vec2(e6,0.0), 6).r-d6.r, dtex(duv(6)+vec2(0.0,e6), 6).r-d6.r);
+    N.xz -= (g5*0.9+g6*1.3)*k*(1.0-0.8*step(0.5, m1.r));
+  }
   spec = m1.r;
   if (spec > 0.0) alb = mix(alb, vec3(0.03,0.06,0.07), spec);
   if (abs(p.x) < 0.045 && abs(p.y) < 1.85){
     vec4 rw = nmRunway(p*1000.0, fp, t5.r, n6, dtex(duv(6), 6).r);
     alb = mix(alb, rw.rgb, rw.a);
-    if (rw.a > 0.5) N = normalize(mix(N, vec3(0.0,1.0,0.0), 0.9));
+    if (rw.a > 0.5){
+      vec2 g7 = dtex(duv(6)+0.37, 6).rg-0.5;
+      N = normalize(mix(N, vec3(0.0,1.0,0.0), 0.9)+vec3(g7.x, 0.0, g7.y)*0.035*smoothstep(0.6, 0.02, fp));
+    }
+    spec = mix(spec, -1.0, rw.a);
   }
 }
 `;
