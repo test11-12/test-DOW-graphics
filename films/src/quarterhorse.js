@@ -132,7 +132,7 @@ const T_AIR = 22.5, T_END = 80;
 const MACH_PTS = [[22.5, 0.90], [28.5, 0.915], [33, 0.955], [36.4, 0.985], [38.2, 1.0], [41, 1.06], [44, 1.13], [47, 1.185], [49.2, 1.21], [80, 1.21]];
 const A_SOUND = 297;                                   // m/s near the tropopause
 const machAt = t => curve(MACH_PTS, t);
-const TRACK = { x: 79500, alt: 11900, z0: 33500 };      // northbound over the Tularosa Basin
+const TRACK = { x: 44000, alt: 11900, z0: 33500 };      // northbound along the San Andres range
 const ROLL_PTS = [[22.5, 0], [70.6, 0], [72.6, 58], [80, 62]];
 const STATE = (() => {
   const dt = 1 / 120, n = Math.ceil((T_END + 2 - T_AIR) / dt) + 1, A = new Float64Array(n * 6);
@@ -237,10 +237,10 @@ const shots = [
     pose: (lt, t, f) => poseAir(t, f, { ab: smooth(0.5, 1.5, lt), haze: 0.9 }),
     camera: (lt, t) => { const s = air(t); const k = lt / 7.7; return { pos: bodyCam(s, [-17 - 26 * k * k, 2.4 + 1.5 * k, -8.5 - 2 * k], v3()), look: bodyCam(s, [2, 0, 0], v3()), fov: 30 - 6 * k, shake: { rot: 0.07 + 0.05 * k, freq: 0.8, seed: 6 }, focus: s.p.clone(), focusRadius: 11 }; },
     post: { ...AIR_POST, exposure: 0.17, bloom: 0.085 } },
-  { id: 's07', name: 'Mach one', t0: 36.2, t1: 41.2, terrain: 'top', note: 'Straight down over the gypsum dunes: shock fronts appear as the jet passes Mach 1 (visualization aid).',
+  { id: 's07', name: 'Mach one', t0: 36.2, t1: 41.2, terrain: 'top', note: 'Straight down over the San Andres ridges in long morning shadow: shock fronts appear as the jet passes Mach 1 (visualization aid).',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.5, shock: 2.4, line: 0.9 }),
     camera: (lt, t) => { const s = air(t); return { pos: bodyCam(s, [-3 + lt * 0.5, 46 - lt * 1.2, 0.01], v3()), look: bodyCam(s, [-3 + lt * 0.5, 0, 0], v3()), up: v3(0, 0, -1).applyAxisAngle(v3(0, 1, 0), -0.5 + lt * 0.03), fov: 31, shake: { rot: 0.03, freq: 0.6, seed: 7 }, focus: s.p.clone(), focusRadius: 11 }; },
-    post: { ...AIR_POST, exposure: 0.15, sat: 0.9, contrast: 1.42, aerial: 0.6, cirrus: null } },
+    post: (lt, t) => { const s = air(t); return { ...AIR_POST, exposure: 0.24, sat: 0.95, contrast: 1.36, aerial: 0.6, cirrus: null, clouds: { ...CLOUDS, hole: [s.p.x, s.p.z, 9000, 0.8] } }; } },
   { id: 's08', name: 'Pass', t0: 41.2, t1: 47, terrain: 'air', note: 'Fixed camera in the sky. The jet arrives before its sound; the double boom follows.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.8, shock: 1.6, line: 0.12 }),
     camera: (lt, t) => { const sp = air(PASS_T); const cam = v3(sp.p.x + 62, sp.p.y + 9, sp.p.z); const s = air(t - 0.05); const jolt = Math.exp(-Math.max(0, t - BOOM_T) * 2.6) * (t > BOOM_T ? 1 : 0); return { pos: cam, look: s.p.clone(), fov: 36, shake: { rot: 0.05 + 0.5 * jolt, freq: 1.2 + 6 * jolt, seed: 8, jolt: 0.25 * jolt }, focus: air(t).p.clone(), focusRadius: 11 }; },
@@ -249,10 +249,10 @@ const shots = [
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.7, shock: 1.0, line: 0.05 }),
     camera: (lt, t) => { const s = air(t); return { pos: bodyCam(s, [7 - lt * 1.1, 11, 73], v3()), look: bodyCam(s, [-0.5, 0.1, 0], v3()), fov: 8.6, shake: { rot: 0.035, freq: 1.5, seed: 9 }, focus: s.p.clone(), focusRadius: 11 }; },
     post: { ...AIR_POST, exposure: 0.2 } },
-  { id: 's10', name: 'The pace', t0: 52, t1: 63, terrain: 'air', note: 'High and wide: a small silver airplane over White Sands.',
+  { id: 's10', name: 'The pace', t0: 52, t1: 63, terrain: 'air', note: 'High and wide: a small silver airplane over the range, cloud shadows on the desert below.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.5, shock: 0.6 }),
     camera: (lt, t) => { const s = air(t); const k = lt / 11; return { pos: bodyCam(s, [-50 + 80 * k, 88 - 10 * k, 84 - 8 * k], v3()), look: bodyCam(s, [5, -6, -8], v3()), fov: 21 - 3 * k, shake: { rot: 0.04, freq: 0.4, seed: 10 }, focus: s.p.clone(), focusRadius: 11 }; },
-    post: { ...AIR_POST, exposure: 0.235 } },
+    post: (lt, t) => { const s = air(t); return { ...AIR_POST, exposure: 0.25, clouds: { ...CLOUDS, hole: [s.p.x - 2500, s.p.z, 8000, 0.7] } }; } },
   { id: 's11', name: 'Bare metal', t0: 63, t1: 69.6, terrain: 'air', note: 'Close along the fuselage: rivets, panel seams, the name.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 0.85, haze: 0.4, shock: 0.5 }),
     camera: (lt, t) => { const s = air(t); const k = ease(lt / 6.6); return { pos: bodyCam(s, [8.6 - 7.6 * k, 2.3, 9.8], v3()), look: bodyCam(s, [6.9 - 6.8 * k, 1.25, 0.6], v3()), fov: 24, shake: { rot: 0.05, freq: 0.9, seed: 11 }, focus: s.p.clone(), focusRadius: 11 }; },

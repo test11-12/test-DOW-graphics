@@ -365,6 +365,12 @@ void main(){
   float dist = d >= 0.999999 ? 4.0e6 : viewZ(d)/max(-vd.z,1e-4);
   float zs = min(dist, 6.0e4);          // the stored depth must stay inside half-float range
   vec4 dv = texture2D(tVel, vUv);
+  if (dv.a <= 0.5 && dist < 3000.0){
+    // The multisampled depth and the single-sample velocity buffer disagree by up to a pixel along silhouettes.
+    // A moving object's edge pixel read as static would get the camera's full speed, so borrow a neighbour's motion.
+    vec2 tx = 1.0/vec2(textureSize(tVel, 0));
+    for (int j=-1;j<=1;j++) for (int i=-1;i<=1;i++){ vec4 n = texture2D(tVel, vUv+vec2(float(i),float(j))*tx); if (n.a > 0.5) dv = n; }
+  }
   vec2 v;
   if (dv.a > 0.5) v = dv.xy;
   else {
@@ -1002,6 +1008,8 @@ export class Pipeline {
     if (post.thermal) uf.uThermal.value.fromArray(post.thermal);
     if (post.debug === 'scene') uf.tColor.value = sceneTex;
     else if (post.debug === 'ao') uf.tColor.value = this.rtAO.texture;
+    else if (post.debug === 'vel') uf.tColor.value = this.rtVelFull.texture;
+    else if (post.debug === 'tile') uf.tColor.value = this.rtTileN.texture;
     this.pFinal.render(r, null);
     this.mark('final');
   }

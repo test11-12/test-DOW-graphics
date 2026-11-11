@@ -75,10 +75,17 @@ export class Film {
 
   place(obj, w) { obj.position.set(w.x - this.origin.x, w.y - this.origin.y, w.z - this.origin.z); }
 
+  // the shot's camera; ?cam=x,y,z,lookx,looky,lookz,fov replaces it (look development only)
+  cameraOf(shot, lt, t) {
+    const c = shot.camera(lt, t, this), o = this.params.get('cam');
+    if (!o) return c;
+    const v = o.split(',').map(Number);
+    return { ...c, pos: v3(v[0], v[1], v[2]), look: v3(v[3], v[4], v[5]), fov: v[6] || c.fov, up: undefined, shake: null };
+  }
   applyShot(shot, lt, t) {
     const cam = this.pipe.camera, O = this.origin;
     shot.pose && shot.pose(lt, t, this);
-    const c = shot.camera(lt, t, this);
+    const c = this.cameraOf(shot, lt, t);
     cam.position.set(c.pos.x - O.x, c.pos.y - O.y, c.pos.z - O.z);
     cam.up.set(0, 1, 0);
     if (c.up) cam.up.copy(c.up);
@@ -99,7 +106,7 @@ export class Film {
     const pipe = this.pipe, shot = this.shotAt(t), lt = t - shot.t0, dt = 1 / this.fps;
     if (shot !== this._shot) { this._shot = shot; this.def.onShot && this.def.onShot(shot, this); shot.enter && shot.enter(this); }
     // floating origin = camera position at this instant
-    const c0 = shot.camera(lt, t, this); this.origin.copy(c0.pos);
+    const c0 = this.cameraOf(shot, lt, t); this.origin.copy(c0.pos);
     this.applyShot(shot, lt - dt, t - dt); pipe.snapshotPrev();
     const c = this.applyShot(shot, lt, t);
     pipe.origin.copy(this.origin); pipe.camAlt = this.origin.y;
