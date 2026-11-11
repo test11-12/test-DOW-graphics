@@ -16,7 +16,7 @@ const page = await browser.newPage({ viewport: { width: W, height: H }, deviceSc
 const logs = [];
 page.on('console', m => { const t = m.text(); if (!/GPU stall|GL Driver Message/.test(t)) logs.push(`[${m.type()}] ${t}`); });
 page.on('pageerror', e => logs.push('[pageerror] ' + e.message));
-const q = new URLSearchParams({ render: '1', w: W, h: H, ...(opt.cam ? { cam: opt.cam } : {}), ...(opt.haze ? { haze: opt.haze } : {}), ...(opt.cdiv ? { cdiv: opt.cdiv } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}), ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.prof ? { prof: 1 } : {}), ...(opt.off ? { off: opt.off } : {}), ...(opt.aniso ? { aniso: opt.aniso } : {}), ...(opt.debug ? { debug: opt.debug } : {}) });
+const q = new URLSearchParams({ render: '1', w: W, h: H, ...(opt.q ? Object.fromEntries(new URLSearchParams(opt.q)) : {}), ...(opt.cam ? { cam: opt.cam } : {}), ...(opt.haze ? { haze: opt.haze } : {}), ...(opt.cdiv ? { cdiv: opt.cdiv } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}), ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.prof ? { prof: 1 } : {}), ...(opt.off ? { off: opt.off } : {}), ...(opt.aniso ? { aniso: opt.aniso } : {}), ...(opt.debug ? { debug: opt.debug } : {}) });
 const t0 = Date.now();
 await page.goto('file://' + path.join(root, 'dist', `${film}.offline.html`) + '?' + q);
 await page.waitForFunction(() => window.FILM && window.FILM.ready, null, { timeout: 900000 });

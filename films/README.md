@@ -104,7 +104,8 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
 - Sources are cached in `$DOW_CACHE` (default `/opt/dow-cache`) and never committed; the exported `.glb`
   files are, so the films build without Blender.
 - `src/lookdev.js` is a turntable for checking any packed asset under the films' sky and grade:
-  `node tools/shot.mjs lookdev <prefix> t` with `?glb=` chosen via `--cam` / URL parameters.
+  `node tools/shot.mjs lookdev <prefix> --q="glb=quarterhorse/quarterhorse.glb&el=10&dist=20" t` (t from 0 to 12
+  orbits once; `--q` passes any URL parameters to the page).
 
 Photoscanned materials and models come from [Poly Haven](https://polyhaven.com) and
 [ambientCG](https://ambientcg.com), both CC0.
