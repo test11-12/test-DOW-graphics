@@ -56,7 +56,7 @@ ${WAVES}
 uniform sampler2D tScene, tDepth, tSky, tAmbient, tDetail, tRefl, tReflDepth, tWake, tShadow;
 uniform mat4 uInvProj, uReflVP, uShadowMat; uniform mat3 uCamRot;
 uniform vec4 uWakeRegion; uniform vec3 uOrigin, uSunColor, uWaterCol, uFoamCol, uShadowK; uniform vec2 uRes;
-uniform float uPixAngle, uReflOn, uFogK, uDetailAmp, uGlitter, uThermal, uSparkle, uWhitecap, uSlick;
+uniform float uPixAngle, uReflOn, uFogK, uDetailAmp, uGlitter, uThermal, uSparkle, uWhitecap, uSlick; uniform int uShadeWaves;
 uniform vec3 uCloudK;     // cloud layer for reflections and shadows: mid altitude (m), shadow strength, reflection strength
 uniform vec2 uPh[NS]; uniform float uSc[NS];
 ${CLOUD_COVER}
@@ -108,7 +108,8 @@ void main(){
   float cov = 1.0-sc.a;
   if (cov <= 0.004){ gl_FragColor = vec4(sc.rgb, 1.0); return; }
   float d = texture2D(tDepth, vUv).x;
-  if (cov < 0.996 || d >= 0.999999){ // silhouette pixel: use the farthest non-sky neighbour as the water depth
+  if (d >= 0.999999){ gl_FragColor = sc; return; }   // this sample sees sky: the atmosphere pass fills what is uncovered
+  if (cov < 0.996){ // silhouette pixel: use the farthest non-sky neighbour as the water depth
     vec2 t = 1.0/uRes; float m = d >= 0.999999 ? 0.0 : d, q;
     q = texture2D(tDepth, vUv+vec2(t.x,0.0)).x; if (q < 0.999999) m = max(m,q);
     q = texture2D(tDepth, vUv-vec2(t.x,0.0)).x; if (q < 0.999999) m = max(m,q);
@@ -134,6 +135,7 @@ void main(){
   // resolved wave slopes, plus the slope variance of everything too fine to resolve
   vec2 slope = vec2(0.0); float var = 0.0, pinch = 0.0;
   for (int i=0;i<NW;i++){
+    if (i >= uShadeWaves) break;
     vec4 A = uWA[i]; vec2 B = uWB[i];
     float att = clamp(1.0-fp*A.z*0.32, 0.0, 1.0);
     float ka = A.z*A.w*(i >= 8 ? calm : 1.0);
@@ -164,11 +166,15 @@ void main(){
       float gz = textureLod(tWake, wuv+vec2(0.0,e), wl).g-textureLod(tWake, wuv-vec2(0.0,e), wl).g;
       slope += vec2(gx, gz)*(170.0/uWakeRegion.z)*clamp(1.0-fp*0.15, 0.0, 1.0);
       vec4 fn = dtex(duv(3), 3); float fn2 = dtex(duv(4), 4).r;
-      float n = mix(fn.b*0.75+fn.r*0.4, fn2, 0.35);
-      n = mix(n, 0.5, clamp(fp*0.7, 0.0, 1.0));
-      foam = smoothstep(1.0-wk.r*1.05, 1.0-wk.r*1.05+0.22, n+0.02);
-      foam = max(foam, smoothstep(0.86, 1.0, wk.r));
-      foam = mix(foam, smoothstep(0.2, 0.75, wk.r), clamp(fp*0.8, 0.0, 1.0));   // too far to see the lace: an even white
+      // foam is lace: bright along the walls between bubble cells (far from the cellular feature points), at
+      // two cell sizes, broken up by fBm; fresh white water fills in, old foam thins to the walls alone
+      float c1 = dtex(duv(4)*1.7+0.21, 4).b, c2 = dtex(duv(3)*2.9+0.57, 3).b;
+      float lace = max(smoothstep(0.34, 0.56, c1), 0.75*smoothstep(0.38, 0.6, c2));
+      float n = clamp(lace*0.7+fn.r*0.45+0.3*(fn2-0.5), 0.0, 1.0);
+      n = mix(n, 0.55, clamp(fp*0.5, 0.0, 1.0));
+      foam = smoothstep(1.0-wk.r*1.08, 1.0-wk.r*1.08+0.16, n);
+      foam = max(foam, smoothstep(0.94, 1.0, wk.r)*(0.7+0.3*lace));
+      foam = mix(foam, smoothstep(0.2, 0.8, wk.r)*0.85, clamp(fp*0.6-0.2, 0.0, 1.0));   // too far to resolve the lace: an even white
       churn = wk.b*(0.55+0.9*fn.r);
       var += churn*0.03;                                 // aerated water is matt: no glitter in the wash
     }
@@ -225,7 +231,7 @@ void main(){
   }
   float sunUp = max(uSunDir.y, 0.0);
   vec3 body = uWaterCol*0.3183*(uSunColor*sunUp*shadow+amb);
-  body = mix(body, vec3(0.16, 0.30, 0.29)*0.3183*(uSunColor*sunUp*shadow+amb), clamp(churn*0.5, 0.0, 0.6));
+  body = mix(body, vec3(0.20, 0.38, 0.36)*0.3183*(uSunColor*sunUp*shadow+amb), clamp(churn*0.7, 0.0, 0.75));   // aerated water: pale turquoise
   // light scattered forward through thin crests when looking up-sun
   float crest = clamp(dot(slope, -normalize(uSunDir.xz+1e-5))*2.2, 0.0, 1.0);
   body += vec3(0.02, 0.09, 0.075)*uSunColor*shadow*0.3183*crest*pow(max(dot(-V, normalize(vec3(uSunDir.x, 0.0, uSunDir.z))), 0.0), 3.0);
@@ -241,7 +247,8 @@ void main(){
   float vis = clamp(dot(N, uSunDir)*6.0, 0.0, 1.0)*smoothstep(-0.01, 0.03, uSunDir.y);
   float glint = 1.0;
   if (uSparkle > 0.0) glint = mix(1.0, 0.35+glints(vW, across, uTime), uSparkle);
-  col += uSunColor*uGlitter*min(Dg*Fh/(4.0*max(NV, 0.1)), 220.0)*vis*shadow*glint;
+  vec3 gl = uSunColor*uGlitter*min(Dg*Fh/(4.0*max(NV, 0.1)), 220.0)*vis*shadow*glint;
+  col += gl*min(1.0, 2.0e4/max(max(gl.r, max(gl.g, gl.b)), 1e-6));   // glints stay inside half-float range
 
   // foam: diffuse, lit by sun and sky
   float fl = max(dot(N, uSunDir), 0.0)*0.8+sunUp*0.2;
@@ -266,8 +273,8 @@ void main(){
     float fresh = exp(-vDat.y*30.0);                                          // boiling white water off the transom
     float edge = smoothstep(0.5, 0.82, ax)*(1.0-smoothstep(0.9, 1.0, ax));    // the two bright shoulders of the wake
     float core = 1.0-smoothstep(0.0, 0.8, ax);
-    o.r = (fresh*pow(prof, 0.4)*1.3+edge*exp(-vDat.y*6.0)*(0.4+1.0*n)+core*exp(-vDat.y*10.0)*(0.2+1.3*n*n2*2.0))*k;
-    o.b = pow(prof, 0.8)*exp(-vDat.y*3.0)*k;
+    o.r = (fresh*pow(prof, 0.4)*1.15+edge*exp(-vDat.y*8.0)*(0.25+0.8*n)+core*exp(-vDat.y*16.0)*(0.15+1.1*n*n2*2.0))*k*0.85;
+    o.b = pow(prof, 0.8)*exp(-vDat.y*2.2)*k;
   } else if (vType < 1.5){     // bow-wave arm
     float prof = max(1.0-vDat.x*vDat.x, 0.0);
     float n = texture2D(tDetail, vec2(vDat.z*0.11, vDat.x*0.4)).g;
@@ -305,7 +312,7 @@ function ringGeometry(cols, rings) {
 
 export class Ocean {
   constructor(pipe, o = {}) {
-    this.pipe = pipe;
+    this.pipe = pipe; this.profName = 'sea';
     const S = pipe.shared, A = pipe.atmo.uniforms;
     this.wakeSize = o.wakeSize || 1024;
     this.rtWake = new THREE.WebGLRenderTarget(this.wakeSize, this.wakeSize, { type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: false, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter });
@@ -329,7 +336,7 @@ export class Ocean {
       uOrigin: S.uOrigin, uSunColor: S.uSunColor, uTime: S.uTime,
       uWaterCol: { value: new THREE.Vector3(0.018, 0.06, 0.066) }, uFoamCol: { value: new THREE.Vector3(0.86, 0.9, 0.92) },
       uPixAngle: { value: 0.001 }, uReflOn: { value: 0 }, uFogK: { value: 0 }, uDetailAmp: { value: 1 }, uGlitter: { value: 1 }, uThermal: { value: 0 }, uChop: mu.uChop,
-      uSparkle: { value: 0.8 }, uWhitecap: { value: 0 }, uSlick: { value: 0.6 }, uCloudK: this.cloudK,
+      uSparkle: { value: 0.8 }, uWhitecap: { value: 0 }, uSlick: { value: 0.6 }, uCloudK: this.cloudK, uShadeWaves: { value: NW },
       uCov: cl ? cl.cover.uCov : { value: new THREE.Vector4(0, 1, 0, 0) }, uCovHole: cl ? cl.cover.uCovHole : { value: new THREE.Vector4(0, 0, 1, 0) },
       uWA: mu.uWA, uWB: mu.uWB, uCalm: mu.uCalm, uCalmK: mu.uCalmK,
       uPh: { value: Array.from({ length: NS }, () => new THREE.Vector2()) }, uSc: { value: this.scales },
@@ -480,6 +487,7 @@ export class Ocean {
     if (!this.geos[gk]) { const rings = [0]; let rr = 0.25; const kk = 1 + 0.034 / q; while (rr < 560000) { rings.push(rr); rr *= kk; } rings.push(rr); this.geos[gk] = ringGeometry(cols, rings); }
     this.mesh.geometry = this.geos[gk];
     // look of the water this frame
+    U.uShadeWaves.value = opt.shadeWaves ?? NW;
     U.uGlitter.value = opt.glitter ?? 1; U.uSparkle.value = opt.sparkle ?? 0.8; U.uWhitecap.value = opt.whitecap ?? 0; U.uSlick.value = opt.slick ?? 0.6; U.uDetailAmp.value = opt.detail ?? 1;
     if (opt.water) U.uWaterCol.value.set(opt.water[0], opt.water[1], opt.water[2]);
     const cl = this.clouds, cs = opt.cloudShadow ?? (cl ? 0.75 : 0), cr = opt.cloudReflect ?? (cl ? 0.9 : 0);
@@ -511,10 +519,10 @@ export class Ocean {
       vc.updateMatrixWorld(true); vc.matrixWorldInverse.copy(vc.matrixWorld).invert();
       U.uReflVP.value.multiplyMatrices(vc.projectionMatrix, vc.matrixWorldInverse);
       vc.layers.set(LAYER.STATIC); vc.layers.enable(LAYER.DYNAMIC);
-      this.mesh.visible = false;
+      this.mesh.visible = false; if (pipe.skyQuad) pipe.skyQuad.visible = false;
       r.shadowMap.needsUpdate = true;
       r.setRenderTarget(this.rtRefl); r.setClearColor(0x000000, 0); r.clear(); r.render(pipe.scene, vc);
-      this.mesh.visible = true;
+      this.mesh.visible = true; if (pipe.skyQuad) pipe.skyQuad.visible = true;
       U.uReflOn.value = 1;
     } else U.uReflOn.value = 0;
     r.setRenderTarget(null);

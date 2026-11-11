@@ -7,3 +7,6 @@ films/frames/
 # build copies of packed assets and the look-development page
 films/dist/assets/
 films/dist/lookdev*
+films/out/
+__pycache__/
+*.pyc
