@@ -156,7 +156,8 @@ void main(){
   float cov = 1.0-sc.a;
   if (cov <= 0.004){ gl_FragColor = vec4(sc.rgb, 1.0); return; }
   float d = texture2D(tDepth, vUv).x;
-  if (cov < 0.996 || d >= 0.999999){ // silhouette pixel: use the farthest non-sky neighbour as the ground depth
+  if (d >= 0.999999){ gl_FragColor = sc; return; }   // this sample sees sky: the atmosphere pass fills what is uncovered
+  if (cov < 0.996){ // silhouette pixel: use the farthest non-sky neighbour as the ground depth
     vec2 t = 1.0/uRes; float m = d >= 0.999999 ? 0.0 : d, q;
     q = texture2D(tDepth, vUv+vec2(t.x,0.0)).x; if (q < 0.999999) m = max(m,q);
     q = texture2D(tDepth, vUv-vec2(t.x,0.0)).x; if (q < 0.999999) m = max(m,q);

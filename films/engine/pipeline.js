@@ -302,13 +302,19 @@ void main(){
   float ak = sky ? 1.0 : uAerial;
   vec3 col; float dist = 1.0e9;
   if (sky){
-    col = skyLut(rd, cv);
-    float cs = 0.9999892; // cos(0.00465)
-    float disk = smoothstep(cs-0.0000035, cs+0.0000015, cv);
-    if (disk > 0.0){
-      vec3 Tv = exp(-sunTau(RG+uCamAlt, rd.y));
-      float limb = 1.0-0.55*(1.0-sqrt(clamp((cv-cs)/(1.0-cs),0.0,1.0)));
-      col += uSunE*14700.0*uSunDisk*Tv*disk*limb;
+    // the scene pass already drew the sky behind everything (alpha 1); only depth-only markers of terrain or sea
+    // that this sample missed (alpha below 1, at the horizon) still need sky
+    col = sc.rgb;
+    if (sc.a < 0.999){
+      vec3 skyc = skyLut(rd, cv);
+      float cs = 0.9999892; // cos(0.00465)
+      float disk = smoothstep(cs-0.0000035, cs+0.0000015, cv);
+      if (disk > 0.0){
+        vec3 Tv = exp(-sunTau(RG+uCamAlt, rd.y));
+        float limb = 1.0-0.55*(1.0-sqrt(clamp((cv-cs)/(1.0-cs),0.0,1.0)));
+        skyc += uSunE*14700.0*uSunDisk*Tv*disk*limb;
+      }
+      col += skyc*(1.0-sc.a);
     }
   } else {
     float vz = viewZ(d);
@@ -334,6 +340,35 @@ void main(){
     }
   }
   gl_FragColor = vec4(max(col, vec3(0.0)), sc.a);
+}`;
+
+// The sky drawn behind everything inside the multisampled scene pass, so that the edges of objects against the
+// sky are anti-aliased against the sky itself rather than against black.
+const SKY_BG_VERT = `varying vec2 vUv; void main(){ vUv = position.xy*0.5+0.5; gl_Position = vec4(position.xy, 1.0, 1.0); }`;
+const SKY_BG_FRAG = /* glsl */`
+precision highp float;
+${ATMOSPHERE}
+uniform sampler2D tSky; uniform mat4 uInvProj; uniform mat3 uCamRot; uniform float uCamAlt, uSunDisk;
+varying vec2 vUv;
+vec3 skyLut(vec3 d, float cv){
+  vec2 uv = skyUV(d); float v = clamp(uv.y, 0.004, 0.996);
+  return texture2D(tSky, vec2(uv.x,(v+0.0)/3.0)).rgb*phaseR(cv)
+       + texture2D(tSky, vec2(uv.x,(v+1.0)/3.0)).rgb*phaseM(cv)
+       + texture2D(tSky, vec2(uv.x,(v+2.0)/3.0)).rgb;
+}
+void main(){
+  vec4 q = uInvProj*vec4(vUv*2.0-1.0, 1.0, 1.0);
+  vec3 rd = normalize(uCamRot*normalize(q.xyz/q.w));
+  float cv = dot(rd, uSunDir);
+  vec3 col = skyLut(rd, cv);
+  float cs = 0.9999892; // cos(0.00465)
+  float disk = smoothstep(cs-0.0000035, cs+0.0000015, cv);
+  if (disk > 0.0){
+    vec3 Tv = exp(-sunTau(RG+uCamAlt, rd.y));
+    float limb = 1.0-0.55*(1.0-sqrt(clamp((cv-cs)/(1.0-cs),0.0,1.0)));
+    col += uSunE*14700.0*uSunDisk*Tv*disk*limb;
+  }
+  gl_FragColor = vec4(col, 1.0);
 }`;
 
 const VEL_VERT = /* glsl */`
@@ -701,6 +736,12 @@ export class Pipeline {
       uCirrus: { value: new THREE.Vector4(10500, 0, 0, 1) }, uCirrusWind: { value: new THREE.Vector2() },
       uCloud: { value: new THREE.Vector4(0, 3000, 5000, 0) }, uAOk: { value: new THREE.Vector3(0, 1, 1) },
     });
+    this.skyQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+      vertexShader: SKY_BG_VERT, fragmentShader: SKY_BG_FRAG, depthWrite: false,
+      uniforms: { ...A, tSky: shared.tSky, uInvProj: shared.uInvProj, uCamRot: shared.uCamRot, uCamAlt: shared.uCamAlt, uSunDisk: this.pAtmo.u.uSunDisk },
+    }));
+    this.skyQuad.frustumCulled = false; this.skyQuad.renderOrder = -1e9; this.skyQuad.layers.set(LAYER.STATIC); this.skyQuad.name = 'sky-background';
+    this.scene.add(this.skyQuad);
     this.velMat = new THREE.ShaderMaterial({ vertexShader: VEL_VERT, fragmentShader: VEL_FRAG, uniforms: { uPrevMVP: { value: new THREE.Matrix4() } }, side: THREE.DoubleSide });
     this.velMat.isVelocityMaterial = true;
     this.pVelFull = new Pass(VELFULL_FRAG, { tDepth: shared.tDepth, tVel: { value: null }, uInvProj: shared.uInvProj, uPrevVP: { value: this.prevVP }, uCamRot: shared.uCamRot, uLogFar: shared.uLogFar });
@@ -858,7 +899,8 @@ export class Pipeline {
     this.pAp.u.uWhich.value = 1; this.pAp.render(r, this.rtApT);
     this.mark('sky+env');
 
-    // 1. opaque scene
+    // 1. opaque scene (the sky background reads the sun-disk strength)
+    this.pAtmo.u.uSunDisk.value = post.sunDisk ?? 0.05;
     cam.layers.set(LAYER.STATIC); cam.layers.enable(LAYER.DYNAMIC);
     r.shadowMap.needsUpdate = true;
     r.setRenderTarget(this.rtScene); r.setClearColor(0x000000, 1); r.clear();
