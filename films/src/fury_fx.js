@@ -182,7 +182,7 @@ export function makeMissileTrail(pipe, noise3, K) {
     U.uBoxMin.value.set(-0.25, -Rm - m - dr.y * w - 0.3, -Rm - m - 0.3);
     U.uBoxMax.value.set(aNow + 0.05, climb(tb) + Rm + m + 0.3, Rm + m + dr.x * w + 0.3);
     U.uMass.value.x = (o.mass ? o.mass[0] : 1.6) * (o.density ?? 1); U.uPlumeK.value = o.plume ?? 1; U.uBlur.value = o.blur ?? 0; U.uStretch.value = o.stretch ?? 1;
-    if (o.deck) U.uDeck.value.fromArray(o.deck);
+    if (o.deck) U.uDeck.value.fromArray(o.deck); if (o.albedo) U.uAlbedo.value.fromArray(o.albedo);
   };
   return mesh;
 }
