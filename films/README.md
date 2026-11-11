@@ -33,10 +33,12 @@ engine/      shared renderer and runtime
   fx.js         afterburner plume, heat haze, shock fronts, smoke trails, glows
   audio.js      procedural sound and score, rendered once to a buffer
   film.js       shot timeline, overlays, captions, player, offline frame API
+  hero.js       Cycles hero layer: plate switch, depth composite of path-traced heroes, export state (off by default)
   player.html / player.css
 src/         one film per file, plus vehicle models and terrain recipes
 narration/   <film>.script.json (text, timings) → <film>.json (durations + embedded voice)
-tools/       build.mjs, render.mjs, storyboard.mjs, shot.mjs, tts.py
+tools/       build.mjs, render.mjs, storyboard.mjs, shot.mjs, tts.py; export_shots.mjs, composite.mjs (Cycles heroes)
+heroes/      Cycles hero exports and renders (not committed)
 dist/        built pages (self-contained; three.js from cdnjs, or inlined in *.offline.html)
 out/         rendered MP4s
 storyboards/ shot lists with stills
@@ -109,6 +111,102 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
 
 Photoscanned materials and models come from [Poly Haven](https://polyhaven.com) and
 [ambientCG](https://ambientcg.com), both CC0.
+
+## Path-traced heroes (Cycles)
+
+For close shots the vehicles can be path-traced in Blender Cycles (OptiX on an NVIDIA RTX GPU) with the film's own
+cameras, sun and sky, and composited into the engine's own frame: sky, terrain, sea, clouds, smoke and every lens
+effect stay the engine's. It is off by default: a page only changes when it is opened with `?nohero=` or
+`?herolayer=`, and the tools below are the only things that open it that way.
+
+```bash
+cd films && node tools/build.mjs fury
+# 1. per frame: camera, sun, ground, hero and set-piece transforms; per shot: the engine's sky as an HDR
+node tools/export_shots.mjs fury --from=14.3 --to=23 --w=1920 --h=1080          # or --times=17,48.6
+# 2. the heroes in Cycles (OptiX > CUDA > HIP > oneAPI > CPU, picked automatically; --device=CPU to force)
+node tools/blender.mjs hero_shot --export heroes/fury --samples 256 --noise 0.01
+# 3. stills: the composite, plus the film as built, the plate and an engine | composite sheet
+node tools/composite.mjs fury --hero=heroes/fury/cycles --w=1920 --h=1080 --compare 17 20.5
+# 4. the sequence and its MP4 (frames cached in frames/fury/1920x1080@30-hero/, written to out/fury-hero.mp4)
+node tools/render.mjs fury --hero=heroes/fury/cycles --from=14.3 --to=23
+```
+
+On Windows run the same commands from `films` in PowerShell; set `$env:BLENDER="C:\Program Files\Blender
+Foundation\Blender 4.5\blender.exe"` first if Blender is not at `/opt/blender/blender`. Use the same `--w --h` (or
+`--res` in step 2, a percentage) everywhere; the engine also accepts a layer of another size (scaled linearly).
+
+**What each piece does**
+
+- `engine/assets.js` tags what `loadGLB` loads: `root.userData.asset = <asset path>`, and every glTF node
+  `userData.glbNode = [asset, node index]`. `clone()` copies userData, so props and tyres cloned out of a model keep
+  their source. No film code has to say what is a hero.
+- Heroes are the meshes registered with `pipe.registerDynamic` that came from a `.glb` (`?nohero=1`, the default);
+  `?nohero=all` also takes the code-built moving meshes, `?nohero=fury/fury.glb,fury/amraam.glb` only those assets.
+  Visible `.glb` meshes that are not heroes (ramp props) are exported as set pieces. Code-built moving objects are
+  exported as named transforms only: Blender has no model for them, so they stay engine-drawn until they are built in
+  Blender (films 1 and 3 today). Film 2 here still flies the code-built Fury, so the only `.glb` heroes are the
+  ramp tyres dressed onto it; the path is meant for it once the Fury workstream (`fury.glb`, `amraam.glb`) merges.
+- `tools/export_shots.mjs` runs the built page headless at 320 px wide with the target aspect, renders each frame
+  (so every pose, shot hook and grade is exactly the film's) and writes `heroes/<film>/frame_<n>.json` (camera:
+  absolute position = floating origin + local, quaternion, vertical fov, aspect, near, far; sun direction and linear
+  irradiance; ground: sea level, or the baked terrain height under the camera and under each hero; the shot's
+  exposure, white balance, shutter and focus; every visible glTF node instance with asset, node index, absolute
+  world matrix, role, emissive state; point and spot lights that are on, such as the missile motor's lamp;
+  registered moving objects as transforms), `env_<shot>.hdr` (the engine's
+  reflection environment, equirectangular, `u = 0.5 + atan2(y, x)/2π`, `v = 0.5 + asin(z)/π` in Blender axes) and
+  `shots.json`. One padding frame either side gives motion-blur keys.
+- `blender/hero_shot.py` imports each `.glb` once and instances the exported nodes at their matrices (engine axes
+  converted to Blender's), poses the camera (vertical sensor fit, 24 mm sensor: the engine's lens model), a sun lamp
+  (0.53° disc; colour and strength = the engine's irradiance, which is in the same units as Blender's W/m²), the
+  engine's own sky as world light (`--sky nishita` for a Nishita sky at the sun's position, scaled to the same sky
+  irradiance), the engine's point and spot lights near the heroes (power = 4π × the engine's intensity: the same
+  irradiance at a distance; `--no-lights` to leave them out), a shadow-catcher plane at the ground or sea level and
+  set pieces within `--set-radius` m as shadow catchers; film transparent, adaptive sampling, OpenImageDenoise (on
+  the GPU when there is one), persistent data.
+  Per frame it writes `hero_<n>.exr` (linear, premultiplied: Combined, Depth, Shadow Catcher), `hero_<n>.png` (a
+  preview through the engine's tone curve) and `hero_<n>.bin` (the layer the engine loads: the crop holding the
+  heroes and their shadows; colour + alpha, shadow ratio, view depth) and `timing.json`. `--mblur` and `--dof` put
+  motion blur (keyed from the neighbouring frames, the shot's shutter) and focus blur into Cycles for use outside
+  the engine; for the engine composite leave them off (see below).
+- The plate, `?nohero=1`: the heroes are hidden from the colour pass and the shadow map (their shadows go; the
+  catcher brings them back) and `def.heroless(film)` lets a film drop its own painted hero shadows (film 2: the
+  aircraft's contact shadow on the apron).
+- The composite, `?herolayer=<folder url>/` (`tools/composite.mjs`, `tools/render.mjs --hero`): `engine/hero.js`
+  loads `hero_<frame>.bin` and, in `pipeline.render`, right after the deferred terrain and sea lighting, multiplies
+  the plate by the shadow ratio, lays the premultiplied hero over it where the hero is nearer than the plate, and
+  writes the hero's depth into a copy of the scene depth that every later pass reads.
+
+**Why the composite happens inside the engine.** The engine already is a depth-aware linear-light compositor: aerial
+perspective, cloud and cirrus layers, the effects layer (smoke trails, plumes, glows, spray: drawn after the
+atmosphere and tested by hand against the scene depth), refraction, depth of field, motion blur, bloom, flare, AgX
+tone map, grade, vignette and grain all work from the HDR colour and the depth. Laying the Cycles hero in there,
+with its depth, gives it exactly the plate's treatment, and the effects sort against it per pixel: smoke in front of
+the jet stays in front, smoke behind it is hidden, a chock nearer than a wheel hides the wheel, the sea surface clips
+a hull, the missile's heat haze bends the airframe behind it. A separate effects layer composited last could not
+put smoke *behind* the hero, and a Python re-implementation of the grade, bloom, flare and lens would drift from the
+engine's. Motion blur is the engine's too: the hidden hero meshes still draw into the velocity pass, and they have
+the same silhouette as the Cycles render because both come from the same `.glb`; hero and background blur together.
+Screen-space AO is not applied on the hero (Cycles has full global illumination); the plate's AO is computed before
+the hero goes in, so the hero's contact occlusion on the ground comes from the shadow catcher alone.
+
+**Checked on the CPU build machine** (no GPU; film 2 from the Fury workstream's commit with the Blender Fury and
+AIM-120, 640x360, `--samples 48 --noise 0.02`): t = 17 (s03, the missile under the wing, the whole frame hero and
+shadow) took 120 s in Cycles on 4 shared CPU threads, t = 48.6 (s08, the launch, a 400x100 px hero) 16 s; the
+engine composite pass adds two full-screen passes. With the feature off, stills of all three films (two times each,
+480x270) are bit-identical before and after this change.
+
+**Estimated cost on an RTX 5090 at 1920x1080** (an estimate, not a measurement): the measured t = 17 frame scaled
+by 9× for the pixels and about 4× for `--samples 256 --noise 0.01` is about 70 min of this machine's time. Blender
+Open Data scores put an RTX 5090 with OptiX at very roughly 100-150× a 4-thread CPU, and this machine was shared with
+two or three other renders while it measured (about 3× slower), so roughly 300-600× here: about 7-15 s of
+rendering for a full-frame close-up and 1-2 s for a small hero, plus 1-2 s per frame for scene update, GPU
+denoising, the 32-bit EXR and the layer (`--no-exr` saves part of that). `timing.json` records the real numbers:
+render one frame first and scale from it.
+
+**Limits.** The heroes must come from `.glb` files on both sides (the engine and Blender render the same model).
+Cycles' depth is from the first sample, so soft edges take the nearest hero depth around them. The world light is the
+engine's environment at the start of the shot. Set pieces that the engine builds in code (the power cable, the
+streamers) receive shadow from the ground plane's ratio, not their own shape.
 
 ## Engine reference
 

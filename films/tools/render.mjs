@@ -2,23 +2,26 @@
 //   node tools/render.mjs <film> [--w=1920 --h=1080 --fps=30 --from=0 --to=<s> --workers=2 --nres=4096]
 //                                 [--quality=95 --crf=17 --out=out/<film>.mp4 --force --frames-only --encode-only]
 // Frames are cached in films/frames/<film>/<w>x<h>@<fps>/ so a re-run only renders what is missing.
+// --hero=<folder> composites the Cycles heroes from blender/hero_shot.py (engine/hero.js; frames cached under
+// <w>x<h>@<fps>-hero/; --heroes=1|all|a.glb,b.glb picks which engine meshes they replace).
 import { createRequire } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2), film = args.find(a => !a.startsWith('--'));
 const opt = Object.fromEntries(args.filter(a => a.startsWith('--')).map(a => { const [k, v] = a.slice(2).split('='); return [k, v ?? '1']; }));
 const W = +(opt.w || 1920), H = +(opt.h || 1080), FPS = +(opt.fps || 30), workers = +(opt.workers || 2), Q = +(opt.quality || 95);
-const dir = path.join(root, 'frames', film, `${W}x${H}@${FPS}`); fs.mkdirSync(dir, { recursive: true });
-const out = path.resolve(root, opt.out || `out/${film}.mp4`); fs.mkdirSync(path.dirname(out), { recursive: true });
-const url = 'file://' + path.join(root, 'dist', `${film}.offline.html`) + '?' + new URLSearchParams({ render: '1', w: W, h: H, ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}) });
+const hero = opt.hero ? { nohero: opt.heroes || '1', herolayer: pathToFileURL(path.resolve(process.cwd(), opt.hero)).href + '/', herofps: FPS } : {};
+const dir = path.join(root, 'frames', film, `${W}x${H}@${FPS}${opt.hero ? '-hero' : ''}`); fs.mkdirSync(dir, { recursive: true });
+const out = path.resolve(root, opt.out || `out/${film}${opt.hero ? '-hero' : ''}.mp4`); fs.mkdirSync(path.dirname(out), { recursive: true });
+const url = 'file://' + path.join(root, 'dist', `${film}.offline.html`) + '?' + new URLSearchParams({ render: '1', w: W, h: H, ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}), ...hero });
 const fname = i => path.join(dir, `f_${String(i).padStart(6, '0')}.jpg`);
 
 async function open() {
-  const browser = await chromium.launch({ args: ['--ignore-gpu-blocklist', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'] });
+  const browser = await chromium.launch({ args: ['--ignore-gpu-blocklist', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', ...(opt.hero ? ['--allow-file-access-from-files'] : [])] });
   const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
   page.on('pageerror', e => console.error('[pageerror]', e.message));
   page.on('console', m => { if (m.type() === 'error') console.error('[console]', m.text()); });

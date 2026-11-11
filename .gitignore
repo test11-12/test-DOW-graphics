@@ -8,6 +8,7 @@ films/frames/
 films/dist/assets/
 films/dist/lookdev*
 films/out/
+films/heroes/
 __pycache__/
 *.pyc
 films/dist/*.offline.html

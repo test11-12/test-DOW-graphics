@@ -442,6 +442,7 @@ function score(m) {
 startFilm({
   id: 'fury', title: 'Fox Three', duration: DUR, fps: 30, poster: 48.9, narration: NARRATION,
   build, shots, cues, buildHud, updateHud, score,
+  heroless() { W.GU.uAcAO.value.w = 0; },   // Cycles hero path (engine/hero.js): its shadow catcher replaces the painted contact shadow
   frame(t, shot, lt, film, c) {
     W.terrain.update(shot.terrain);
     { const div = DEV().cdiv ?? (+film.params.get('cdiv') || (shot.terrain === 'air' ? 2 : 3)); if (W.clouds.div !== div) { W.clouds.div = div; W.clouds.setSize(film.pipe.w, film.pipe.h); } }   // the deck from above is the backdrop: half resolution; from the ground a third
