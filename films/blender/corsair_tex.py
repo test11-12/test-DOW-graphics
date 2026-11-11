@@ -14,25 +14,27 @@ import corsair_geo as geo
 
 PAINT = np.array([0.275, 0.295, 0.315])
 SRC = {  # kind: source material (scanned detail from ambientCG; colours are paint / material albedo, linear)
-    'hull': dict(base=PAINT * 0.74, scan='Metal032', scale=0.9, rough=(0.30, 0.44), var=0.05, nrm=0.4, wavy=0.004),
-    'deck': dict(base=PAINT * 1.25, scan='Metal032', scale=1.1, rough=(0.36, 0.50), var=0.05, nrm=0.35, wavy=0.0015),
-    'grip': dict(base=PAINT * 1.12, scan='Metal032', scale=1.1, rough=(0.62, 0.74), var=0.04, nrm=0.0),
-    'box': dict(base=PAINT * 1.20, scan='Metal032', scale=1.3, rough=(0.34, 0.48), var=0.05, nrm=0.35, wavy=0.0015),
-    'louvre': dict(base=(0.022, 0.022, 0.024), scan='Plastic006', scale=3.0, rough=(0.60, 0.75), var=0.0, nrm=0.2),
-    'boxlid': dict(base=PAINT * 1.35, scan='Metal032', scale=1.3, rough=(0.38, 0.52), var=0.05, nrm=0.2),
-    'dark': dict(base=(0.012, 0.012, 0.013), scan='Plastic006', scale=3.0, rough=(0.55, 0.68), var=0.0, nrm=0.2),
-    'mast': dict(base=PAINT * 0.97, scan='Metal032', scale=2.0, rough=(0.28, 0.40), var=0.04, nrm=0.15),
+    'hull': dict(base=PAINT * 0.74, scan='Metal032', scale=0.9, rough=(0.24, 0.36), var=0.05, nrm=0.4, wavy=0.004),
+    'deck': dict(base=PAINT * 1.45, scan='Metal032', scale=1.1, rough=(0.30, 0.44), var=0.05, nrm=0.35, wavy=0.0015),
+    'grip': dict(base=PAINT * 1.30, scan='Metal032', scale=1.1, rough=(0.62, 0.74), var=0.04, nrm=0.0),
+    'box': dict(base=PAINT * 1.40, scan='Metal032', scale=1.3, rough=(0.34, 0.48), var=0.05, nrm=0.35, wavy=0.0015),
+    'louvre': dict(base=(0.016, 0.016, 0.018), scan='Plastic006', scale=3.0, rough=(0.70, 0.85), var=0.0, nrm=0.0),
+    'boxlid': dict(base=PAINT * 1.50, scan='Metal032', scale=1.3, rough=(0.38, 0.52), var=0.05, nrm=0.2),
+    'dark': dict(base=(0.008, 0.008, 0.009), scan='Plastic006', scale=3.0, rough=(0.80, 0.90), var=0.0, nrm=0.0),
+    'mast': dict(base=PAINT * 1.30, scan='Metal032', scale=2.0, rough=(0.28, 0.40), var=0.04, nrm=0.15),
     'steel': dict(base=(0.60, 0.60, 0.585), scan='Metal009', scale=4.0, rough=(0.20, 0.36), var=0.06, nrm=0.5, metal=1.0),
     'alu': dict(base=(0.40, 0.41, 0.42), scan='Metal038', scale=2.5, rough=(0.42, 0.60), var=0.10, nrm=1.0, metal=1.0),
     'rubber': dict(base=(0.030, 0.030, 0.032), scan='Rubber004', scale=5.0, rough=(0.60, 0.80), var=0.15, nrm=0.8),
     'black': dict(base=(0.018, 0.018, 0.020), scan='Plastic006', scale=4.0, rough=(0.36, 0.52), var=0.0, nrm=0.5),
     'white': dict(base=(0.70, 0.71, 0.70), scan='Plastic006', scale=3.0, rough=(0.28, 0.42), var=0.0, nrm=0.3),
 }
-# final glTF materials the engine addresses by name: (atlas, kind) -> name
-FINAL = {('hull', None): 'hull', ('deck', 'grip'): 'deck_grip', ('deck', 'box'): 'enginebox', ('deck', 'boxlid'): 'enginebox', ('deck', 'louvre'): 'enginebox',
+# final glTF materials the engine addresses by name: (atlas, kind) -> name ('vent': vent blades and holes, which
+# src/corsair_boat.js draws unlit and near black)
+FINAL = {('hull', None): 'hull', ('deck', 'grip'): 'deck_grip', ('deck', 'box'): 'enginebox', ('deck', 'boxlid'): 'enginebox', ('deck', 'louvre'): 'vent', ('deck', 'dark'): 'vent',
          ('deck', None): 'deck', ('gear', 'mast'): 'mast', ('gear', None): 'gear'}
-# colours of the mask bake: R paint (takes water marks, salt, streaks), G non-skid, B rubber
-IDCOL = {'hull': (1, 0, 0), 'deck': (1, 0, 0), 'grip': (1, 1, 0), 'box': (1, 0, 0), 'boxlid': (1, 0, 0), 'louvre': (1, 0, 0), 'mast': (1, 0, 0), 'rubber': (0, 0, 1),
+# colours of the mask bake: R paint (takes water marks, salt, streaks), G non-skid, B rubber (gear atlas) or the
+# inside of a vent (deck atlas)
+IDCOL = {'hull': (1, 0, 0), 'deck': (1, 0, 0), 'grip': (1, 1, 0), 'box': (1, 0, 0), 'boxlid': (1, 0, 0), 'louvre': (0, 0, 1), 'dark': (0, 0, 1), 'mast': (1, 0, 0), 'rubber': (0, 0, 1),
          'white': (0.5, 0, 0)}
 _range = {}
 
@@ -109,8 +111,9 @@ V = lambda *a: np.array(a, np.float32)
 
 
 def weather_hull(P, N, ao, idm, base, rough):
-    """Paint finished by the sea: a wet, darker band where the spray sheet runs aft, dried salt above it, runs
-    below the rail and the fittings, a faint scum line at the static waterline, a scuffed bottom."""
+    """Paint finished by the sea: a dark boot line at the chine, a wet, darker, glossy band where the spray sheet
+    runs aft with streaks above it, dried salt above that, runs below the rail and the fittings, a faint scum
+    line at the datum waterline, a scuffed bottom."""
     x, z = P[..., 0], P[..., 2]
     hc = z - ZC(x)                                           # height above the chine
     tops = k.sstep(-0.01, 0.03, hc) * k.sstep(-0.75, -0.4, N[..., 2])
@@ -130,16 +133,26 @@ def weather_hull(P, N, ao, idm, base, rough):
         w = np.exp(-((x - bx) / 0.045) ** 2) * k.sstep(0.0, 0.03, zt - z) * np.exp(-np.clip(zt - z, 0, 1) / 0.22) * tops
         base *= (1 - 0.13 * w * (0.6 + 0.8 * runs))[..., None]
         rough += 0.08 * w
-    # spray band along the topsides, rising aft; the planing bottom aft is wet all over
+    # boot line: a crisp dark stripe just above the chine
+    side = k.sstep(-0.75, -0.4, N[..., 2])
+    boot = k.sstep(-0.012, -0.004, hc) * (1 - k.sstep(0.048, 0.054, hc)) * side * k.sstep(3.45, 3.15, x)
+    base *= (1 - 0.58 * boot)[..., None]
+    rough[:] = rough * (1 - 0.4 * boot)
+    # spray: the sheet thrown off the chine wets the topsides from forward of amidships aft, higher towards the
+    # stern, with streaks blown up and aft above the solid band; the planing bottom aft is wet all over
     n1 = k.fbm(P * V(1, 0, 0) + 7.0, 1.3, 3, seed=5)
     n2 = k.fbm(P, 9.0, 3, seed=6)
-    wl = 0.07 + 0.20 * k.sstep(2.2, -1.6, x) + 0.10 * (n1 - 0.5) + 0.05 * (n2 - 0.5)
-    wet = (1 - k.sstep(wl - 0.04, wl + 0.02, hc)) * k.sstep(2.9, 1.9, x + 0.5 * (n1 - 0.5))
-    wet = np.maximum(wet, transom * (1 - k.sstep(0.05, 0.22, z + 0.1 * (n2 - 0.5))))
-    base *= (1 - 0.27 * wet)[..., None]
+    slant = np.stack([x + 1.1 * z, x * 0.0, z * 0.06], axis=-1)            # streaks lean aft as they climb
+    stk = k.fbm(slant, 11.0, 3, seed=7)
+    aft = k.sstep(2.6, -1.8, x)
+    wl = 0.10 + 0.30 * aft + 0.10 * (n1 - 0.5) + 0.05 * (n2 - 0.5) + (0.10 + 0.22 * aft) * k.sstep(0.45, 0.85, stk)
+    wet = (1 - k.sstep(wl - 0.03, wl + 0.015, hc)) * k.sstep(3.2, 2.2, x + 0.5 * (n1 - 0.5))
+    wet = np.maximum(wet, transom * (1 - k.sstep(0.10, 0.30, z + 0.1 * (n2 - 0.5))))
+    wet = np.maximum(wet, (1 - tops) * (1 - transom) * k.sstep(3.0, 2.0, x))
+    base *= (1 - 0.36 * wet)[..., None]
     drops = k.sstep(0.60, 0.72, k.fbm(P, 55.0, 2, seed=8)) * tops * k.sstep(wl + 0.30, wl, hc) * (1 - wet)
     gloss = np.clip(wet + 0.6 * drops, 0, 1)                  # beads above the band only change the sheen
-    rough[:] = rough * (1 - gloss) + (0.08 + 0.07 * n2) * gloss
+    rough[:] = rough * (1 - gloss) + (0.06 + 0.06 * n2) * gloss
     # dried salt: a pale, matt fringe above the wet line and faint blotches higher up
     fringe = k.sstep(wl - 0.01, wl + 0.03, hc) * (1 - k.sstep(wl + 0.04, wl + 0.26, hc)) * tops
     blot = k.sstep(0.55, 0.8, k.fbm(P, 6.0, 3, seed=9)) * tops * 0.35
@@ -176,11 +189,11 @@ def weather_deck(P, N, ao, idm, base, rough):
     # with fine beads around them
     n1 = k.fbm(P, 2.6, 4, seed=23)
     n2 = k.fbm(P, 14.0, 3, seed=24)
-    thr = 0.57 - 0.06 * k.sstep(0.0, -3.0, x)
+    thr = 0.57 - 0.06 * k.sstep(0.0, -3.0, x) - 0.20 * k.sstep(-0.9, -1.3, x)       # the aft deck takes the spray
     wet = k.sstep(thr, thr + 0.03, n1 + 0.12 * (n2 - 0.5)) * up
     beads = k.sstep(0.62, 0.70, k.fbm(P, 90.0, 2, seed=25)) * up * (1 - wet) * (0.3 + 0.7 * k.sstep(thr - 0.25, thr, n1))
-    base *= (1 - (0.05 + 0.03 * grip) * wet - 0.03 * beads)[..., None]
-    rough[:] = rough * (1 - wet) + (0.07 + 0.22 * grip + 0.05 * n2) * wet
+    base *= (1 - (0.12 + 0.08 * grip) * wet - 0.04 * beads)[..., None]
+    rough[:] = rough * (1 - wet) + (0.06 + 0.18 * grip + 0.05 * n2) * wet
     rough[:] = rough * (1 - 0.75 * beads) + 0.09 * 0.75 * beads
     # salt: tide marks round the wet areas, dried splashes on dry paint, crusts in the gutters and corners
     rim = k.sstep(thr - 0.06, thr - 0.005, n1 + 0.12 * (n2 - 0.5)) * (1 - wet) * up

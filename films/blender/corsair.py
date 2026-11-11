@@ -153,7 +153,7 @@ for name, (ob, mpu) in atl.items():
     orm = d.pixels(maps['orm'])
     ao, rough, metal = orm[..., 0].copy(), orm[..., 1].copy(), orm[..., 2].copy()
     base = k.srgb_to_lin(d.pixels(maps['base'])[..., :3])
-    paint = (idm[..., 0:1] > 0.25) | (idm[..., 2:3] > 0.5)
+    paint = (idm[..., 0:1] > 0.25) | ((idm[..., 2:3] > 0.5) & (name == 'gear'))
     b2, r2 = base.copy(), rough.copy()
     for r0 in range(0, size, 512):          # in bands of rows, to keep the peak memory small
         sl = slice(r0, r0 + 512)
@@ -162,6 +162,8 @@ for name, (ob, mpu) in atl.items():
     rough = np.where(paint[..., 0], r2, rough)
     # faces that look down see the sea, not the sky: less of the probe's light reaches them
     ao *= 1 - (0.35 if name == 'hull' else 0.45) * k.sstep(-0.15, -0.85, N[..., 2])
+    if name == 'deck':                      # vent blades and the dark behind them: a cavity, little light comes back out
+        ao *= 1 - 0.85 * idm[..., 2]
     del P, N, idm, b2, r2
     arr = np.ones((size, size, 4), np.float32)
     arr[..., :3] = k.lin_to_srgb(base)

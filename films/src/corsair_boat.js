@@ -39,28 +39,33 @@ function addDetail(mat, tex, rep, normalK, roughK, albedoK) {
 let proto = null;
 async function loadCorsair(pipe) {
   const { root } = await loadGLB('corsair/corsair.glb', pipe, { aniso: 8 });
+  // Vent blades and drain holes are drawn unlit and near black. They stand a few millimetres off the surface
+  // behind them, inside the sun's shadow bias, so on the shaded side their sun-facing edges would catch the
+  // sun and the vents would read as lit windows.
+  const vent = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.006, 0.006, 0.007) });
+  vent.name = 'vent';
   const mats = new Map();
-  root.traverse(o => { if (o.isMesh) for (const m of [].concat(o.material)) mats.set(m.name, m); });
+  root.traverse(o => { if (!o.isMesh) return; if (o.material.name === 'vent') o.material = vent; else mats.set(o.material.name, o.material); });
   const grip = mats.get('deck_grip');
   if (grip && grip.map && grip.normalMap && hasAsset('corsair/tex/grip.webp')) {
     const tex = await loadTexture('corsair/tex/grip.webp', pipe, { srgb: false, aniso: 8 });
     const tile = 0.34;                                   // metres of deck one tile of the scanned grit covers
-    addDetail(grip, tex, (grip.userData.m_per_uv || 6) / tile, 0.85, 0.10, 0.16);
+    addDetail(grip, tex, (grip.userData.m_per_uv || 6) / tile, 1.1, 0.10, 0.26);
   }
   const warm = [];
   for (const [name, m] of mats) if (name in THERMAL) { m.emissive = new THREE.Color(1, 1, 1); m.emissiveIntensity = 0; warm.push([m, THERMAL[name]]); }
-  return { root, warm };
+  return { root, warm, vent };
 }
 
 export async function buildCorsair(pipe) {
   if (!proto) proto = loadCorsair(pipe);
-  const { root, warm } = await proto;
+  const { root, warm, vent } = await proto;
   const boat = root.clone(true);
   boat.name = 'corsair';
   boat.traverse(o => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = true; o.receiveShadow = true; } });
   // 0 = visible light; 1 = simulated long-wave IR. Materials are shared between the boats, which is fine: the
   // film switches all of them together.
-  boat.userData = { setThermal(k) { for (const [m, e] of warm) m.emissiveIntensity = e * k; } };
+  boat.userData = { setThermal(k) { for (const [m, e] of warm) m.emissiveIntensity = e * k; vent.color.setScalar(0.006 + 6.0 * k); } };
   return boat;
 }
 

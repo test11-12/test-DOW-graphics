@@ -278,7 +278,12 @@ def deck_fittings(info):
     # lower foredeck: two non-skid pads either side of the ridge
     for s in (1, -1):
         y0, y1 = (0.05, 0.38) if s > 0 else (-0.38, -0.05)
-        deck += k.slab(f'pad_fore_{s}', k.rrect(2.34, 2.84, y0, y1, 0.04), tz, 0.004, chamfer=0.002, inset=0.012, kinds=('deck', 'grip'), atlas='deck')
+        deck += k.slab(f'pad_fore_{s}', k.rrect(2.34, 2.84, y0, y1, 0.04), tz, 0.007, chamfer=0.0025, inset=0.022, kinds=('deck', 'grip'), atlas='deck')
+        yo = y1 if s > 0 else y0                                     # hinges outboard, a latch by the ridge
+        for hx in (2.44, 2.74):
+            gear.append(k.box(f'pad_hinge_{s}_{hx}', (0.055, 0.020, 0.007), (hx, yo + 0.004 * s, tz(hx, yo) + 0.0085), bevel=0.002, seg=1, kind='steel', atlas='gear'))
+        yi = y0 if s > 0 else y1
+        gear.append(k.box(f'pad_latch_{s}', (0.045, 0.026, 0.008), (2.59, yi + 0.016 * s, tz(2.59, yi + 0.016 * s) + 0.010), bevel=0.003, kind='rubber', atlas='gear'))
     # aft deck non-skid pads beside and ahead of the engine box
     deck += k.slab('pad_aft', k.rrect(-1.92, -1.12, -0.80, 0.80, 0.05), tz, 0.004, chamfer=0.002, inset=0.012, kinds=('deck', 'grip'), atlas='deck')
     # fasteners round the lids
@@ -316,9 +321,8 @@ def deck_fittings(info):
     gear.append(k.tube('bow_loop', [(3.22, 0.075, z0 - 0.01), (3.22, 0.075, z0 + 0.075), (3.22, -0.075, z0 + 0.075), (3.22, -0.075, z0 - 0.01)], 0.011, n=10, fillet=0.03, kind='steel', atlas='gear'))
     for s in (1, -1):
         gear.append(k.aim(k.lathe(f'bow_loop_base_{s}', [(0.022, 0.0), (0.022, 0.004), (0.016, 0.007)], n=14, kind='steel', atlas='gear'), (3.22, 0.075 * s, z0 - 0.002), (3.22, 0.075 * s, z0 + 1)))
-    # quarter cleats and a filler cap on the aft deck
-    for s in (1, -1):
-        x, y = -3.18, 0.90 * s
+    # quarter cleats, a bow cleat on the ridge of the lower foredeck, and a filler cap on the aft deck
+    for s, (x, y) in ((1, (-3.18, 0.90)), (-1, (-3.18, -0.90)), (0, (3.02 - 0.42, 0.0))):
         z = tz(x, y)
         gear.append(k.box(f'cleat_base_{s}', (0.14, 0.04, 0.006), (x, y, z + 0.003), bevel=0.002, kind='steel', atlas='gear'))
         for dx in (-0.035, 0.035):
