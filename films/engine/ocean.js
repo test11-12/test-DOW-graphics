@@ -136,17 +136,20 @@ void main(){
   for (int i=0;i<NW;i++){
     vec4 A = uWA[i]; vec2 B = uWB[i];
     float att = clamp(1.0-fp*A.z*0.32, 0.0, 1.0);
-    float ph = dot(A.xy, vW)*A.z-B.x*uTime+B.y;
     float ka = A.z*A.w*(i >= 8 ? calm : 1.0);
+    if (att <= 0.0){ var += 0.5*ka*ka; continue; }   // too fine for this pixel: it only roughens the surface
+    float ph = dot(A.xy, vW)*A.z-B.x*uTime+B.y;
     slope += A.xy*(ka*cos(ph)*att);
-    pinch += ka*sin(ph);                              // sum of k a sin: crests pinch where this is large
+    pinch += ka*sin(ph)*att;                          // sum of k a sin: crests pinch where this is large
     var += 0.5*ka*ka*(1.0-att*att);
   }
   { float sk = shelter(vW); slope *= sk; pinch *= sk; var *= sk*sk; }
   vec4 amp = vec4(0.42, 0.42, 0.40, 0.36)*uDetailAmp*vec4(1.0, 1.0, calm, calm);
   vec4 res = clamp(1.0-fp*vec4(uSc[0], uSc[1], uSc[2], uSc[6])*8.0, 0.0, 1.0);
-  vec2 d0 = dtex(duv(0), 0).rg-0.5, d1 = dtex(duv(1), 1).gr-0.5, d2 = dtex(duv(2), 2).rg-0.5, d3 = dtex(duv(6), 6).gr-0.5;
-  slope += bandSlope(0, d0)*amp.x*res.x+bandSlope(1, d1)*amp.y*res.y+bandSlope(2, d2)*amp.z*res.z+bandSlope(6, d3)*amp.w*res.w;
+  if (res.x > 0.0) slope += bandSlope(0, dtex(duv(0), 0).rg-0.5)*amp.x*res.x;
+  if (res.y > 0.0) slope += bandSlope(1, dtex(duv(1), 1).gr-0.5)*amp.y*res.y;
+  if (res.z > 0.0) slope += bandSlope(2, dtex(duv(2), 2).rg-0.5)*amp.z*res.z;
+  if (res.w > 0.0) slope += bandSlope(6, dtex(duv(6), 6).gr-0.5)*amp.w*res.w;
   var += dot(amp*amp*0.03, 1.0-res*res)+0.0004*calm;
 
   // wake map: r foam, g bow-wave ridge, b churned water
@@ -165,12 +168,13 @@ void main(){
       n = mix(n, 0.5, clamp(fp*0.7, 0.0, 1.0));
       foam = smoothstep(1.0-wk.r*1.05, 1.0-wk.r*1.05+0.22, n+0.02);
       foam = max(foam, smoothstep(0.86, 1.0, wk.r));
+      foam = mix(foam, smoothstep(0.2, 0.75, wk.r), clamp(fp*0.8, 0.0, 1.0));   // too far to see the lace: an even white
       churn = wk.b*(0.55+0.9*fn.r);
       var += churn*0.03;                                 // aerated water is matt: no glitter in the wash
     }
   }
   // whitecaps: crests about to fold over, broken up into streaks along the wind
-  if (uWhitecap > 0.0){
+  if (uWhitecap > 0.0 && pinch*uChop > uWhitecap-0.2){
     float wn = dtex(duv(3)*0.61+0.17, 3).r*0.6+dtex(duv(4)*0.5, 4).b*0.4;
     float wc = smoothstep(uWhitecap, uWhitecap+0.16, pinch*uChop+0.22*(wn-0.5)+0.10*(slick-0.5));
     wc *= smoothstep(0.35, 0.6, wn+wc*0.3)*clamp(1.0-fp*0.02, 0.25, 1.0);

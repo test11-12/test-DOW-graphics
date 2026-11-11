@@ -243,7 +243,7 @@ const shots = [
     post: (lt, t) => { const s = air(t); return { ...AIR_POST, exposure: 0.3, sat: 0.98, contrast: 1.34, aerial: 0.6, cirrus: null, clouds: { ...CLOUDS, hole: [s.p.x, s.p.z, 9000, 0.8] } }; } },
   { id: 's08', name: 'Pass', t0: 41.2, t1: 47, terrain: 'air', note: 'Fixed camera in the sky. The jet arrives before its sound; the double boom follows.',
     pose: (lt, t, f) => poseAir(t, f, { ab: 1, haze: 0.8, shock: 1.6, line: 0.12 }),
-    camera: (lt, t) => { const sp = air(PASS_T); const cam = v3(sp.p.x + 62, sp.p.y + 9, sp.p.z); const s = air(t - 0.05); const jolt = Math.exp(-Math.max(0, t - BOOM_T) * 2.6) * (t > BOOM_T ? 1 : 0); const d = cam.distanceTo(s.p), fov = clamp(2 * Math.atan(36 / d) * 180 / Math.PI, 4.2, 31);   // a tracking mount: long lens while the jet is far, wide as it goes by
+    camera: (lt, t) => { const sp = air(PASS_T); const cam = v3(sp.p.x + 62, sp.p.y + 9, sp.p.z); const s = air(t - 0.05); const jolt = Math.exp(-Math.max(0, t - BOOM_T) * 2.6) * (t > BOOM_T ? 1 : 0); const d = cam.distanceTo(s.p), fov = clamp(2 * Math.atan(15 / d) * 180 / Math.PI, 1.9, 24);   // a tracking mount: long lens while the jet is far, wide as it goes by
       return { pos: cam, look: s.p.clone(), fov, shake: { rot: (0.05 + 0.5 * jolt) * Math.min(1, fov / 20), freq: 1.2 + 6 * jolt, seed: 8, jolt: 0.25 * jolt }, focus: air(t).p.clone(), focusRadius: 11 }; },
     post: { ...AIR_POST, shutter: 0.5, exposure: 0.21 } },
   { id: 's09', name: 'Mach 1.21', t0: 47, t1: 52, terrain: 'air', note: 'Long lens from the sunlit side at peak speed.',

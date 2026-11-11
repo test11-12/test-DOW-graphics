@@ -48,12 +48,12 @@ const CONV = [straight(262, 528, 328, 16, 28.5), straight(486, 306, 292, 16, 28.
 
 // ------------------------------------------------------------------ world
 let W;
-const CLOUDS = { cover: 0.36, scale: 0.8, wind: [0.010, 0.004], density: 0.013, tile: 4000, steps: 48, shadow: 0.65 };
+const CLOUDS = { cover: 0.36, scale: 0.8, wind: [0.010, 0.004], density: 0.013, tile: 4000, steps: 40, shadow: 0.65 };
 async function build(film) {
   const pipe = film.pipe;
   pipe.atmo.setSun(SUN.az, SUN.el);
   pipe.atmo.uniforms.uHaze.value = +film.params.get('haze') || 70; pipe.atmo.uniforms.uHazeH.value = 550; pipe.atmo.groundAlbedo.setRGB(0.05, 0.08, 0.09);
-  const clouds = new CloudLayer(pipe, { base: 1500, top: 3100, div: +film.params.get('cdiv') || 3 });
+  const clouds = new CloudLayer(pipe, { base: 1500, top: 3100, div: +film.params.get('cdiv') || 4 });
   const ocean = new Ocean(pipe, { clouds, sea: { wind: 50, amp: 1.0, long: 1, chop: 0.8, spread: 40 } });
   ocean.setShelter(15, 70, 150, 340, 0.3);      // the basin behind the breakwaters
   const boats = [0, 1, 2].map(() => { const b = buildCorsair(pipe); pipe.scene.add(b); pipe.registerDynamic(b); return b; });
@@ -64,6 +64,20 @@ async function build(film) {
   }));
   const port = buildPort(pipe); pipe.scene.add(port);
   port.traverse(o => { if (o.isMesh) o.layers.set(LAYER.STATIC); });
+  // the coast range north of the city: two ragged ridgelines whose tops stand clear of the haze layer
+  const hills = new THREE.Group(); pipe.scene.add(hills);
+  for (const [zc, hmax, seed, tone] of [[-27000, 1500, 3.1, 0.2], [-41000, 2400, 7.7, 0.24]]) {
+    const n = 360, pos = [], idx = [];
+    const ridge = u => { let h = 0, a = 1, f = 1; for (let o = 0; o < 6; o++) { h += a * Math.abs(Math.sin(u * f * 9.1 + seed * (o + 1)) * Math.cos(u * f * 5.3 + seed * 1.7 * o)); a *= 0.5; f *= 2.05; } return h / 1.97; };
+    for (let i = 0; i <= n; i++) {
+      const u = i / n, x = (u - 0.5) * 150000, env = Math.pow(Math.sin(Math.PI * u), 0.6), h = hmax * (0.3 + 0.7 * ridge(u)) * env + 30, z = zc + 4000 * Math.sin(u * 7 + seed);
+      pos.push(x, -200, z + 9000, x, h * 0.55, z + 3500, x, h, z);
+    }
+    for (let i = 0; i < n; i++) { const a = i * 3, b = a + 3; idx.push(a, b, a + 1, b, b + 1, a + 1, a + 1, b + 1, a + 2, b + 1, b + 2, a + 2); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: new THREE.Color(tone * 1.1, tone, tone * 0.88), roughness: 1, metalness: 0, side: THREE.DoubleSide }));
+    m.frustumCulled = false; m.castShadow = false; m.receiveShadow = false; m.layers.set(LAYER.STATIC); hills.add(m);
+  }
   const ship = buildShip(250); pipe.scene.add(ship); ship.traverse(o => { if (o.isMesh) o.layers.set(LAYER.STATIC); });
   // the three detonations: flash, fire that turns to smoke, a column of white water, a long smoke plume
   const blasts = PORT.hits.map(([x, z], i) => {
@@ -77,7 +91,7 @@ async function build(film) {
   });
   for (const b of blasts) for (const k of [0, 1, 2]) ocean.discs.push({ x: b.x + (k - 1) * 2.5, z: b.z + 4 + k * 3, t0: b.T + k * 0.25, dur: 7 + k * 2, r0: 3, r1: 26 + k * 12, k: 1 });
   if (film.off.has('clouds')) CLOUDS.cover = 0;
-  W = { clouds, ocean, boats, port, ship, spray, blasts };
+  W = { clouds, ocean, boats, port, ship, spray, blasts, hills };
   return W;
 }
 
@@ -161,7 +175,7 @@ const shots = [
     post: { ...SEA_POST, exposure: 0.2, bloom: 0.16, shutter: 0.4 }, wakeSize: 240, wakeAt: () => [10, 95] },
   { id: 's09', name: 'First', t0: 57.2, t1: 65, note: 'Wide from outside the basin: three columns of smoke leaning with the wind over the base.',
     tracks: [], blasts: true,
-    camera: (lt) => ({ pos: v3(250 + lt * 1.4, 9 + lt * 0.5, 470 - lt * 1.5), look: v3(-10, 26, 20), fov: 30, shake: { rot: 0.06, freq: 0.5, seed: 9 } }),
+    camera: (lt) => ({ pos: v3(210 + lt * 1.4, 8 + lt * 0.5, 400 - lt * 1.5), look: v3(-6, 30, 20), fov: 24, shake: { rot: 0.06, freq: 0.5, seed: 9 } }),
     post: { ...SEA_POST, exposure: 0.2 }, wakeSize: 420, wakeAt: () => [60, 160] },
   { id: 's10', name: 'Not said', t0: 65, t1: 72, note: 'Empty water, up-sun, low and slow.',
     tracks: [],
@@ -179,9 +193,9 @@ const cues = [
   { type: 'l3', t0: 7.2, t1: 14.2, kicker: 'Saronic', title: 'Corsair', sub: '24 ft · uncrewed · used here as a one-way attack drone' },
   { type: 'stat', side: 'left', t0: 15.2, t1: 20.7, value: '35+ KT', label: '1,000 nmi range · 1,000 lb payload · company figures' },
   { type: 'l3', t0: 22.4, t1: 28.2, kicker: 'Target', title: 'Bandar Abbas Naval Base', sub: 'Submarine and ship maintenance facility, Iran' },
-  { type: 'quote', t0: 58.2, t1: 64.7, text: '“The first time American forces have employed sea drones in combat operations.”', cite: 'U.S. Central Command · July 13, 2026' },
+  { type: 'quote', t0: 58.2, t1: 64.7, text: '“… the first time American forces have employed sea drones in combat operations.”', cite: 'U.S. Central Command · July 13, 2026' },
   { type: 'stat', side: 'left', t0: 65.6, t1: 71.6, value: 'NOT RELEASED', label: 'Launch platform · warhead · damage · how much was autonomous' },
-  { type: 'card', t0: 72.6, t1: DUR, fadeOut: 0.9, html: `<div class="k">Saronic · Corsair</div><div class="t">Three Corsairs</div><div class="row"><span>July 12, 2026</span><span>Bandar Abbas, Iran</span><span>First U.S. combat use of sea drones</span></div><div class="src">Sources: U.S. Central Command statement and video (July 13, 2026); Saronic; The War Zone; New Atlas.</div><div class="dis">Simulated visualization. Not actual footage. Time of day, weather, sea state, courses, speeds, the sensor views, the look of the port and where the boats strike are illustrative; the date, place, number and type of boats and the quoted statements are as reported.</div>` },
+  { type: 'card', t0: 72.6, t1: DUR, fadeOut: 0.9, html: `<div class="k">Saronic · Corsair</div><div class="t">Three Corsairs</div><div class="row"><span>July 12, 2026</span><span>Bandar Abbas, Iran</span><span>First U.S. combat use of sea drones, per CENTCOM</span></div><div class="src">Sources: U.S. Central Command statement and video (July 13, 2026); Saronic; The War Zone; New Atlas.</div><div class="dis">Simulated visualization. Not actual footage. Time of day, weather, sea state, courses, speeds, the sensor views, the look of the port and where the boats strike are illustrative; the date, place, number and type of boats and the quoted statements are as reported.</div>` },
 ];
 const HUD_CSS = `
 .hud-sens{position:absolute;inset:0;color:var(--ink);font-family:var(--f-data);opacity:0}
@@ -236,7 +250,7 @@ function score(m) {
 function poseAll(shot, t, film) {
   const trs = shot.tracks || [];
   W.boats.forEach((b, i) => { const tr = trs[i], p = tr && tr(t), on = !!(p && p.on); b.visible = on; if (on) placeBoat(film, b, p, t); });
-  tmp.set(0, 0, 0); film.place(W.port, tmp);
+  tmp.set(0, 0, 0); film.place(W.port, tmp); film.place(W.hills, tmp);
   W.ship.visible = !!shot.ship; if (shot.ship) { tmp.set(shot.ship[0], 0, shot.ship[1]); film.place(W.ship, tmp); W.ship.rotation.y = (90 - shot.ship[2]) * D2R; }
 }
 for (const s of shots) s.pose = (lt, t, film) => poseAll(s, t, film);
