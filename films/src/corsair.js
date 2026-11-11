@@ -142,8 +142,8 @@ const SEA_POST = { clouds: CLOUDS, exposure: 0.2, contrast: 1.24, sat: 1.0, wb: 
 const P0 = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
 // up-sun shots: a heavier deck with the sun breaking through it (dev overrides: ?ucov= ?udens= ?urays=)
 const UP_CLOUDS = { ...CLOUDS, cover: +P0.get('ucov') || 0.56, density: +P0.get('udens') || 0.017, steps: 48 };
-const UP_SUN = { ...SEA_POST, clouds: UP_CLOUDS, rays: +P0.get('urays') || 0.6, flare: FLARE, sunDisk: 0.5 };
-const IR_POST = { clouds: null, cirrus: null, mode: 'thermal', thermal: [3.4, 0.15, 0.05, 0], exposure: 0.26, contrast: 1.2, aerial: 0.25, grain: 0.09, bloom: 0.03, shutter: 0.3, vignette: 0.45, ao: false };
+const UP_SUN = { ...SEA_POST, clouds: UP_CLOUDS, rays: +P0.get('urays') || 0.12, flare: FLARE, sunDisk: 0.5 };
+const IR_POST = { clouds: null, cirrus: null, mode: 'thermal', thermal: [+P0.get('irg') || 4.2, +P0.get('irl') || 0.075, 0.05, 0], exposure: 0.26, contrast: 1.2, aerial: 0.25, grain: 0.09, bloom: 0.03, shutter: 0.3, vignette: 0.45, ao: false };
 
 // ------------------------------------------------------------------ shots
 const sunDir = (d, y) => v3(Math.sin(SUN.az * D2R) * d, y, -Math.cos(SUN.az * D2R) * d);
@@ -166,7 +166,11 @@ const shots = [
     post: { ...SEA_POST, exposure: 0.24, contrast: 1.28 }, wakeSize: 300, wakeAt: t => { const p = TRIO[0](t); return [p.x, p.z + 70]; } },
   { id: 's05', name: 'Overhead, infrared', t0: 28.5, t1: 36.5, note: 'Simulated sensor view (original graphics, labelled): three warm hulls and their wakes converge on the harbour mouth.',
     tracks: CONV, thermal: true,
-    camera: (lt, t) => { const k = lt / 8; return { pos: v3(285 - 30 * k, 640 - 40 * k, 790 - 70 * k), look: v3(262 - 30 * k, 0, 420 - 70 * k), fov: 36 - 4 * k, roll: -5 + 3 * k, shake: { rot: 0.03, freq: 0.4, seed: 5 } }; },
+    camera: (lt, t) => { // wide for three seconds, then the sensor steps to its narrow field and holds the lead boat
+      const k = lt / 8, pos = v3(285 - 30 * k, 640 - 40 * k, 790 - 70 * k);
+      if (lt < 3.1) return { pos, look: v3(262 - 30 * k, 0, 420 - 70 * k), fov: 36 - 4 * k, roll: -5 + 3 * k, shake: { rot: 0.03, freq: 0.4, seed: 5 } };
+      const p = CONV[0](t), n = (lt - 3.1) / 4.9;
+      return { pos, look: v3(p.x - 3 - 2 * n, 0, p.z - 7 + 3 * n), fov: 9.5 - 1.5 * n, roll: -5 + 3 * k, shake: { rot: 0.012, freq: 0.5, seed: 5 } }; },
     post: IR_POST, wakeSize: 700, wakeAt: () => [260, 400], sea: { reflect: false, whitecap: 0 } },
   { id: 's06', name: 'The breakwater', t0: 36.5, t1: 43, note: 'Behind the lead boat as it rounds the breakwater head: sheds, a yellow gantry, a pier.',
     tracks: RUN_IN,
@@ -277,6 +281,6 @@ startFilm({
     W.port.userData.update && W.port.userData.update(c.pos, t, O);
     const lead = trs[0] && trs[0](t), wa = shot.wakeAt ? shot.wakeAt(t) : (lead ? [lead.x, lead.z + 40] : null);
     const off = film.off;   // dev switches for profiling: ?off=refl,wake,seaclouds,sparkle,whitecap
-    O.update(t, { wake: wa && !off.has('wake') ? { x: wa[0], z: wa[1], size: shot.wakeSize || 200 } : null, reflect: !off.has('refl'), whitecap: off.has('whitecap') ? 0 : 0.34, thermal: th, cloudsOn: !th && !off.has('seaclouds'), shadeWaves: +film.params.get('waves') || 14, ...(shot.sea || {}), ...(off.has('sparkle') ? { sparkle: 0 } : {}) });
+    O.update(t, { wake: wa && !off.has('wake') ? { x: wa[0], z: wa[1], size: shot.wakeSize || 200 } : null, reflect: !off.has('refl'), whitecap: off.has('whitecap') ? 0 : 0.34, thermal: th, cloudsOn: !th && !off.has('seaclouds'), shadeWaves: +film.params.get('waves') || 14, ...(film.params.get('bands') ? { bands: film.params.get('bands').split(',').map(Number) } : {}), ...(shot.sea || {}), ...(off.has('sparkle') ? { sparkle: 0 } : {}) });
   },
 });

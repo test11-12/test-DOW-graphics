@@ -53,10 +53,11 @@ ${ATMOSPHERE}
 ${DEPTH}
 ${WAVES}
 #define NS ${NS}
-uniform sampler2D tScene, tDepth, tSky, tAmbient, tDetail, tRefl, tReflDepth, tWake, tShadow;
+uniform sampler2D tScene, tDepth, tSky, tAmbient, tDetail, tWavelet, tRefl, tReflDepth, tWake, tShadow;
 uniform mat4 uInvProj, uReflVP, uShadowMat; uniform mat3 uCamRot;
 uniform vec4 uWakeRegion; uniform vec3 uOrigin, uSunColor, uWaterCol, uFoamCol, uShadowK; uniform vec2 uRes;
 uniform float uPixAngle, uReflOn, uFogK, uDetailAmp, uGlitter, uThermal, uSparkle, uWhitecap, uSlick; uniform int uShadeWaves;
+uniform vec4 uBandAmp;    // rms slope of the four short-wave bands
 uniform vec3 uCloudK;     // cloud layer for reflections and shadows: mid altitude (m), shadow strength, reflection strength
 uniform sampler2D tShore; uniform vec4 uShore;   // shore map (r: 1 inside structures and rock at the waterline, blurred): centre x, z, size (m), strength
 uniform vec2 uPh[NS]; uniform float uSc[NS];
@@ -66,6 +67,8 @@ vec3 vRel; vec2 gGx, gGy;     // camera-relative position (m); pixel footprint a
 uniform vec4 uRot[NS];        // per-band rotation and stretch of the detail coordinates (2x2 matrix)
 vec2 duv(int i){ vec4 m = uRot[i]; vec2 p = vRel.xz*uSc[i]; return vec2(dot(m.xy, p), dot(m.zw, p))+uPh[i]; }
 vec4 dtexR(vec2 uv, int i){ vec4 m = uRot[i]; vec2 gx = gGx*uSc[i], gy = gGy*uSc[i]; return textureGrad(tDetail, uv, vec2(dot(m.xy, gx), dot(m.zw, gx)), vec2(dot(m.xy, gy), dot(m.zw, gy))); }
+// unit-rms slope of the wavelet map for band i (its mip chain filters what the pixel cannot resolve)
+vec2 wslope(int i){ vec4 m = uRot[i]; vec2 gx = gGx*uSc[i], gy = gGy*uSc[i]; return (textureGrad(tWavelet, duv(i), vec2(dot(m.xy, gx), dot(m.zw, gx)), vec2(dot(m.xy, gy), dot(m.zw, gy))).rg-0.5)*6.0; }
 // slope contribution of a detail band, rotated back into world axes
 vec2 bandSlope(int i, vec2 ch){ vec4 m = uRot[i]; return vec2(m.x*ch.x+m.z*ch.y, m.y*ch.x+m.w*ch.y); }
 float h21(vec2 p){ p = fract(p*vec2(0.1031, 0.1030)); p += dot(p, p.yx+33.33); return fract((p.x+p.y)*p.y); }
@@ -91,7 +94,7 @@ vec3 skyRad(vec3 d){
        + textureLod(tSky, vec2(uv.x,(v+2.0)/3.0), 0.0).rgb;
 }
 // mean Fresnel reflectance of a rough sea (Bruneton & Neyret)
-float meanFresnel(float cosV, float sigma){ return pow(1.0-cosV, 5.0*exp(-2.69*sigma))/(1.0+22.7*pow(sigma, 1.5)); }
+float meanFresnel(float cosV, float sigma){ return pow(max(1.0-cosV, 0.0), 5.0*exp(-2.69*sigma))/(1.0+22.7*pow(sigma, 1.5)); }
 // shadow of the hero objects (the sun's shadow map) on the water
 float heroShadow(vec3 P){
   if (uShadowK.x < 0.5) return 1.0;
@@ -126,7 +129,7 @@ void main(){
   vec3 V = -rd;
   float across = max(dist*uPixAngle, 0.0005), stretch = min(1.0/max(V.y, 0.02), 14.0);
   vec2 fw = normalize(rd.xz+1e-6);
-  gGx = vec2(-fw.y, fw.x)*across; gGy = fw*across*min(stretch, 6.0);
+  gGx = vec2(-fw.y, fw.x)*across; gGy = fw*across*stretch;
   float fp = across*min(stretch, 9.0);            // pixel footprint along the line of sight (m)
 
   // wind streaks and slicks: slow, large patches where the small waves are damped or roughened
@@ -147,13 +150,16 @@ void main(){
     var += 0.5*ka*ka*(1.0-att*att);
   }
   { float sk = shelter(vW); slope *= sk; pinch *= sk; var *= sk*sk; }
-  vec4 amp = vec4(0.42, 0.42, 0.40, 0.36)*uDetailAmp*vec4(1.0, 1.0, calm, calm);
-  vec4 res = clamp(1.0-fp*vec4(uSc[0], uSc[1], uSc[2], uSc[6])*8.0, 0.0, 1.0);
-  if (res.x > 0.0) slope += bandSlope(0, dtex(duv(0), 0).rg-0.5)*amp.x*res.x;
-  if (res.y > 0.0) slope += bandSlope(1, dtex(duv(1), 1).gr-0.5)*amp.y*res.y;
-  if (res.z > 0.0) slope += bandSlope(2, dtex(duv(2), 2).rg-0.5)*amp.z*res.z;
-  if (res.w > 0.0) slope += bandSlope(6, dtex(duv(6), 6).gr-0.5)*amp.w*res.w;
-  var += dot(amp*amp*0.03, 1.0-res*res)+0.0004*calm;
+  // short wind waves: four scales of the wavelet map (rms slope each). The texture's mip chain averages away
+  // what the pixel cannot resolve; "res" estimates the share of each band's slope variance still resolved
+  // (its spectrum spans about four octaves) so the rest goes into roughness.
+  vec4 amp = uBandAmp*uDetailAmp*vec4(1.0, 1.0, calm, calm);
+  vec4 res = clamp(1.0-log2(max(across*vec4(uSc[0], uSc[1], uSc[2], uSc[6])*96.0, 1.0))/4.0, 0.0, 1.0);
+  if (res.x > 0.0) slope += bandSlope(0, wslope(0))*amp.x;
+  if (res.y > 0.0) slope += bandSlope(1, wslope(1))*amp.y;
+  if (res.z > 0.0) slope += bandSlope(2, wslope(2))*amp.z;
+  if (res.w > 0.0) slope += bandSlope(6, wslope(6))*amp.w;
+  var += dot(amp*amp, 1.0-res)+0.0004*calm;
 
   // wake map: r foam, g bow-wave ridge, b churned water
   float foam = 0.0, churn = 0.0;
@@ -208,7 +214,7 @@ void main(){
   }
   vec3 N = normalize(vec3(-slope.x, 1.0-uChop*pinch*0.6, -slope.y));
   float sigma = sqrt(max(var, 1.0e-5));
-  float NV = max(dot(N, V), 0.02);
+  float NV = clamp(dot(N, V), 0.02, 1.0);
   float F = 0.02+0.98*meanFresnel(NV, sigma);
 
   // light reaching the water: cloud shadows and the shadows of nearby hulls
@@ -263,7 +269,7 @@ void main(){
   float a2 = clamp(2.0*var, 0.0007, 0.25);
   float dd = NH*NH*(a2-1.0)+1.0;
   float Dg = a2/(3.14159265*dd*dd);
-  float Fh = 0.02+0.98*pow(1.0-max(dot(V, Hh), 0.0), 5.0);
+  float Fh = 0.02+0.98*pow(clamp(1.0-dot(V, Hh), 0.0, 1.0), 5.0);
   float vis = clamp(dot(N, uSunDir)*6.0, 0.0, 1.0)*smoothstep(-0.01, 0.03, uSunDir.y);
   float glint = 1.0;
   if (uSparkle > 0.0) glint = mix(1.0, 0.35+glints(vW, across, uTime), uSparkle);
@@ -312,6 +318,41 @@ void main(){
   gl_FragColor = clamp(o, 0.0, 1.0);
 }`;
 
+// Tileable slope map of short wind waves: many sharp-crested wavelets with whole-number wave vectors (so the
+// tile repeats), travelling within a spread about +x. r,g = slope along x,y scaled to unit rms (0.5 = flat,
+// one unit = 1/6); b = height. Sampled at several scales and rotations to give the surface its fine facets.
+export function makeWaveletTexture(aniso = 8, N = 512) {
+  const rnd = (() => { let s = 20260712; return () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
+  const waves = [];
+  for (let i = 0; i < 72; i++) {
+    const k = 3 * Math.pow(16, (i + rnd()) / 72);                                // 3 .. 48 cycles per tile, even per octave
+    const th = (rnd() + rnd() + rnd() - 1.5) * 1.5 + (i % 6 === 3 ? (rnd() < 0.5 ? 1.5 : -1.5) : 0);   // spread about +x, some cross waves
+    const kx = Math.round(k * Math.cos(th)), ky = Math.round(k * Math.sin(th)), kk = Math.hypot(kx, ky);
+    if (kk < 2.5) continue;
+    waves.push({ kx, ky, a: Math.pow(kk, -1.35) * (0.7 + 0.6 * rnd()), ph: rnd() * 6.2831853, p: 0.55 + 0.35 * rnd() });
+  }
+  const h = new Float32Array(N * N), cx = new Float32Array(N), sx = new Float32Array(N);
+  for (const w of waves) {
+    // crest profile: a cusp at the crest, a round trough (1 - 2|sin(t/2)|^p), evaluated per row
+    for (let y = 0; y < N; y++) {
+      const base = 6.2831853 * w.ky * y / N + w.ph, o = y * N;
+      for (let x = 0; x < N; x++) { const t = 6.2831853 * w.kx * x / N + base; h[o + x] += w.a * (1 - 2 * Math.pow(Math.abs(Math.sin(t * 0.5)), w.p)); }
+    }
+  }
+  const gx = new Float32Array(N * N), gy = new Float32Array(N * N); let ss = 0, mn = 1e9, mx = -1e9;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const i = y * N + x, xm = y * N + (x + N - 1) % N, xp = y * N + (x + 1) % N, ym = ((y + N - 1) % N) * N + x, yp = ((y + 1) % N) * N + x;
+    gx[i] = (h[xp] - h[xm]) * 0.5; gy[i] = (h[yp] - h[ym]) * 0.5; ss += gx[i] * gx[i] + gy[i] * gy[i];
+    mn = Math.min(mn, h[i]); mx = Math.max(mx, h[i]);
+  }
+  const rms = Math.sqrt(ss / (N * N)), data = new Uint8Array(N * N * 4), q = v => Math.max(0, Math.min(255, Math.round((0.5 + v / (6 * rms)) * 255)));
+  for (let i = 0; i < N * N; i++) { data[i * 4] = q(gx[i]); data[i * 4 + 1] = q(gy[i]); data[i * 4 + 2] = Math.round((h[i] - mn) / (mx - mn) * 255); data[i * 4 + 3] = 255; }
+  const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = true; tex.anisotropy = aniso; tex.colorSpace = THREE.NoColorSpace; tex.needsUpdate = true;
+  return tex;
+}
+
 function ringGeometry(cols, rings) {
   const nv = (cols + 1) * rings.length, pos = new Float32Array(nv * 3);
   let k = 0;
@@ -350,7 +391,7 @@ export class Ocean {
     const mu = this.meshUniforms;
     this.uniforms = {
       ...A, tScene: { value: null }, tDepth: S.tDepth, uLogFar: S.uLogFar, uInvProj: S.uInvProj, uCamRot: S.uCamRot, uRes: S.uRes,
-      tSky: S.tSky, tAmbient: S.tAmbient, tDetail: S.tDetail, tRefl: { value: pipe.black }, tReflDepth: { value: pipe.white }, tWake: { value: this.rtWake.texture },
+      tSky: S.tSky, tAmbient: S.tAmbient, tDetail: S.tDetail, tWavelet: { value: makeWaveletTexture(Math.min(o.aniso ?? 8, pipe.maxAniso)) }, uBandAmp: { value: new THREE.Vector4(0.12, 0.12, 0.10, 0.08) }, tRefl: { value: pipe.black }, tReflDepth: { value: pipe.white }, tWake: { value: this.rtWake.texture },
       tShadow: { value: pipe.white }, uShadowMat: { value: new THREE.Matrix4() }, uShadowK: { value: new THREE.Vector3(0, 1 / 2048, 1.3) },
       uReflVP: { value: new THREE.Matrix4() }, uWakeRegion: { value: new THREE.Vector4(0, 0, 400, 0) },
       uOrigin: S.uOrigin, uSunColor: S.uSunColor, uTime: S.uTime,
@@ -412,6 +453,9 @@ export class Ocean {
       this.waves.push({ dx, dz, k, a, om, ph });
     }
     this.meshUniforms.uChop.value = chop;
+    // the short-wave bands run with the wind, each a little off it so their crests cross
+    const wa = Math.atan2(-Math.cos(wind * Math.PI / 180), Math.sin(wind * Math.PI / 180)), R = this.uniforms.uRot.value;
+    [[0, 22], [1, -28], [2, 9], [6, -14]].forEach(([b, off]) => { const a = wa + off * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a); R[b].set(c, sn, -sn * 0.85, c * 0.85); });
   }
   // deferred lighting of the sea pixels (called by the pipeline after the scene pass)
   shade(renderer, sceneTex, target) {
@@ -512,6 +556,7 @@ export class Ocean {
     this.mesh.geometry = this.geos[gk];
     // look of the water this frame
     U.uShadeWaves.value = opt.shadeWaves ?? NW;
+    if (opt.bands) U.uBandAmp.value.set(opt.bands[0], opt.bands[1], opt.bands[2], opt.bands[3]); else U.uBandAmp.value.set(0.12, 0.12, 0.10, 0.08);
     U.uGlitter.value = opt.glitter ?? 1; U.uSparkle.value = opt.sparkle ?? 0.8; U.uWhitecap.value = opt.whitecap ?? 0; U.uSlick.value = opt.slick ?? 0.6; U.uDetailAmp.value = opt.detail ?? 1;
     if (opt.water) U.uWaterCol.value.set(opt.water[0], opt.water[1], opt.water[2]);
     const cl = this.clouds, cs = opt.cloudShadow ?? (cl ? 0.75 : 0), cr = opt.cloudReflect ?? (cl ? 0.9 : 0);
