@@ -204,7 +204,7 @@ void main(){
   { // dry-ground sheen towards the sun at grazing angles
     vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0);
     float fr = 0.03+0.97*pow(1.0-max(dot(V,Hh),0.0), 5.0);
-    col += uSunGround*sh*nl*pow(nh, 12.0)*1.5*fr*0.35*(0.4+alb.g);
+    col += uSunGround*sh*nl*pow(nh, 10.0)*0.45*fr*0.35*(0.4+alb.g);
   }
   if (spec < 0.0){ // pavement: a broad glossy lobe towards a low sun, and the sky's sheen at grazing angles
     float k = -spec;

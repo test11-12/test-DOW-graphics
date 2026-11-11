@@ -211,7 +211,7 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
     float h5 = d5.r, h6 = d6.r+peb*0.6;
     vec2 g5 = vec2(dtex(duv(5)+0.13+vec2(e5,0.0), 5).r-h5, dtex(duv(5)+0.13+vec2(0.0,e5), 5).r-h5);
     vec2 g6 = vec2(dtex(duv(6)+vec2(e6,0.0), 6).r-d6.r, dtex(duv(6)+vec2(0.0,e6), 6).r-d6.r);
-    N.xz -= (g5*0.9+g6*1.3)*k*(1.0-0.8*step(0.5, m1.r));
+    N.xz -= (g5*0.35+g6*1.1)*k*(1.0-0.8*step(0.5, m1.r));
   }
   spec = m1.r;
   if (spec > 0.0) alb = mix(alb, vec3(0.03,0.06,0.07), spec);

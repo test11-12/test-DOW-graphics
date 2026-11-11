@@ -69,6 +69,7 @@ uniform float uGain; uniform vec2 uShear;
 ${CLOUD_COVER}
 varying vec2 vUv;
 const float RGc = 6360000.0;
+float gLod = 0.0;   // extra smoothing of the cloud field for long march steps
 float remap(float x, float a, float b, float c, float d){ return (((x-a)/(b-a))*(d-c))+c; }
 float hg(float c, float g){ return (1.0-g*g)/(12.566371*pow(max(1.0+g*g-2.0*g*c, 1e-4), 1.5)); }
 // first interval of the ray inside the spherical layer
@@ -89,7 +90,7 @@ bool shellSegment(vec3 ro, vec3 rd, out float t0, out float t1){
 float cloudDensity(vec2 wxz, float alt, out float h01, bool cheap){
   h01 = (alt-uLayer.x)/(uLayer.y-uLayer.x);
   if (h01 <= 0.0 || h01 >= 1.0) return 0.0;
-  float cov = cloudCover(wxz+uShear*(alt-uLayer.x));        // wind shear leans the towers
+  float cov = cloudCoverL(wxz+uShear*(alt-uLayer.x), gLod);   // wind shear leans the towers
   if (cov <= 0.02) return 0.0;
   float top = 0.22+0.78*cov;                                 // strong cells build higher
   float prof = smoothstep(0.0, 0.07, h01)*smoothstep(top, top*0.25, h01);
@@ -116,7 +117,10 @@ void main(){
   if (dist < t0) dist = 1.0e9;                 // geometry in front of the layer is handled at composite time
   t1 = min(min(t1, dist), t0+uMarch.z);
   if (t1 <= t0){ gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
-  int N = int(uMarch.x); float ds = (t1-t0)/float(N);
+  int N = int(uMarch.x);
+  // step length grows geometrically along the ray: fine where the cloud is near, coarse far away where it is small and hazy
+  float span = t1-t0, gk = clamp(span/9000.0, 0.0, 3.0), gr = exp(gk/float(N)), ds = span*(gr-1.0)/(exp(gk)-1.0+1e-5);
+  if (gk < 0.01){ gr = 1.0; ds = span/float(N); }
   float t = t0+ds*fract(ign(gl_FragCoord.xy)+uFrame*0.618);
   float cv = dot(rd, uSunDir);
   // multiple scattering as octaves (after Wrenninge): each bounce is dimmer, penetrates deeper and is more isotropic
@@ -126,6 +130,7 @@ void main(){
   for (int i=0;i<96;i++){
     if (i >= N) break;
     vec3 p = ro+rd*t; float alt = length(p)-RGc, h01;
+    gLod = clamp(log2(ds/160.0), 0.0, 3.0);
     float dens = cloudDensity(uOrigin.xz+p.xz, alt, h01, ds > 300.0);
     if (dens > 0.002){
       dens *= 1.0-smoothstep(uMarch.z*0.55, uMarch.z, t-t0);
@@ -146,25 +151,23 @@ void main(){
       T *= tr;
       if (T < 0.012){ T = 0.0; break; }
     }
-    t += ds;
+    t += ds; ds *= gr;
   }
   gl_FragColor = vec4(L, T);
 }`;
 
-// small edge-preserving smooth of the low-resolution cloud buffer
+// smooths the march's dither noise out of the low-resolution cloud buffer (two passes of a 3x3 tent, the second wider)
 const CLOUD_BLUR_FRAG = /* glsl */`
 precision highp float;
-uniform sampler2D tIn; uniform vec2 uTexel;
+uniform sampler2D tIn; uniform vec2 uTexel; uniform float uStep;
 varying vec2 vUv;
 void main(){
-  vec4 c = texture2D(tIn, vUv), acc = c*0.36; float ws = 0.36;
+  vec4 acc = texture2D(tIn, vUv)*4.0;
   for (int j=-1;j<=1;j++) for (int i=-1;i<=1;i++){
     if (i == 0 && j == 0) continue;
-    vec4 s = texture2D(tIn, vUv+vec2(float(i),float(j))*uTexel*1.2);
-    float w = ((i == 0 || j == 0) ? 0.11 : 0.05)/(1.0+abs(s.a-c.a)*6.0);
-    acc += s*w; ws += w;
+    acc += texture2D(tIn, vUv+vec2(float(i),float(j))*uTexel*uStep)*((i == 0 || j == 0) ? 2.0 : 1.0);
   }
-  gl_FragColor = acc/ws;
+  gl_FragColor = acc/16.0;
 }`;
 
 export class CloudLayer {
@@ -185,7 +188,7 @@ export class CloudLayer {
       uLayer: { value: new THREE.Vector4(this.base, this.top, 0.012, 4500) }, uMarch: { value: new THREE.Vector4(48, 90, 70000, 0.42) }, uShape: { value: new THREE.Vector3() }, uGain: { value: 1 }, uShear: { value: new THREE.Vector2(0.3, 0.12) },
       ...this.cover,
     });
-    this.blur = new Pass(CLOUD_BLUR_FRAG, { tIn: { value: null }, uTexel: { value: new THREE.Vector2() } });
+    this.blur = new Pass(CLOUD_BLUR_FRAG, { tIn: { value: null }, uTexel: { value: new THREE.Vector2() }, uStep: { value: 1 } });
     this._amb = new Float32Array(4);
     pipe.clouds = this;
     this.setSize(pipe.w, pipe.h);
@@ -224,8 +227,9 @@ export class CloudLayer {
     u.uAmbTop.value.setRGB(a[0] / Math.PI * 0.75, a[1] / Math.PI * 0.75, a[2] / Math.PI * 0.75);
     u.uAmbBot.value.setRGB(a[0] / Math.PI * 0.3 + g.r * sun.r * mu / Math.PI * 0.45, a[1] / Math.PI * 0.3 + g.g * sun.g * mu / Math.PI * 0.45, a[2] / Math.PI * 0.3 + g.b * sun.b * mu / Math.PI * 0.45);
     this.pass.render(r, this.rt);
-    this.blur.u.tIn.value = this.rt.texture; this.blur.u.uTexel.value.set(1 / this.rt.width, 1 / this.rt.height);
-    this.blur.render(r, this.rt2);
-    return this.rt2.texture;
+    const b = this.blur.u; b.uTexel.value.set(1 / this.rt.width, 1 / this.rt.height);
+    b.tIn.value = this.rt.texture; b.uStep.value = 1.0; this.blur.render(r, this.rt2);
+    b.tIn.value = this.rt2.texture; b.uStep.value = 1.6; this.blur.render(r, this.rt);
+    return this.rt.texture;
   }
 }

@@ -242,13 +242,27 @@ export function buildQuarterhorse(pipe) {
   const tire = new THREE.MeshStandardMaterial({ color: 0x0c0c0d, roughness: 0.85, metalness: 0 });
   const hub = new THREE.MeshStandardMaterial({ color: 0x8e9092, roughness: 0.5, metalness: 0.7 });
   const strutM = new THREE.MeshStandardMaterial({ color: 0xd0d2d4, roughness: 0.25, metalness: 1 });
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xe6e8ea, roughness: 0.12, metalness: 1 });
+  const darkM = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.6, metalness: 0.6 });
+  const doorM = new THREE.MeshStandardMaterial({ color: 0xb9bcbe, roughness: 0.45, metalness: 1 });
   const wheel = (x, y, z, rad, wd) => {
     const g = new THREE.Group(); g.position.set(x, y, z);
-    const t = new THREE.TorusGeometry(rad - wd * 0.5, wd * 0.5, 14, 32); addTo(g, t, tire);
-    const h = new THREE.CylinderGeometry(rad - wd * 0.9, rad - wd * 0.9, wd * 0.8, 20); h.rotateX(Math.PI / 2); addTo(g, h, hub);
+    const t = new THREE.TorusGeometry(rad - wd * 0.5, wd * 0.5, 16, 40); addTo(g, t, tire);
+    const h = new THREE.CylinderGeometry(rad - wd * 0.9, rad - wd * 0.9, wd * 0.8, 24); h.rotateX(Math.PI / 2); addTo(g, h, hub);
+    const rim = new THREE.TorusGeometry(rad - wd * 0.92, wd * 0.07, 8, 32); for (const sz of [-1, 1]) addTo(g, rim.clone(), hub, { pos: [0, 0, sz * wd * 0.4] });
+    const cap = new THREE.CylinderGeometry(rad * 0.2, rad * 0.24, wd * 0.95, 16); cap.rotateX(Math.PI / 2); addTo(g, cap, darkM);
+    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2, bolt = new THREE.CylinderGeometry(rad * 0.035, rad * 0.035, wd * 0.86, 6); bolt.rotateX(Math.PI / 2); addTo(g, bolt, chrome, { pos: [Math.cos(a) * rad * 0.42, Math.sin(a) * rad * 0.42, 0] }); }
     gear.add(g); return g;
   };
-  const strut = (x, y0, y1, z, rad) => { const c = new THREE.CylinderGeometry(rad, rad, y1 - y0, 12); addTo(gear, c, strutM, { pos: [x, (y0 + y1) / 2, z] }); };
+  // oleo strut: painted outer cylinder, polished piston below it, torque links behind
+  const strut = (x, y0, y1, z, rad) => {
+    const split = y0 + (y1 - y0) * 0.42;
+    addTo(gear, new THREE.CylinderGeometry(rad, rad * 1.08, y1 - split, 16), strutM, { pos: [x, (split + y1) / 2, z] });
+    addTo(gear, new THREE.CylinderGeometry(rad * 0.62, rad * 0.62, split - y0, 16), chrome, { pos: [x, (y0 + split) / 2, z] });
+    addTo(gear, new THREE.CylinderGeometry(rad * 1.25, rad * 1.25, rad * 1.2, 16), strutM, { pos: [x, split, z] });
+    const L = (split - y0) * 0.72;
+    for (const [sgn, yy] of [[1, split - L * 0.28], [-1, y0 + L * 0.42]]) { const lk = new THREE.BoxGeometry(L * 0.62, rad * 0.5, rad * 0.9); lk.rotateZ(sgn * 0.62); addTo(gear, lk, strutM, { pos: [x - rad * 1.2 - L * 0.2, yy, z] }); }
+  };
   const gy = QH.groundY;
   wheel(X(4.55), gy + 0.235, 0, 0.235, 0.13); strut(X(4.55), gy + 0.235, -0.6, 0.0, 0.04);
   { const c = new THREE.CylinderGeometry(0.022, 0.022, 0.9, 8); c.rotateZ(0.9); addTo(gear, c, strutM, { pos: [X(4.2), gy + 0.75, 0] }); }
@@ -256,11 +270,12 @@ export function buildQuarterhorse(pipe) {
     wheel(X(9.55), gy + 0.32, sgn * 1.12, 0.32, 0.2); strut(X(9.55), gy + 0.32, -0.3, sgn * 0.98, 0.055);
     const ax = new THREE.CylinderGeometry(0.035, 0.035, 0.22, 8); ax.rotateX(Math.PI / 2); addTo(gear, ax, strutM, { pos: [X(9.55), gy + 0.32, sgn * 1.03] });
     const br = new THREE.CylinderGeometry(0.025, 0.025, 1.0, 8); br.rotateZ(-0.85); addTo(gear, br, strutM, { pos: [X(9.9), gy + 0.9, sgn * 0.98] });
-    // open main-gear door
-    addTo(gear, new THREE.BoxGeometry(1.5, 0.52, 0.03), skinMatPlain(), { pos: [X(8.75), -1.12, sgn * 0.62], rot: [sgn * 0.12, 0, 0] });
+    const brake = new THREE.CylinderGeometry(0.15, 0.15, 0.07, 20); brake.rotateX(Math.PI / 2); addTo(gear, brake, darkM, { pos: [X(9.55), gy + 0.32, sgn * 0.99] });
+    // open main-gear door, hanging edge-on below the wheel bay
+    addTo(gear, new THREE.BoxGeometry(1.15, 0.36, 0.022), doorM, { pos: [X(8.9), -1.06, sgn * 0.6], rot: [sgn * 0.2, 0, 0] });
   }
-  addTo(gear, new THREE.BoxGeometry(1.25, 0.42, 0.03), skinMatPlain(), { pos: [X(3.75), -1.02, 0.34], rot: [0.1, 0, 0] });
-  addTo(gear, new THREE.BoxGeometry(1.25, 0.42, 0.03), skinMatPlain(), { pos: [X(3.75), -1.02, -0.34], rot: [-0.1, 0, 0] });
+  addTo(gear, new THREE.BoxGeometry(0.95, 0.3, 0.02), doorM, { pos: [X(3.8), -0.98, 0.3], rot: [0.16, 0, 0] });
+  addTo(gear, new THREE.BoxGeometry(0.95, 0.3, 0.02), doorM, { pos: [X(3.8), -0.98, -0.3], rot: [-0.16, 0, 0] });
 
   function skinMatPlain() { return new THREE.MeshStandardMaterial({ color: 0xd4d6d7, roughness: 0.38, metalness: 1 }); }
 
