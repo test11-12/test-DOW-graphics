@@ -36,7 +36,7 @@ const EARLIER: Pt[] = [[556, HORIZON + 22], [742, HORIZON + 30]];
 
 /* ---- The orbit, in a small plate of its own ---- */
 const IX = 694;
-const IY = 70;
+const IY = 74;
 const IW = 174;
 const IH = 148;
 const R_EARTH = 34;
