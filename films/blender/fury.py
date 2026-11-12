@@ -67,7 +67,7 @@ def build(shape_only=False):
     blades = part('blades', ac, 'blade', 'C', bevel=(0.002, 2), smooth=30)
     part('probes', aside, 'probe', 'C', mirror=True, smooth=50)
     part('pivots', pivots, 'pylon', 'C', smooth=50)
-    for k, pid in (('red', 'lens_r'), ('green', 'lens_g'), ('tail', 'lens_w')):
+    for k, pid in (('red', 'lens_r'), ('green', 'lens_g'), ('tail', 'lens_w'), ('wr', 'lens_w'), ('wg', 'lens_w')):
         part('lens_' + k, G.lens(G.NAV[k], 0.016), pid, 'C', smooth=80)
     gear = G.gear_parts()
     bev = {'door': (0.003, 2), 'doorin': (0.002, 1), 'strut': None, 'tyre': None, 'bay': (0.0015, 1)}
@@ -112,8 +112,15 @@ def build(shape_only=False):
 BODY, DARK, PALE, MID = (112, 120, 130), (57, 63, 73), (124, 132, 141), (92, 100, 110)
 LOW, FIN_S = (112, 120, 130), (72, 79, 88)     # undersides of the wings and stabilators; the darker starboard face of the fin
 KEEL, LOWAFT = (90, 97, 106), (64, 70, 78)     # keel box sides; lower aft fuselage below the chine
+# the patches, leading-edge strips and tips on the wings and stabilators are a soft mid-grey, about 0.8 of the wing
+# paint (measured 153 against 196 sRGB on the post-launch photograph of 1003, 150 against 188 on the take-off one),
+# much lighter than the dark spine panels
+WSPL_T, WSPL_B = (100, 107, 115), (90, 96, 104)
 NOSE_Y = 0.06                              # side-view heights were read from the nose tip, which droops below the wing plane
 INK, DKINK = (214, 219, 222), (36, 40, 45)
+LOWINK = 0.5                               # 'U.S. AIR FORCE' low on the aft fuselage: pale ink on the dark paint on 1003 (dark ink is 1001's)
+VENT = [(1.680, 0.150), (1.885, 0.150), (1.795, 0.219)]     # flush intake on the nose flank: a triangular recess, deepest at the top
+VENT_HEX = [(1.515, 0.175), (1.600, 0.252), (1.975, 0.252), (2.060, 0.175), (1.975, 0.098), (1.600, 0.098)]   # its elongated hexagonal panel
 PPM_S, PPM_W = 700, 1000
 SV = (-0.1, 10.3, -0.95, 1.95)          # side view window: s0, s1, y0, y1
 WV = (4.2, 10.3, 0.0, 3.45)             # plan view window: s0, s1, |z|0, |z|1
@@ -183,13 +190,15 @@ def side_layers():
         c.poly([(bx - 0.040, by + 0.048), (bx - 0.020, by + 0.048), (bx, by - 0.012), (bx + 0.020, by + 0.048), (bx + 0.040, by + 0.048), (bx + 0.010, by - 0.050), (bx - 0.010, by - 0.050)], 170)
 
     def lettering(c, port):
-        v = 255; q = 1 if port else -1
-        for k in range(4):      # forward gills: four slashes above the wing root, raked the same way in either view
-            x = 4.625 + (k - 1.5) * 0.066 * q
-            c.poly([(x - 0.040 * q, 0.045), (x - 0.010 * q, 0.045), (x + 0.040 * q, 0.125), (x + 0.010 * q, 0.125)], 215)
+        v = 255
+        # gill slashes, raked in the body frame (mirror images on the two flanks, as both photographs of 1003 show):
+        # the forward set leans its tops towards the nose, the aft set its tops towards the tail
+        for k in range(4):      # forward gills: four slashes above the wing root
+            x = 4.625 + (k - 1.5) * 0.066
+            c.poly([(x + 0.040, 0.045), (x + 0.010, 0.045), (x - 0.040, 0.125), (x - 0.010, 0.125)], 215)
         for k in range(4):      # aft gills, on their panel
-            x = 7.965 + (k - 1.5) * 0.070 * q
-            c.poly([(x - 0.038 * q, -0.158), (x - 0.006 * q, -0.158), (x + 0.038 * q, -0.092), (x + 0.006 * q, -0.092)], 215)
+            x = 7.965 + (k - 1.5) * 0.070
+            c.poly([(x - 0.038, -0.158), (x - 0.006, -0.158), (x + 0.038, -0.092), (x + 0.006, -0.092)], 215)
         # designation and its small legend, inside the dark panel (reads nose-to-tail on the port side)
         x = 5.28 if port else 6.34
         wdt = c.text('YFQ-44A', x, 0.245, 0.128, (700, True), v, 'ls')
@@ -220,10 +229,10 @@ def side_layers():
     c = side_canvas()
     c.poly([(2.60, 0.000), (2.80, 0.000), (2.88, 0.130), (2.68, 0.130)])                  # sensor window
     c.rect(2.05, -0.076, 2.40, -0.062)                                                    # slot
-    c.poly([(1.70, 0.150), (1.86, 0.150), (1.80, 0.215)])                                 # small window on the nose
     hx, hy = 8.95, 0.19
     c.poly([(hx - 0.125, hy), (hx - 0.075, hy + 0.062), (hx + 0.075, hy + 0.062), (hx + 0.125, hy), (hx + 0.075, hy - 0.062), (hx - 0.075, hy - 0.062)])
     L['dk'] = c.sampler()
+    c = side_canvas(); c.poly(VENT); L['vent'] = c.sampler()
     # ---- panel breaks (grooves) and fasteners
     c = side_canvas(); r = side_canvas()
     gw = 0.0028
@@ -239,11 +248,22 @@ def side_layers():
     for x0, y0, x1, y1 in ((3.62, -0.07, 4.30, 0.13), (6.60, -0.07, 7.00, 0.13), (7.66, 0.02, 8.16, 0.22), (8.38, 0.03, 8.72, 0.21), (9.14, 0.05, 9.43, 0.20),
                            (5.30, 0.42, 5.90, 0.47), (1.05, 0.02, 1.42, 0.12)):
         panel(x0, y0, x1, y1)
-    c.line([(1.58, 0.105), (1.66, 0.245), (1.90, 0.245), (1.98, 0.105)], gw, closed=True)                    # panel round the nose window
+    # the intake's elongated hexagonal panel with a fastener row just inside its edge
+    c.line(VENT_HEX, gw, closed=True)
+    cx, cy = sum(p[0] for p in VENT_HEX) / 6, sum(p[1] for p in VENT_HEX) / 6
+    ins = lambda p, e: (p[0] + (cx - p[0]) * e, p[1] + (cy - p[1]) * e)
+    for i in range(6):
+        a, b = VENT_HEX[i], VENT_HEX[(i + 1) % 6]
+        r.dots(ins(a, 0.13 if i in (0, 3) else 0.17), ins(b, 0.13 if (i + 1) % 6 in (0, 3) else 0.17), 0.034, 0.0030, ends=False)
+    # fastener rows along the forward frames, just aft of each break, from the chine up the flank
+    for sf in FRAMES[1:5]:
+        yl = CH + float(G._F['y'](sf)) - float(G._F['hb'](sf)) + 0.03 + NOSE_Y; yh = CH + float(G._F['y'](sf)) + 0.80 * float(G._F['ht'](sf)) + NOSE_Y
+        r.dots((sf + 0.016, yl), (sf + 0.016, yh), 0.038, 0.0030)
     c.line([(hx - 0.14, hy), (hx - 0.083, hy + 0.072), (hx + 0.083, hy + 0.072), (hx + 0.14, hy), (hx + 0.083, hy - 0.072), (hx - 0.083, hy - 0.072)], gw, closed=True)
     c.line([(2.585, -0.012), (2.795, -0.012), (2.895, 0.142), (2.685, 0.142)], gw, closed=True)
-    c.rrect(5.18, -0.615, 6.36, -0.275, 0.02, 0.0045); r.dots((5.24, -0.30), (6.30, -0.30), 0.06, 0.0035)   # main-gear door in the keel side
-    c.line([(3.05, -0.44), (7.2, -0.44)], gw)
+    # (the main-gear bays open in the keel-box sides while the gear is down: their doors hang from the lower edge)
+    r.dots((G.MAIN_BAY[0] - 0.03, -0.30), (G.MAIN_BAY[0] - 0.03, -0.56), 0.04, 0.0032); r.dots((G.MAIN_BAY[1] + 0.03, -0.30), (G.MAIN_BAY[1] + 0.03, -0.56), 0.04, 0.0032)
+    c.line([(3.05, -0.44), (G.MAIN_BAY[0] - 0.01, -0.44)], gw); c.line([(G.MAIN_BAY[1] + 0.01, -0.44), (7.2, -0.44)], gw)
     # fin: rudder hinge and cut, ribs, spar
     c.line([fin_pt(0.36, 0.72), fin_pt(1.765, 0.72)], 0.0048); c.line([fin_pt(1.765, 0.72), fin_pt(1.765, 1.02)], 0.0048); c.line([fin_pt(0.36, 0.72), fin_pt(0.36, 1.02)], 0.0048)
     for yy in FIN_RIBS:
@@ -362,7 +382,10 @@ def paint_body(M, texel, S, T):
     col = tone(col, PALE, (fin & port).astype(np.float32)); col = tone(col, FIN_S, (fin & ~port).astype(np.float32))
     col = tone(col, LOW, under * (1 - aftw)); col = tone(col, LOWAFT, under * aftw); col = tone(col, KEEL, box.astype(np.float32))
     col = tone(col, MID, mid); col = tone(col, DARK, dark)
-    rough = 0.56 + 0.02 * low - 0.04 * dark
+    # the lower surfaces (below the chine, the keel box, the belly) a little glossier, so grazing views pick up the
+    # bright floor under the jet as the post-launch photograph shows
+    lsurf = np.clip(np.maximum(low, smoothstep(-0.25, -0.6, ny) * (fus | box)), 0, 1).astype(np.float32)
+    rough = 0.56 - 0.09 * lsurf - 0.04 * dark
     # ---- per-panel tone and sheen, paint mottle
     band = np.digitize(y, [-0.095, 0.40]) + 24 * (ym < CH + yoff - 0.004) + 3 * port + 6 * (ny > 0.75) + 12 * (ny < -0.6)
     tA = ap.cell_tint([s, band.astype(np.float32)], [FRAMES, np.arange(0.5, 24, 1.0)], 3)
@@ -373,13 +396,23 @@ def paint_body(M, texel, S, T):
     n1 = ap.noise3(P, 0.9, 1, 2); n2 = ap.noise3(P, 0.11, 2, 2); n3 = ap.noise3(P, 0.025, 3, 1)
     sh = sheen(P, N)
     col = col * (1 + 0.030 * tA + 0.028 * n1 + 0.014 * n2 + 0.006 * n3 - 0.05 * sh)[..., None]
-    rough = rough + 0.035 * tB + 0.03 * n1 - 0.02 * n2 + 0.22 * sh
+    rough = rough + 0.035 * tB + 0.03 * n1 - 0.02 * n2 + (0.22 - 0.12 * lsurf) * sh
     # ---- markings
     ink = np.where(port, S['inkP'](s, y), S['inkS'](s, y)) * sidew * (fus | fin | (ID == 4))
-    dkl = (y < -0.27).astype(np.float32)           # the lettering low on the aft fuselage is darker than its paint
-    col = tone(col, INK, 0.93 * ink * (1 - dkl)); col = tone(col, DKINK, 0.75 * ink * dkl); rough = rough - 0.07 * ink
+    lowl = (y < -0.27).astype(np.float32)          # the lettering low on the aft fuselage: paler ink, half strength, on the dark paint
+    col = tone(col, INK, ink * (0.93 * (1 - lowl) + LOWINK * lowl)); rough = rough - 0.07 * ink
     dk = S['dk'](s, y) * sidew * ((ID == 1) | (ID == 4))
     col = tone(col, DKINK, dk); rough = rough - 0.16 * dk
+    # ---- the flush intake on the nose flank: a recess whose floor ramps down from a lit lower lip to a shadowed slot
+    # at the top (colour for what the engine's shading cannot resolve at this size, the step in the normal map)
+    vt = S['vent'](s, y) * sidew * (ID == 1)
+    vf = np.clip((y - VENT[0][1]) / (VENT[2][1] - VENT[0][1]), 0, 1).astype(np.float32)
+    vcol = lin((80, 86, 94)) + (lin((10, 11, 13)) - lin((80, 86, 94))) * smoothstep(0.32, 0.82, vf)[..., None]
+    col = col + (vcol - col) * vt[..., None]; rough = rough + 0.10 * vt
+    dy = VENT[0][1] - y
+    lip = smoothstep(-0.0005, 0.0015, dy) * smoothstep(0.0085, 0.0040, dy) * smoothstep(VENT[0][0] + 0.005, VENT[0][0] + 0.02, s) * smoothstep(VENT[1][0] - 0.005, VENT[1][0] - 0.02, s) * sidew * (ID == 1)
+    col = col * (1 + 0.28 * lip)[..., None]; rough = rough - 0.08 * lip
+    vdepth = (0.0016 + 0.0060 * vf) * vt - 0.00035 * lip
     # ---- panel breaks, fasteners, sealant
     fr = np.min(np.abs(s[..., None] - np.asarray(FRAMES, np.float32)), -1)
     frame = ap.groove(fr, 0.0022) * (fus | box) * (s < 9.6)
@@ -389,9 +422,9 @@ def paint_body(M, texel, S, T):
     seal = np.maximum(sealf * 0.8, S['seal'](s, y) * sidew * 2.2); seal = np.clip(seal, 0, 1) * (1 - g)
     radome = (s < 0.62) & fus
     col = col * (1 - 0.035 * radome)[..., None]; rough = rough - 0.05 * radome
-    col = col * (1 - 0.5 * g - 0.10 * rv + 0.022 * seal)[..., None]
+    col = col * (1 - 0.5 * g - 0.22 * rv + 0.022 * seal)[..., None]
     rough = rough + 0.14 * g - 0.04 * rv - 0.055 * seal
-    H = -0.0006 * g - 0.00018 * rv + 0.00010 * seal + 0.00006 * ink
+    H = -0.0006 * g - 0.00018 * rv + 0.00010 * seal + 0.00006 * ink - vdepth
     # ---- exhaust: heat-darkened paint round the nozzle, the duct
     hot = smoothstep(9.45, 9.86, s) * fus
     col = col * (1 - 0.45 * hot)[..., None]; rough = rough - 0.08 * hot
@@ -409,8 +442,10 @@ def paint_wings(M, texel, S, T):
     dark = pick('dark')
     ws = wing | (ID == 11)
     dark = dark * ws
-    col = np.broadcast_to(lin(PALE), P.shape).copy(); col = tone(col, LOW, (~up).astype(np.float32)); col = tone(col, DARK, dark)
-    rough = 0.60 - 0.04 * dark
+    col = np.broadcast_to(lin(PALE), P.shape).copy(); col = tone(col, LOW, (~up).astype(np.float32))
+    col = tone(col, WSPL_T, dark * up); col = tone(col, WSPL_B, dark * ~up)      # the soft mid-grey patches, strips and tips
+    dn = (~up).astype(np.float32)
+    rough = 0.60 - 0.12 * dn - 0.04 * dark
     cw = (s - G.wing_le(z)) / np.maximum(G.wing_te(z) - G.wing_le(z), 0.1); cs = (s - G.stab_le(z)) / np.maximum(G.stab_te(z) - G.stab_le(z), 0.1)
     tW = ap.cell_tint([z, cw, up.astype(np.float32)], [WING_RIBS, WING_SPARS, [0.5]], 21)
     tS = ap.cell_tint([z, cs, up.astype(np.float32)], [STAB_RIBS, [0.15, 0.55], [0.5]], 22)
@@ -419,9 +454,9 @@ def paint_wings(M, texel, S, T):
     n1 = ap.noise3(P, 0.8, 4, 2); n2 = ap.noise3(P, 0.10, 5, 2); n3 = ap.noise3(P, 0.02, 6, 1)
     sh = sheen(P, N)
     col = col * (1 + 0.026 * tA + 0.026 * n1 + 0.013 * n2 + 0.006 * n3 - 0.05 * sh)[..., None]
-    rough = rough + 0.035 * tR + 0.03 * n1 - 0.02 * n2 + 0.22 * sh
+    rough = rough + 0.035 * tR + 0.03 * n1 - 0.02 * n2 + (0.22 - 0.12 * dn) * sh
     g = pick('line') * ws; rv = pick('riv') * ws; seal = np.clip(pick('seal') * 2.2, 0, 1) * (1 - g) * ws
-    col = col * (1 - 0.5 * g - 0.10 * rv + 0.022 * seal)[..., None]
+    col = col * (1 - 0.5 * g - 0.18 * rv + 0.022 * seal)[..., None]
     rough = rough + 0.14 * g - 0.04 * rv - 0.055 * seal
     H = -0.0006 * g - 0.00018 * rv + 0.00010 * seal
     metal = np.zeros_like(rough)
@@ -441,8 +476,8 @@ def paint_wings(M, texel, S, T):
     rough = rough + 0.12 * g + 0.1 * dt; H = H - 0.0005 * g - 0.0009 * dt
     scuff = np.clip(ap.noise3(np.stack([P[..., 0] * 0.25, P[..., 1] * 3, zs * 3], -1), 0.03, 40, 3) - 0.15, 0, 1) * rail
     col = col * (1 - 0.10 * scuff)[..., None]; rough = rough + 0.08 * scuff
-    under = rail & (ny < -0.6)
-    col = np.where(under[..., None], col * 0.55, col); metal = np.where(under, 0.5, metal); rough = np.where(under, 0.4, rough)
+    under = rail & (ny < -0.6)              # the beam's underside is painted like its flanks (the empty rail in the post-launch photograph)
+    col = np.where(under[..., None], col * 0.9, col); metal = np.where(under, 0.0, metal); rough = np.where(under, 0.5, rough)
     # ---- pylon: its seam to the wing and a fastener line
     gp = ap.groove(np.abs(y - (RAIL_Y + 0.052)), 0.002) * pyl
     col = col * (1 - 0.4 * gp)[..., None]; H = H - 0.0005 * gp
@@ -489,8 +524,8 @@ def paint_misc(M, texel, S, T):
     n1 = ap.noise3(P, 0.35, 31, 2); n2 = ap.noise3(P, 0.05, 32, 2); n3 = ap.noise3(P, 0.012, 33, 1)
     table = {  # pid: colour, roughness, metal
         'pylon': (BODY, 0.56, 0.0), 'tyre': ((24, 24, 25), 0.88, 0.0), 'hub': ((150, 153, 156), 0.46, 0.3), 'strut': ((214, 215, 212), 0.42, 0.0),
-        'chrome': ((232, 234, 236), 0.10, 1.0), 'dark': ((9, 9, 10), 0.9, 0.0), 'door': (KEEL, 0.57, 0.0), 'doorin': ((198, 200, 192), 0.55, 0.0),
-        'bay': ((186, 189, 184), 0.62, 0.0),
+        'chrome': ((232, 234, 236), 0.10, 1.0), 'dark': ((9, 9, 10), 0.9, 0.0), 'door': (KEEL, 0.57, 0.0), 'doorin': ((150, 153, 149), 0.58, 0.0),
+        'bay': ((112, 116, 113), 0.66, 0.0),     # the bays read as a dark mid-grey cavity in the photographs, not bright primer
         'steel': ((128, 131, 134), 0.38, 0.85), 'blade': ((23, 24, 26), 0.48, 0.1), 'probe': ((30, 31, 33), 0.42, 0.4),
         'shroud': ((50, 50, 51), 0.42, 0.85), 'pipe': ((15, 14, 14), 0.78, 0.5), 'cone': ((34, 32, 31), 0.55, 0.8),
         'lens_r': ((40, 8, 8), 0.2, 0.0), 'lens_g': ((8, 36, 14), 0.2, 0.0), 'lens_w': ((40, 40, 38), 0.2, 0.0)}
@@ -523,7 +558,7 @@ def paint_misc(M, texel, S, T):
     # ---- bays: primer, grime gathering in the corners and along the frames
     bay = ID == PID['bay']
     gb = np.clip(ap.noise3(P, 0.06, 43, 3) * 0.5 + 0.5, 0, 1)
-    col = np.where(bay[..., None], col * (1 - (0.35 * np.clip(1 - M['AO'], 0, 1) + 0.06 * gb))[..., None], col)
+    col = np.where(bay[..., None], col * (1 - (0.55 * np.clip(1 - M['AO'], 0, 1) + 0.08 * gb))[..., None], col)
     rough = np.where(bay, rough + 0.06 * gb, rough)
     # ---- nozzle: heat tint on the shroud, soot inside
     sh = ID == PID['shroud']
@@ -576,16 +611,17 @@ def paint_export():
     misc = ap.join([obj['C'], obj['C_R'], obj['C_L']], 'misc')
     gmesh = ap.join([obj['G'], obj['G_R'], obj['G_L']], 'gear_mesh')
     tyres = split_pid(gmesh, PID['tyre'], 'tyres_own')      # the film swaps these for the ramp tyres (assets/fury/tyres.glb)
-    out = [body, wings, misc, gmesh, tyres]
+    pylons = split_pid(wings, PID['pylon'], 'pylons')       # their own node, so the film can set their shadow receiving apart
+    out = [body, wings, misc, gmesh, tyres, pylons]
     gear = bpy.data.objects.new('gear', None); sc.collection.objects.link(gear); gmesh.parent = gear; tyres.parent = gear; out.append(gear)
     for k, p in G.NAV.items():
         e = bpy.data.objects.new('nav_' + k, None); sc.collection.objects.link(e); e.location = (p[0], -p[2], p[1]); out.append(e)
-    for o in (body, wings, misc, gmesh, tyres):
+    for o in (body, wings, misc, gmesh, tyres, pylons):
         d.log(d.stats(o))
     path = d.out_path('fury', 'fury.glb')
     d.export_glb(path, out, quality=int(os.environ.get('FURY_Q', '92')))
     if 'clean' in ARGS:     # look-development variant without the landing gear (assets/_test is not committed)
-        d.export_glb(d.out_path('_test', 'fury_clean.glb'), [body, wings, misc], quality=85)
+        d.export_glb(d.out_path('_test', 'fury_clean.glb'), [body, wings, pylons, misc], quality=85)
     if 'preview' in ARGS:
         d.preview(os.path.join(OUT, 'preview.png'), target=(0.3, 0, 0), cam=(3.0, 16.0, 1.2), lens=70, size=(1280, 540), sun_el=40, sun_az=200)
 

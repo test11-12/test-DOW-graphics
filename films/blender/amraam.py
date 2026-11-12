@@ -97,11 +97,18 @@ def surface(sec, edge, notch=0.0, t_abs=0.011):
 
 
 def shoe(sec):
-    """Root fitting of a fixed wing: a low strap along the chord, its ends chamfered."""
-    c0, c1 = sec['le0'] + 0.012, sec['te0'] - 0.008
+    """Root fitting of a fixed wing: one low machined strap along the chord, a trapezoid in section with sloped
+    sides, its ends chamfered; it sits about 3 mm proud of the skin (bevelled when it becomes an object)."""
+    c0, c1 = sec['le0'] + 0.010, sec['te0'] - 0.006
+    yb, yt, wb, wt, ch = R - 0.0020, R + 0.0030, 0.0150, 0.0105, 0.0070
+    bot = [(Xm(c0), yb, -wb), (Xm(c1), yb, -wb), (Xm(c1), yb, wb), (Xm(c0), yb, wb)]
+    top = [(Xm(c0 + ch), yt, -wt), (Xm(c1 - ch), yt, -wt), (Xm(c1 - ch), yt, wt), (Xm(c0 + ch), yt, wt)]
+    c = np.mean(bot + top, 0)
     m = Mesh()
-    for k, (a, b, h) in enumerate(((c0, c1, 0.0045), (c0 + 0.006, c1 - 0.004, 0.0062))):
-        m.add(ap.box((Xm((a + b) / 2), R + h / 2 - 0.001, 0), (b - a, h, 0.030 - 0.010 * k)))
+    m.poly(top, out=(0, 1, 0)); m.poly(bot, out=(0, -1, 0))
+    for i in range(4):
+        q = [bot[i], bot[(i + 1) % 4], top[(i + 1) % 4], top[i]]
+        m.poly(q, out=np.mean(q, 0) - c)
     return m
 
 
@@ -155,7 +162,7 @@ def build():
         a = math.pi / 4 + k * math.pi / 2
         part(f'wing{k}', spun(wing, a), 'wing', bake=(k == 0), smooth=40)
         part(f'fin{k}', spun(fin, a), 'fin', bake=(k == 0), smooth=40)
-        part(f'shoe{k}', spun(shoe(WING), a), 'shoe', bake=(k == 0), bevel=(0.0012, 2), smooth=30, uvk=1.5)
+        part(f'shoe{k}', spun(shoe(WING), a), 'shoe', bake=(k == 0), bevel=(0.0014, 3, 20), smooth=30, uvk=1.5)
     hg = Mesh()
     for s in HOOKS:
         hg.add(hook(s))
@@ -192,7 +199,7 @@ def build():
 # ================================================================ paint
 BODY, RADOME, TIPC = (206, 209, 210), (229, 228, 220), (92, 94, 96)
 YELLOW, BROWN, INK = (204, 160, 40), (92, 66, 46), (44, 46, 50)
-HOOKC, PLUGC = (60, 62, 64), (150, 128, 74)
+HOOKC, PLUGC = (104, 106, 108), (150, 128, 74)       # hooks: bare steel, rubbed bright where the rail bears
 V = (-0.02, 3.68, -0.30, 0.30); PPM = 2600      # unrolled body: x = s, y = arc length round the body from the top
 
 
@@ -237,11 +244,6 @@ def layers():
         c.rrect(s0, a0, s1, a1, 0.006, 0.0010)
         for q in ((s0 + 0.009, a0 + 0.008), (s1 - 0.009, a0 + 0.008), (s0 + 0.009, a1 - 0.008), (s1 - 0.009, a1 - 0.008), ((s0 + s1) / 2, a0 + 0.008), ((s0 + s1) / 2, a1 - 0.008)):
             r.dot(q[0], q[1], 0.0021); rr.ring(q[0], q[1], 0.0024, 0.0006)
-    for k in range(4):            # screws along the wing root straps
-        a = (math.pi / 4 + k * math.pi / 2); a = (a if a < math.pi else a - 2 * math.pi) * R
-        for sg in (-1, 1):
-            r.dots((WING['le0'] + 0.03, a + sg * 0.0115), (WING['te0'] - 0.025, a + sg * 0.0115), 0.045, 0.0019)
-            rr.dots((WING['le0'] + 0.03, a + sg * 0.0115), (WING['te0'] - 0.025, a + sg * 0.0115), 0.045, 0.0022)
     for s in HOOKS:               # screws of the hook saddles (on the skin either side of the saddle)
         for sg in (-1, 1):
             r.dot(s + sg * 0.046, 0.0, 0.0024); rr.ring(s + sg * 0.046, 0.0, 0.0028, 0.0007)
@@ -318,9 +320,19 @@ def paint(M, texel, Lr):
         col = np.where(w[..., None], cc, col)
         rough = np.where(w, 0.44 - 0.08 * edge, rough)
         if k == 'shoe':
-            H = np.where(w, 0.0, H)
+            # two rows of countersunk screws along the top of the strap, one each side of the wing
+            wa = np.round((ang - math.pi / 4) / (math.pi / 2)) * (math.pi / 2) + math.pi / 4
+            lat = (ang - wa) * rad
+            sd = np.full(ID.shape, 1.0, np.float32)
+            for q in np.arange(WING['le0'] + 0.028, WING['te0'] - 0.018, 0.046):
+                for sg in (-1, 1):
+                    sd = np.minimum(sd, np.hypot(s - q, lat - sg * 0.0068))
+            head = smoothstep(0.0021, 0.0015, sd); slot = ap.groove(np.abs(sd - 0.0019), 0.0004)
+            col = np.where(w[..., None], col * (1 - 0.08 * head - 0.40 * slot)[..., None], col)
+            rough = np.where(w, rough - 0.05 * head + 0.05 * slot, rough)
+            H = np.where(w, -0.00022 * slot + 0.00004 * head, H)
         else:
-            root = ap.groove(np.abs(rad - (R + 0.0062)), 0.0012) * (k == 'wing')
+            root = ap.groove(np.abs(rad - (R + 0.0034)), 0.0010) * (k == 'wing')
             col = np.where(w[..., None], col * (1 - 0.3 * root)[..., None], col)
             H = np.where(w, -0.0002 * root, H)
     # ---- hooks, umbilical, base
@@ -343,8 +355,18 @@ def paint(M, texel, Lr):
     um = ID == PID['umb']
     face = um & (y > R + 0.0080) & (np.abs(z) < 0.019)
     col = np.where(face[..., None], lin((70, 72, 74)), col); metal = np.where(face, 0.6, metal)
-    # ---- the paint's own variation
+    # ---- handling: faint soiling and rubbed sheen where hands and the loader touch it, round the hooks on top and
+    # along the wing roots (a few per cent: a clean round, not a dirty one)
     paintd = body | (ID == PID['wing']) | (ID == PID['fin']) | (ID == PID['shoe']) | um
+    top = smoothstep(0.55, 0.92, np.cos(ang)) * body
+    nearhook = np.zeros(ID.shape, np.float32)
+    for q in HOOKS:
+        nearhook = np.maximum(nearhook, smoothstep(0.11, 0.04, np.abs(s - q)))
+    wroot = smoothstep(0.022, 0.006, rad - R) * smoothstep(WING['le0'] - 0.05, WING['le0'] + 0.02, s) * smoothstep(WING['te0'] + 0.06, WING['te0'], s) * (body | (ID == PID['shoe']) | (ID == PID['wing']))
+    smudge = np.clip(ap.noise3(np.stack([P[..., 0] * 1.4, P[..., 1] * 3, P[..., 2] * 3], -1), 0.012, 72, 3) * 0.7 + 0.45, 0, 1)
+    soil = np.clip(top * nearhook * 0.8 + wroot * 0.7, 0, 1) * smudge * paintd
+    col = col * (1 - 0.055 * soil)[..., None]; rough = rough - 0.06 * soil
+    # ---- the paint's own variation
     col = col * (1 + (0.014 * n1 + 0.008 * n2 + 0.006 * n3 - 0.035 * sh) * paintd)[..., None]
     rough = rough + (0.03 * n1 - 0.02 * n2 + 0.16 * sh) * paintd
     occ = np.clip(1 - AO, 0, 1)

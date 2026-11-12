@@ -163,9 +163,44 @@ def box_ring(q):
     return [[X(st), yt, wt], [X(sm), yb + c, wb + 0.045], [X(s), yb, wb], [X(s), yb, -wb], [X(sm), yb + c, -wb - 0.045], [X(st), yt, -wt]]
 
 
+# gear bays, open while the gear is down: the main bays in the keel-box sides (their doors hang from the lower edge),
+# the nose bay in its floor between the two nose doors
+MAIN_BAY = (5.20, 6.34)          # s range of the opening in each side
+NOSE_BAY = (3.22, 4.02, 0.105)   # s range and half width of the slot in the floor
+BAY_LIP = 0.12                   # the opening starts this fraction of the way down the side from the top edge
+MAIN_BAY_Z = 0.24                # inner wall of a main bay (|z|)
+NOSE_BAY_TOP = CH - 0.24         # nose-bay ceiling
+
+
+def box_q(s):
+    """Keel-box section parameters at station s, interpolated between the rows of BOX."""
+    ss = [r[0] for r in BOX]
+    return tuple([s] + [float(np.interp(s, ss, [r[k] for r in BOX])) for k in (1, 2, 3, 4)])
+
+
+def box_ring10(q):
+    """The section with extra points: the lip below the top edge (where a main bay opens) and the edges of the
+    nose-bay slot in the floor. Order: top+, lip+, mid+, floor+, slot+, slot-, floor-, mid-, lip-, top-."""
+    tp, md, bt, bm, mm, tm = (np.asarray(p, float) for p in box_ring(q))
+    lip = lambda a, b: a + (b - a) * BAY_LIP
+    hw = NOSE_BAY[2]
+    return [tp, lip(tp, md), md, bt, np.array([bt[0], bt[1], hw]), np.array([bt[0], bt[1], -hw]), bm, mm, lip(tm, mm), tm]
+
+
 def box_parts():
-    rings = [box_ring(q) for q in BOX]
-    body = ap.ring_loft(rings, closed=False, caps=(False, False))        # open on top: that face is inside the fuselage
+    st = sorted(set([r[0] for r in BOX] + [MAIN_BAY[0], MAIN_BAY[1], NOSE_BAY[0], NOSE_BAY[1]]))
+    rings = np.asarray([box_ring10(box_q(s)) for s in st])
+    body = Mesh().grid(rings)                  # open on top: that face is inside the fuselage
+    nv = rings.shape[1]
+    keep_f, keep_uv = [], []
+    for k, (f, u) in enumerate(zip(body.f, body.uv)):
+        i, j = divmod(k, nv - 1)
+        main = MAIN_BAY[0] - 1e-6 <= st[i] and st[i + 1] <= MAIN_BAY[1] + 1e-6 and j in (1, 7)
+        nose = NOSE_BAY[0] - 1e-6 <= st[i] and st[i + 1] <= NOSE_BAY[1] + 1e-6 and j == 4
+        if not (main or nose):
+            keep_f.append(f); keep_uv.append(u)
+    body.f, body.uv = keep_f, keep_uv
+    rings = [box_ring(q) for q in BOX]         # the six-point sections for the intake lip and duct
 
     def inset(ring, k, dx=0.0):
         r = np.asarray(ring, float); cy = r[:, 1].mean()
@@ -286,7 +321,7 @@ def gear_parts():
         put('strut', ap.plate([[x - 0.005, ya + 0.20, 0], [x - 0.085, ya + 0.275, 0], [x - 0.075, ya + 0.290, 0], [x + 0.0, ya + 0.225, 0]], [0, 0, 1], 0.012).moved(dz=sg * 0.022))
         put('strut', ap.plate([[x - 0.085, ya + 0.275, 0], [x - 0.005, ya + 0.350, 0], [x + 0.0, ya + 0.330, 0], [x - 0.072, ya + 0.268, 0]], [0, 0, 1], 0.012).moved(dz=sg * 0.022))
     put('steel', ap.rod((x - 0.08, ya + 0.279, -0.032), (x - 0.08, ya + 0.279, 0.032), 0.008, 8))
-    put('strut', ap.rod((x + 0.03, ya + 0.40, 0), (x + 0.44, top + 0.04, 0), 0.016, 10))                     # drag brace
+    put('strut', ap.rod((x + 0.03, ya + 0.40, 0), (x + 0.36, top + 0.09, 0), 0.016, 10))                     # drag brace, up into the bay
     put('steel', ap.rod((x + 0.07, ya + 0.43, 0), (x + 0.105, ya + 0.43, 0), 0.030, 14, 0.034))              # landing light
     put('chrome', ap.rod((x + 0.105, ya + 0.43, 0), (x + 0.108, ya + 0.43, 0), 0.031, 14))
     put('steel', ap.rod((x + 0.045, ya + 0.20, 0.05), (x + 0.05, ya + 0.55, 0.035), 0.004, 6))              # brake / steering line
@@ -298,13 +333,20 @@ def gear_parts():
         put('doorin', ap.plate(inner, n, 0.010).moved(dy=-0.004 * n[1], dz=-sg * 0.009))
         for sx in (3.40, 3.84):
             put('steel', ap.rod((X(sx), top + 0.02, sg * 0.08), (X(sx), top - 0.10, sg * 0.127), 0.006, 6))
-    # nose-gear bay: ceiling, frames across it, two longerons and a pair of hydraulic lines
-    put('bay', ap.box((X(3.62), top + 0.004, 0), (0.98, 0.006, 0.215)))
-    for sx in (3.27, 3.50, 3.74, 3.97):
-        put('bay', ap.box((X(sx), top - 0.014, 0), (0.010, 0.034, 0.205)))
+    # nose-gear bay, open in the keel-box floor between the doors: ceiling, side and end walls, frames across the
+    # ceiling, two longerons and a pair of hydraulic lines
+    s0, s1, hw = NOSE_BAY; yc = NOSE_BAY_TOP; th = 0.008
+    yb = lambda s: box_q(s)[1]
+    put('bay', ap.plate([[X(s0), yc, hw], [X(s1), yc, hw], [X(s1), yc, -hw], [X(s0), yc, -hw]], [0, -1, 0], th))
     for sg in (1, -1):
-        put('bay', ap.box((X(3.62), top - 0.010, sg * 0.094), (0.96, 0.026, 0.010)))
-        put('steel', ap.rod((X(3.16), top - 0.024, sg * 0.055), (X(4.06), top - 0.024, sg * 0.055), 0.006, 8))
+        put('bay', ap.plate([[X(s0), yc, sg * hw], [X(s1), yc, sg * hw], [X(s1), yb(s1), sg * hw], [X(s0), yb(s0), sg * hw]], [0, 0, -sg], th))
+    for sx, n in ((s0, -1), (s1, 1)):
+        put('bay', ap.plate([[X(sx), yc, hw], [X(sx), yc, -hw], [X(sx), yb(sx), -hw], [X(sx), yb(sx), hw]], [n, 0, 0], th))
+    for sx in (3.40, 3.62, 3.84):
+        put('bay', ap.box((X(sx), yc - 0.020, 0), (0.012, 0.032, 2 * hw - 0.01)))
+    for sg in (1, -1):
+        put('bay', ap.box((X((s0 + s1) / 2), yc - 0.014, sg * (hw - 0.014)), (s1 - s0 - 0.02, 0.022, 0.012)))
+        put('steel', ap.rod((X(s0 + 0.01), yc - 0.030, sg * 0.055), (X(s1 - 0.01), yc - 0.030, sg * 0.055), 0.006, 8))
     # ---- main gear (starboard; mirrored): trailing arm out of the keel box, shock strut, wheel outboard
     x, z, r, w = X(MAIN_GEAR['s']), MAIN_GEAR['z'], MAIN_GEAR['r'], MAIN_GEAR['w']; ya = GROUND + r; zi = 0.47; yt = CH - 0.37
     ty, hb, dk = wheel((x, ya, z), r, w); put('tyre', ty, 1); put('hub', hb, 1); put('dark', dk, 1)
@@ -324,17 +366,28 @@ def gear_parts():
     put('doorin', ap.plate(inner, n, 0.012).moved(dy=-0.005 * n[1], dz=-0.010), 1)
     for sx in (5.42, 6.12):
         put('steel', ap.rod((X(sx), yt + 0.01, 0.42), (X(sx), yt - 0.20, 0.50), 0.007, 6), 1)
-    # main-gear bay: the inner wall, frames standing off it, a hydraulic line along it
-    Rw = ap.rot_x(0.26); nw = Rw @ np.array([0.0, 0.0, 1.0])
-    put('bay', ap.box((X(5.77), CH - 0.255, 0.4775), (1.24, 0.30, 0.006), Rw), 1)
-    for sx in (5.27, 5.55, 5.83, 6.10):
-        c = np.array([X(sx), CH - 0.255, 0.4775]) + nw * 0.020
-        put('bay', ap.box(c, (0.010, 0.29, 0.040), Rw), 1)
-    for dy in (-0.085, 0.07):
-        c = np.array([X(5.77), CH - 0.255 + dy, 0.4775]) + nw * 0.012
-        put('bay', ap.box(c, (1.20, 0.022, 0.024), Rw), 1)
-    a = np.array([X(5.20), CH - 0.255 + 0.02, 0.4775]) + nw * 0.034; b = np.array([X(6.30), CH - 0.255 + 0.02, 0.4775]) + nw * 0.034
-    put('steel', ap.rod(a, b, 0.0065, 8), 1)
+    # main-gear bay, open in the keel-box side above the door: a cavity back to an inner wall, with ceiling, floor
+    # and end walls, frames and longerons on the inner wall, lines along the ceiling and the retraction jack
+    m0, m1 = MAIN_BAY; zi_ = MAIN_BAY_Z
+    def sec(s):     # (y, z) of the opening's top (the lip) and bottom (the side's lower break) at station s
+        r = box_ring10(box_q(s)); return r[1][1], r[1][2], r[2][1], r[2][2]
+    (ya0, za0, yb0, zb0), (ya1, za1, yb1, zb1) = sec(m0), sec(m1)
+    put('bay', ap.plate([[X(m0), ya0, zi_], [X(m1), ya1, zi_], [X(m1), ya1, za1], [X(m0), ya0, za0]], [0, -1, 0], th), 1)          # ceiling
+    put('bay', ap.plate([[X(m0), yb0, zi_], [X(m1), yb1, zi_], [X(m1), yb1, zb1], [X(m0), yb0, zb0]], [0, 1, 0], th), 1)           # floor
+    put('bay', ap.plate([[X(m0), ya0, zi_], [X(m1), ya1, zi_], [X(m1), yb1, zi_], [X(m0), yb0, zi_]], [0, 0, 1], th), 1)           # inner wall
+    for sx, (yA, zA, yB, zB), n in ((m0, sec(m0), -1), (m1, sec(m1), 1)):
+        put('bay', ap.plate([[X(sx), yA, zA], [X(sx), yA, zi_], [X(sx), yB, zi_], [X(sx), yB, zB]], [n, 0, 0], th), 1)
+    ym = (ya0 + yb0) / 2
+    for sx in (5.46, 5.76, 6.06):
+        put('bay', ap.box((X(sx), ym, zi_ + 0.024), (0.012, (yb0 - ya0) * -0.94, 0.044)), 1)
+    for yy in (ya0 - 0.07, yb0 + 0.06):
+        put('bay', ap.box((X((m0 + m1) / 2), yy, zi_ + 0.014), (m1 - m0 - 0.02, 0.020, 0.024)), 1)
+    for zz, rr in ((0.30, 0.0065), (0.335, 0.005), (0.36, 0.004)):
+        put('steel', ap.rod((X(m0 + 0.01), ya0 - 0.018, zz), (X(m1 - 0.01), ya1 - 0.018, zz), rr, 8), 1)
+    for sx, hh in ((5.62, 0.05), (6.18, 0.04)):      # valve blocks on the inner wall
+        put('steel', ap.box((X(sx), ym + 0.03, zi_ + 0.025), (0.07, hh, 0.035)), 1)
+    jt, jb = np.array([X(5.95), ya0 - 0.03, 0.34]), np.array([X(5.47), yb0 + 0.02, 0.45])      # retraction jack
+    put('strut', ap.rod(jt, jt + (jb - jt) * 0.62, 0.024, 14), 1); put('chrome', ap.rod(jt + (jb - jt) * 0.60, jb, 0.013, 12), 1)
     return out
 
 
@@ -361,7 +414,9 @@ def antenna_parts():
 
 
 NAV = dict(green=(X(WING['le1'] + 0.17), CH + 0.004, WING['z1'] - 0.012), red=(X(WING['le1'] + 0.17), CH + 0.004, -(WING['z1'] - 0.012)),
-           tail=(X(fin_te(1.70)) - 0.014, 1.70, 0.0))
+           tail=(X(fin_te(1.70)) - 0.014, 1.70, 0.0),
+           # a white light beside each coloured one on the tip (the post-launch photograph shows red and white side by side)
+           wg=(X(WING['le1'] + 0.245), CH + 0.004, WING['z1'] - 0.012), wr=(X(WING['le1'] + 0.245), CH + 0.004, -(WING['z1'] - 0.012)))
 
 
 def lens(p, r=0.022):

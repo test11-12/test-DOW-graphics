@@ -32,15 +32,17 @@ const prep = (root, envIntensity) => root.traverse(o => {
 });
 
 // The aircraft. root.userData: gear (the landing-gear group), navPos ([starboard green, port red] wing-tip
-// light positions, body frame), setGear(down). The model's own plain tyres give way to the photoscanned ramp tyres
-// (assets/fury/tyres.glb: ribbed tread, dusty sidewalls, flattened contact patch) when that asset is packed.
-export async function buildFury(pipe) {
+// light positions, body frame), navWhite ([starboard, port] the white lights beside them), tailLight, setGear(down).
+// The model's own plain tyres give way to the photoscanned ramp tyres (assets/fury/tyres.glb: ribbed tread, dusty
+// sidewalls, flattened contact patch) when that asset is packed, unless opts.rampTyres is false (the film's
+// 'tyres' dev switch). The pylons are their own node ('pylons').
+export async function buildFury(pipe, opts = {}) {
   const { root: scene } = await loadGLB('fury/fury.glb', pipe, { aniso: 16 });
   const root = new THREE.Group(); root.name = 'fury'; root.add(scene);
   prep(root);
   const gear = scene.getObjectByName('gear');
   const own = scene.getObjectByName('tyres_own');
-  if (own && hasAsset('fury/tyres.glb')) {
+  if (own && opts.rampTyres !== false && hasAsset('fury/tyres.glb')) {
     const { root: t } = await loadGLB('fury/tyres.glb', pipe, { aniso: 16 });
     const proto = {}; t.traverse(o => { if (o.isMesh) proto[o.name] = o; });
     if (proto.tyre_main && proto.tyre_nose) {
@@ -52,9 +54,9 @@ export async function buildFury(pipe) {
     }
   }
   const at = n => { const o = scene.getObjectByName(n); return o ? o.position.clone() : new THREE.Vector3(); };
-  const navPos = [at('nav_green'), at('nav_red')];
+  const navPos = [at('nav_green'), at('nav_red')], navWhite = [at('nav_wg'), at('nav_wr')];
   // the retracted gear leaves closed doors: nothing else on the model moves
-  root.userData = { gear, navPos, tailLight: at('nav_tail'), setGear(down) { gear.visible = !!down; } };
+  root.userData = { gear, navPos, navWhite, tailLight: at('nav_tail'), setGear(down) { gear.visible = !!down; } };
   return root;
 }
 

@@ -103,11 +103,13 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   breaks, fasteners and sealant are drawn with Pillow in metres in side elevation and plan, where the
   reference photographs show them, and projected onto the baked position of every texel.
 - `blender/fury.py` (+ `fury_geo.py`) builds `assets/fury/fury.glb`, the YFQ-44A (nodes `body`, `wings`,
-  `misc`, `gear` with its own plain `tyres_own`, and the `nav_*` light positions); `blender/amraam.py` builds
-  `assets/fury/amraam.glb` (nodes `aim120`, `motor_glow`; stations measured on the released photographs).
-  `fury geo` / `fury paint` run the Cycles bakes and the repaint separately. `src/fury_assets.js` loads both
-  behind the interface of `src/fury_model.js` (film 2 imports it) and, when `assets/fury/tyres.glb` is packed,
-  puts the ramp tyres from `blender/fury_ramp.py` on the gear in place of `tyres_own`.
+  `pylons`, `misc`, `gear` with its own plain `tyres_own`, and the `nav_*` light positions: `green`, `red`, the
+  white `wg` / `wr` beside them, `tail`); `blender/amraam.py` builds `assets/fury/amraam.glb` (nodes `aim120`,
+  `motor_glow`; stations measured on the released photographs). `fury geo` / `fury paint [A|B|C]` run the Cycles
+  bakes and the repaint separately. `src/fury_assets.js` loads both behind the interface of `src/fury_model.js`
+  (film 2 imports it) and, when `assets/fury/tyres.glb` is packed, puts the ramp tyres from `blender/fury_ramp.py`
+  on the gear in place of `tyres_own` (`buildFury(pipe, { rampTyres: false })` keeps the model's own; film 2's
+  `?off=tyres`).
 - Conventions: metres; vehicles modelled nose along +X, up +Z, starboard along -Y (the engine's +x forward,
   +y up, +z right after export); per-material maps: base colour (sRGB), ORM (R occlusion, G roughness,
   B metal), OpenGL normal.
