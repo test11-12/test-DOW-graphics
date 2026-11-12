@@ -8,6 +8,11 @@
 // Here the sun visibility scales the direct light (static shadows at every range, where the engine's single
 // shadow map only covers the shot's focus), and rock materials (extras: dow = 'rock') get the shoreline:
 // wet dark stone and a weed film at the water, a salt-pale splash zone, dry bleached tops.
+// Detail no atlas can hold is drawn here, filtered to the pixel so it never shimmers: the box-profile ribs of the
+// shed cladding and roofs (meshes sheds_clad, sheds_roof), the slats of the roller shutters (sheds_shutter), the
+// fastener rows and the sheet-to-sheet tone of the cladding, window rows on the low buildings of the base. Thin
+// tubes and bars (rails, posts, ropes, downpipes) are found at load time and widened to about a pixel at any range,
+// so they neither break up nor crawl.
 import * as THREE from 'three';
 import { loadGLB, hasAsset } from '../engine/assets.js';
 
@@ -19,6 +24,7 @@ export const PORT = {
   hits: [[-2.2, 41.2], [8.4, 22.5], [-20.2, 26]],
 };
 
+const DEV = new Set((typeof location !== 'undefined' ? new URLSearchParams(location.search).get('portdev') || '' : '').split(','));   // look development: ?portdev=noao,nothin
 const FILES = ['port_rocks', 'port_rocks_near', 'port_pier', 'port_gantry', 'port_sub', 'port_yard', 'port_sheds', 'port_ground'];
 const NEAR_LOD = 150;   // m: stones within this range of the camera use the detailed version
 
@@ -28,6 +34,20 @@ varying vec3 vDowW;
 #ifdef DOW_VLIGHT
 attribute float _ao; attribute float _sun;
 varying vec2 vDowL;
+#endif
+#ifdef DOW_THIN
+attribute vec4 dowThin; uniform vec2 uDowRes;
+#endif
+`;
+// thin parts: grow them so they are never narrower than about a pixel (dowThin: xyz the even-growth direction in
+// world space, w the part's half-thickness in metres; see markThin)
+const VERT_THIN = /* glsl */`
+#ifdef DOW_THIN
+  if (dowThin.w > 0.0){
+    float px = -mvPosition.z*2.0/(projectionMatrix[1][1]*uDowRes.y);
+    float grow = max(0.0, 0.42*px-dowThin.w);        // at least ~0.85 px across (with the scene's MSAA, a steady line)
+    if (grow > 0.0){ mvPosition.xyz += (viewMatrix*vec4(dowThin.xyz, 0.0)).xyz*grow; gl_Position = projectionMatrix*mvPosition; }
+  }
 #endif
 `;
 const VERT_MAIN = /* glsl */`
@@ -41,6 +61,28 @@ uniform vec3 uDowOrigin; uniform sampler2D tDowDetail; uniform vec4 uDowK;   // 
 varying vec3 vDowW;
 #ifdef DOW_VLIGHT
 varying vec2 vDowL;
+#endif
+#if defined(DOW_RIBS) || defined(DOW_SLATS)
+// profile height (0..1) across one period: box-profile cladding (pan, rise, crest, fall) or rounded shutter slats
+float dowProf(float u, float P){
+  float x = fract(u/P);
+#ifdef DOW_SLATS
+  return 4.0*x*(1.0-x);
+#else
+  return clamp((x-0.48)/0.12, 0.0, 1.0)-clamp((x-0.84)/0.16, 0.0, 1.0);
+#endif
+}
+float dowHash(vec2 c){ return fract(sin(dot(c, vec2(91.7, 13.1)))*43758.5453); }
+// a line of width w (m) every period P along v, box-filtered over the pixel footprint fw
+float dowLine(float v, float P, float off, float w, float fw){
+  float d = abs(fract((v-off)/P+0.5)-0.5)*P;
+  return (1.0-smoothstep(0.5*w, 0.5*w+fw, d))*min(1.0, w/max(fw, 1e-5));
+}
+#endif
+#ifdef DOW_WINDOWS
+// fraction of the footprint [x-fw/2, x+fw/2] inside the openings [kP, kP+w]: an exact box filter of a pulse train
+float dowPI(float x, float P, float w){ return floor(x/P)*w+min(fract(x/P)*P, w); }
+float dowPulse(float x, float P, float w, float fw){ fw = max(fw, 1e-4); return (dowPI(x+0.5*fw, P, w)-dowPI(x-0.5*fw, P, w))/fw; }
 #endif
 `;
 // after the maps are read: sun visibility, and the shoreline weathering of stone
@@ -74,6 +116,74 @@ const FRAG_SURFACE = /* glsl */`
   }
 #endif
 `;
+// corrugated sheet: ribs as a normal tilt (the slope averaged over the pixel: the height difference across the
+// footprint over its width, so ribs fade to flat exactly when they can no longer be resolved), sheet tones, the
+// side laps, fastener rows with a little rust bled below them
+const FRAG_RIBS = /* glsl */`
+#if defined(DOW_RIBS) || defined(DOW_SLATS)
+  vec3 dowGN = normalize(cross(dFdx(vDowW), dFdy(vDowW))); vec3 dowA = abs(dowGN);
+  bool dowAlongZ = dowA.x > dowA.z;
+#ifdef DOW_SLATS
+  float dowU = vDowW.y, dowP = 0.09, dowH = 0.007; vec3 dowT = vec3(0.0, 1.0, 0.0);
+  float dowV = dowAlongZ ? vDowW.z : vDowW.x;
+#else
+  float dowU = dowAlongZ ? vDowW.z : vDowW.x, dowP = 0.25, dowH = 0.022; vec3 dowT = dowAlongZ ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+  bool dowRoof = dowA.y > 0.5;
+  float dowV = dowRoof ? vDowW.z : vDowW.y;
+#endif
+  float dowFW = max(fwidth(dowU), 1e-4), dowFV = max(fwidth(dowV), 1e-4), dowBW = 1.6*dowFW;     // a wider box than the pixel: no fringes
+  float dowS = dowH*(dowProf(dowU+0.5*dowBW, dowP)-dowProf(dowU-0.5*dowBW, dowP))/dowBW;
+  // the ribs the filter takes out still scatter the light: widen the highlight by what was lost (specular AA)
+  roughnessFactor = sqrt(roughnessFactor*roughnessFactor+0.06*smoothstep(0.25, 1.2, dowBW/dowP));
+  {
+    float far = smoothstep(0.35, 1.2, dowFW);                                   // sheets smaller than a pixel or so: no tone
+    float sheet = dowHash(vec2(floor(dowU/1.0), floor(dowV/6.1)));
+    diffuseColor.rgb *= 1.0+0.11*(sheet-0.5)*(1.0-far);
+    float patchv = dowHash(vec2(floor(dowU/3.0+0.37*floor(dowV/4.7)), 7.0+floor(dowV/4.7)));   // here and there a run of newer, cleaner sheets
+    diffuseColor.rgb *= patchv > 0.86 ? 1.07 : 1.0;
+    roughnessFactor = clamp(roughnessFactor+0.12*(sheet-0.5)*(1.0-far), 0.04, 1.0);
+#ifndef DOW_SLATS
+    float lap = dowLine(dowU, 1.0, 0.0, 0.02, dowFW);
+    diffuseColor.rgb *= 1.0-0.22*lap;
+    // fastener rows on the girts (walls: every 1.6 m from 3.8 m up; roofs: on the purlins every 1.4 m)
+    float rowP = dowRoof ? 1.4 : 1.6, rowO = dowRoof ? 0.3 : 3.8;
+    float row = dowLine(dowV, rowP, rowO, 0.022, dowFV);
+    float dots = mix(dowLine(dowU, dowP, 0.125, 0.022, dowFW), 0.088, smoothstep(0.2, 0.6, dowFW/dowP));
+    diffuseColor.rgb *= 1.0-0.7*row*dots;
+    if (!dowRoof){
+      float below = fract((dowV-rowO)/rowP)*rowP;                                // metres above the row beneath
+      float up = rowP-below;                                                     // metres below the row above
+      float st = texture2D(tDowDetail, vec2(dowU*0.9, dowV*0.06)).r;
+      float bleed = exp(-up/0.3)*smoothstep(0.45, 0.8, st);
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb*vec3(0.66, 0.47, 0.33), bleed*0.4);
+    }
+#endif
+  }
+#endif
+`;
+// the low buildings of the base: rows of windows on every wall, one storey every 3.3 m, glass dark with a little
+// sky in it, an occasional pale blind; filtered so a far wall just darkens by the share of glass
+const FRAG_WINDOWS = /* glsl */`
+#ifdef DOW_WINDOWS
+  {
+    vec3 gn = normalize(cross(dFdx(vDowW), dFdy(vDowW))); vec3 ga = abs(gn);
+    if (ga.y < 0.3){
+      float u = ga.x > ga.z ? vDowW.z : vDowW.x, v = vDowW.y-2.4-0.9;
+      float fu = fwidth(u)*1.3, fv = fwidth(v)*1.3;
+      float cov = dowPulse(u+0.75, 3.0, 1.5, fu)*dowPulse(v, 3.3, 1.3, fv)*step(-0.2, v);
+      float h = fract(sin(dot(floor(vec2(u/3.0+0.25, v/3.3)), vec2(41.3, 17.9)))*43758.5453);
+      vec3 glass = mix(vec3(0.028, 0.032, 0.036), vec3(0.32, 0.3, 0.27), step(0.86, h)*(1.0-smoothstep(0.3, 1.5, fu)));
+      diffuseColor.rgb = mix(diffuseColor.rgb, glass, cov*0.9);
+      roughnessFactor = mix(roughnessFactor, 0.12, cov*0.8);
+    }
+  }
+#endif
+`;
+const FRAG_RIBN = /* glsl */`
+#if defined(DOW_RIBS) || defined(DOW_SLATS)
+  { vec3 Tv = normalize((viewMatrix*vec4(dowT, 0.0)).xyz); Tv = normalize(Tv-normal*dot(normal, Tv)+1e-6); normal = normalize(normal-Tv*dowS); }
+#endif
+`;
 const FRAG_SAND = /* glsl */`
 #ifdef DOW_SAND
   {
@@ -95,9 +205,11 @@ function patchMaterial(mat, flags, U) {
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
     const defs = Object.keys(flags).filter(k => flags[k]).map(k => `#define ${k}\n`).join('');
-    sh.vertexShader = defs + VERT_PARS + sh.vertexShader.replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n' + VERT_MAIN);
+    sh.vertexShader = defs + VERT_PARS + sh.vertexShader.replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n' + VERT_MAIN)
+      .replace('#include <project_vertex>', '#include <project_vertex>\n' + VERT_THIN);
     sh.fragmentShader = defs + FRAG_PARS + sh.fragmentShader
-      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n' + FRAG_SURFACE + FRAG_SAND)
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n' + FRAG_SURFACE + FRAG_SAND + FRAG_RIBS + FRAG_WINDOWS)
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + FRAG_RIBN)
       .replace('#include <lights_fragment_begin>', THREE.ShaderChunk.lights_fragment_begin.replace(
         'getDirectionalLightInfo( directionalLight, directLight );', 'getDirectionalLightInfo( directionalLight, directLight );\n\t\tdirectLight.color *= dowSun;'))
       .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n' + FRAG_AO);
@@ -106,11 +218,62 @@ function patchMaterial(mat, flags, U) {
   mat.needsUpdate = true;
 }
 
+// Thin pieces in a mesh: parts (triangles joined through shared corners, split normals welded by position) that
+// are long and narrow in world units and closed all round (tubes, bars; not flat strips). Each of their vertices
+// gets a dowThin attribute: the direction that grows the part evenly (the mean of the face normals meeting at that
+// corner, scaled so every face moves the same distance, so no cracks open) and the part's half-thickness (m).
+// Returns the number of vertices marked.
+const _v = new THREE.Vector3(), _n = new THREE.Vector3();
+function markThin(mesh, maxR = 0.16) {
+  const geo = mesh.geometry, pos = geo.attributes.position, nrm = geo.attributes.normal, idx = geo.index;
+  if (!pos || !nrm || !idx) return 0;
+  const n = pos.count, M = mesh.matrixWorld, NM = new THREE.Matrix3().getNormalMatrix(M);
+  const P = new Float32Array(n * 3), N = new Float32Array(n * 3), weld = new Int32Array(n), key = new Map();
+  for (let i = 0; i < n; i++) {
+    _v.fromBufferAttribute(pos, i).applyMatrix4(M); _n.fromBufferAttribute(nrm, i).applyMatrix3(NM).normalize();
+    P[i * 3] = _v.x; P[i * 3 + 1] = _v.y; P[i * 3 + 2] = _v.z; N[i * 3] = _n.x; N[i * 3 + 1] = _n.y; N[i * 3 + 2] = _n.z;
+    const k = Math.round(_v.x * 500) + ',' + Math.round(_v.y * 500) + ',' + Math.round(_v.z * 500);
+    let w = key.get(k); if (w === undefined) { w = i; key.set(k, i); } weld[i] = w;
+  }
+  const par = new Int32Array(n); for (let i = 0; i < n; i++) par[i] = weld[i];
+  const find = (a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+  const I = idx.array;
+  for (let t = 0; t < I.length; t += 3) { const a = find(I[t]), b = find(I[t + 1]), c = find(I[t + 2]); par[b] = a; par[c] = a; }
+  // the normals meeting at each welded corner: their sum and how many
+  const cn = new Float32Array(n * 3), ck = new Uint16Array(n);
+  for (let i = 0; i < n; i++) { const w = weld[i]; cn[w * 3] += N[i * 3]; cn[w * 3 + 1] += N[i * 3 + 1]; cn[w * 3 + 2] += N[i * 3 + 2]; ck[w]++; }
+  const comp = new Map();
+  for (let i = 0; i < n; i++) {
+    const r = find(i); let c = comp.get(r);
+    if (!c) { c = { lo: [1e9, 1e9, 1e9], hi: [-1e9, -1e9, -1e9], ns: [0, 0, 0], k: 0, v: [] }; comp.set(r, c); }
+    for (let a = 0; a < 3; a++) { const x = P[i * 3 + a]; if (x < c.lo[a]) c.lo[a] = x; if (x > c.hi[a]) c.hi[a] = x; c.ns[a] += N[i * 3 + a]; }
+    c.k++; c.v.push(i);
+  }
+  const out = new Float32Array(n * 4); let marked = 0;
+  for (const c of comp.values()) {
+    if (c.k < 8) continue;
+    const e = [0, 1, 2].map(a => c.hi[a] - c.lo[a]).sort((a, b) => a - b);
+    const mean = Math.hypot(c.ns[0], c.ns[1], c.ns[2]) / c.k;
+    if (!(e[1] < 2 * maxR && e[2] > 3 * e[1] && mean < 0.35)) continue;
+    for (const i of c.v) {
+      const w = weld[i]; let x = cn[w * 3], y = cn[w * 3 + 1], z = cn[w * 3 + 2];
+      // k unit normals summing to S: d = k S / |S|^2 moves each face through the corner by one unit (d.n = 1 for
+      // orthogonal or symmetric faces, and n itself on a smooth surface), the same d for every copy of the corner
+      const L2 = x * x + y * y + z * z; if (L2 < 1e-8) continue;
+      const s = ck[w] / L2;
+      out[i * 4] = x * s; out[i * 4 + 1] = y * s; out[i * 4 + 2] = z * s; out[i * 4 + 3] = 0.5 * e[1];
+    }
+    marked += c.k;
+  }
+  if (marked) geo.setAttribute('dowThin', new THREE.BufferAttribute(out, 4));
+  return marked;
+}
+
 // opts: { lodNear (m) }
 export async function buildPort(pipe, opts = {}) {
   const root = new THREE.Group(); root.name = 'port';
   const S = pipe.shared;
-  const U = { uDowOrigin: S.uOrigin, tDowDetail: S.tDetail, uDowK: { value: new THREE.Vector4(1, 1, 1, 0) } };
+  const U = { uDowOrigin: S.uOrigin, tDowDetail: S.tDetail, uDowK: { value: new THREE.Vector4(1, 1, 1, 0) }, uDowRes: S.uRes };
   const lodPairs = new Map();   // chunk name -> { A, B, c: Vector3, r }
   for (const f of FILES) {
     const name = `corsair/${f}.glb`;
@@ -124,14 +287,17 @@ export async function buildPort(pipe, opts = {}) {
     if (!o.isMesh) return;
     const geo = o.geometry, m0 = o.material;
     const ud = m0.userData || {};
-    const flags = { DOW_VLIGHT: !!(geo.attributes._ao && geo.attributes._sun), DOW_LMSUN: !!(ud.dowlm && m0.aoMap), DOW_SHORE: ud.dow === 'rock', DOW_SAND: ud.shore === 'sand' };
+    const thin = ud.dow === 'rock' || DEV.has('nothin') ? 0 : markThin(o);
+    const flags = { DOW_VLIGHT: !!(geo.attributes._ao && geo.attributes._sun), DOW_LMSUN: !!(ud.dowlm && m0.aoMap), DOW_SHORE: ud.dow === 'rock', DOW_SAND: ud.shore === 'sand',
+      DOW_RIBS: /^sheds_(clad|roof)/.test(o.name), DOW_SLATS: /^sheds_shutter/.test(o.name), DOW_WINDOWS: /^town/.test(o.name), DOW_THIN: thin > 0 };
     // one material per lighting variant (a material shared by vertex-lit and texture-lit meshes is split)
     const vk = m0.uuid + JSON.stringify(flags);
     let m = variants.get(vk);
     if (!m) {
       m = [...variants.values()].some(v => v.userData.src === m0.uuid) ? m0.clone() : m0;
       m.userData = { ...ud, src: m0.uuid };
-      if (m.aoMap) m.aoMapIntensity = ud.aok ?? 1;
+      // the sheds' broad faces are baked at a coarse density, where the occlusion bake bands; there it only shades corners
+      if (m.aoMap) m.aoMapIntensity = DEV.has('noao') ? 0 : ud.aok ?? (/^sheds/.test(o.name) ? 0.45 : 1);
       patchMaterial(m, flags, U); variants.set(vk, m);
     }
     o.material = m;

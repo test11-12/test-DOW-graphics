@@ -899,6 +899,7 @@ def mat_surface(name, kind, masks, **o):
         run = k if run is None else M(nt, 'MAXIMUM', run, k)
     if run is not None:
         run = M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', run, wall), mr(nt, noise(nt, P, 2.2, 4, 0.6, stretch=(3.0, 3.0, 0.1)), 0.35, 0.7))
+    tile_r = tilt = None
     if kind in ('steel', 'galv', 'hull'):
         R = o['rustscan']
         rcol = d.tex(nt, R['Diffuse'], P, 'BOX', 0.3, scale=1.0 / 1.6).outputs['Color']
@@ -925,8 +926,14 @@ def mat_surface(name, kind, masks, **o):
                 cell = nt.nodes.new('ShaderNodeCombineXYZ')
                 nt.links.new(M(nt, 'FLOOR', M(nt, 'DIVIDE', Y, ts)), cell.inputs['X']); nt.links.new(M(nt, 'FLOOR', M(nt, 'DIVIDE', arc, ts)), cell.inputs['Y'])
                 wn = nt.nodes.new('ShaderNodeTexWhiteNoise'); wn.noise_dimensions = '3D'; nt.links.new(cell.outputs['Vector'], wn.inputs['Vector'])
-                paint = d.mix_rgb(nt, paint, d.mix_rgb(nt, paint, (1.5, 1.5, 1.5), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', wn.outputs['Value'], 0.5))
-                paint = d.mix_rgb(nt, paint, d.mix_rgb(nt, paint, (0.55, 0.55, 0.55), 1.0, 'MULTIPLY'), gl)
+                paint = d.mix_rgb(nt, paint, d.mix_rgb(nt, paint, (1.35, 1.35, 1.35), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', wn.outputs['Value'], 0.5))
+                wn2 = nt.nodes.new('ShaderNodeTexWhiteNoise'); wn2.noise_dimensions = '3D'
+                off = nt.nodes.new('ShaderNodeVectorMath'); off.operation = 'ADD'; off.inputs[1].default_value = (17.3, 5.1, 9.7)
+                nt.links.new(cell.outputs['Vector'], off.inputs[0]); nt.links.new(off.outputs['Vector'], wn2.inputs['Vector'])
+                tile_r = wn.outputs['Value']
+                tilt = M(nt, 'ADD', M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', M(nt, 'FRACT', M(nt, 'DIVIDE', Y, ts)), 0.5), M(nt, 'SUBTRACT', wn2.outputs['Value'], 0.5)),
+                         M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', M(nt, 'FRACT', M(nt, 'DIVIDE', arc, ts)), 0.5), M(nt, 'SUBTRACT', wn2.outputs['Color'], 0.5)))
+                paint = d.mix_rgb(nt, paint, o.get('gapcol', (0.075, 0.073, 0.07)), M(nt, 'MULTIPLY', gl, 0.55))     # salt and dust lodged in the gaps
                 seam = gl if seam is None else M(nt, 'MAXIMUM', seam, gl)
         # grime: in the joints, along the seams, where water stands
         dirt = M(nt, 'ADD', M(nt, 'MULTIPLY', M(nt, 'POWER', occ, 1.3), 0.7), M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', up, mr(nt, n2, 0.3, 0.75)), 0.5))
@@ -954,6 +961,9 @@ def mat_surface(name, kind, masks, **o):
             metal = M(nt, 'MULTIPLY', metal, M(nt, 'SUBTRACT', 1.0, rm, True))
         bump_h = M(nt, 'ADD', M(nt, 'MULTIPLY', disp, o.get('scanbump', 0.3)), M(nt, 'MULTIPLY', rm, 0.6)); bump_k = o.get('bump', 0.35)
         if seam is not None: bump_h = M(nt, 'SUBTRACT', bump_h, M(nt, 'MULTIPLY', seam, o.get('seamdepth', 1.2)))
+        if tile_r is not None:     # tiles: sheen varies tile to tile; each sits at its own slight angle (the bump distance is 5x, so the rest is scaled down)
+            rough = M(nt, 'ADD', rough, M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', tile_r, 0.5), o.get('tilerough', 0.14)), True)
+            bump_h = M(nt, 'ADD', M(nt, 'MULTIPLY', bump_h, 0.2), M(nt, 'MULTIPLY', tilt, o.get('tilt', 0.9)))
     elif kind == 'concrete':
         # grime in the joints and undersides, weather on top, bright chipped arrises, gravity streaks of rust and dirt
         base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.5, 0.48, 0.45), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', M(nt, 'POWER', occ, 1.0), 0.8))
@@ -977,8 +987,14 @@ def mat_surface(name, kind, masks, **o):
     elif kind == 'glass':
         base = d.mix_rgb(nt, (0.012, 0.014, 0.016), (0.05, 0.05, 0.048), M(nt, 'MULTIPLY', streak, 0.6)); rough = mr(nt, streak, 0, 1, 0.08, 0.35)
     if 'eave' in o:       # the wall under the roof edge: dust washed down it in streaks
-        ek = M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', mr(nt, z, o['eave'] - 3.5, o['eave'] - 0.2), wall), M(nt, 'ADD', 0.25, M(nt, 'MULTIPLY', streak, 0.75)))
-        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.5, 0.46, 0.4), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', ek, o.get('eavek', 0.7)))
+        reach = o.get('eavereach', 3.5)
+        es = mr(nt, noise(nt, P, 0.7, 4, 0.6, stretch=(3.2, 3.2, 0.05)), 0.42, 0.72)           # long drip streaks off the gutter line
+        ek = M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', mr(nt, z, o['eave'] - reach, o['eave'] - 0.2), wall), M(nt, 'ADD', 0.2, M(nt, 'MULTIPLY', M(nt, 'MAXIMUM', streak, es), 0.8)))
+        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, o.get('eavecol', (0.5, 0.46, 0.4)), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', ek, o.get('eavek', 0.7)))
+    if 'splash' in o:     # sand and dirt thrown up the foot of a wall by rain and wind
+        z0, reach, kk = o['splash']
+        sk = M(nt, 'MULTIPLY', M(nt, 'MULTIPLY', mr(nt, z, z0 + reach, z0), wall), M(nt, 'ADD', 0.45, M(nt, 'MULTIPLY', mr(nt, n2, 0.3, 0.8), 0.55)))
+        base = d.mix_rgb(nt, base, d.mix_rgb(nt, base, (0.66, 0.58, 0.47), 1.0, 'MULTIPLY'), M(nt, 'MULTIPLY', sk, kk))
     # height above the sea: weed and mussels at the water, a barnacle band, wet stone up to the tide mark, salt above it
     if o.get('growth', False):
         zn = M(nt, 'ADD', z, M(nt, 'ADD', M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', n2, 0.5), 0.3), M(nt, 'MULTIPLY', M(nt, 'SUBTRACT', n1, 0.5), 0.25)))
@@ -1242,34 +1258,44 @@ def build_gantry():
                     for bx, bz in ((x + t, z - 0.76), (x + t, z + 0.76), (x - 0.76, z + t), (x + 0.76, z + t)):
                         bolts.cyl((bx, yy - 0.115, bz), (bx, yy + 0.115, bz), 0.024, seg=6)
             g.box(x - 0.86, x + 0.86, y0 + 1.0, y0 + 1.06, z - 0.86, z + 0.86)                # base plate on the carriage
-            inward = 1 if x == GX0 else -1
-            g.prism([(x + inward * 0.7, ytop - 3.4), (x + inward * 0.7, ytop - 0.6), (x + inward * 3.4, ytop - 0.6)], z - 0.45, z + 0.45)   # knee
-    for z in (GZ0, GZ1):
-        g.box(GX0 - 1.2, GX1 + 1.2, ytop - 0.6, ytop + 1.3, z - 0.65, z + 0.65)                # portal girder
-        for ya, yb in ((ytop - 0.66, ytop - 0.6), (ytop + 1.3, ytop + 1.36)): g.box(GX0 - 1.2, GX1 + 1.2, ya, yb, z - 0.74, z + 0.74)   # its flanges
-        for x in np.linspace(GX0 - 0.6, GX1 + 0.6, 9): g.box(x - 0.02, x + 0.02, ytop - 0.6, ytop + 1.3, z - 0.7, z + 0.7)   # web stiffeners
+    # Portal frames as in the released bow-camera frame: deep girders running into the legs through big curved
+    # haunches (each side an arch), no bracing; a long hoist housing with a railing along the top of each portal.
+    GD = 1.1                                                                                   # girder depth below ytop
+    def fillet_xy(cx, cy, sx, sy, R, z0, z1, n=10):
+        """concave haunch in a corner at (cx, cy) opening towards (sx, sy) (signs), extruded z0..z1 (a fan of wedges)"""
+        pts = [(cx + sx * (R - R * math.cos(a)), cy + sy * (R - R * math.sin(a))) for a in np.linspace(0, math.pi / 2, n)]
+        for p0, p1 in zip(pts[:-1], pts[1:]):
+            g.prism([(cx, cy), p0, p1] if sx * sy < 0 else [(cx, cy), p1, p0], z0, z1)
+    def fillet_zy(cz, cy, sz, sy, R, x0, x1, n=10):
+        """the same in the z-y plane, extruded x0..x1"""
+        pts = [(cz + sz * (R - R * math.cos(a)), cy + sy * (R - R * math.sin(a))) for a in np.linspace(0, math.pi / 2, n)]
+        for p0, p1 in zip(pts[:-1], pts[1:]):
+            vs = [g.bm.verts.new(E(xx, yy, zz)) for xx in (x0, x1) for zz, yy in ((cz, cy), p0, p1)]
+            for f in ((0, 1, 2), (3, 5, 4), (0, 3, 4, 1), (1, 4, 5, 2), (2, 5, 3, 0)): g.bm.faces.new([vs[k] for k in f])
     for x in (GX0, GX1):
-        g.box(x - 0.5, x + 0.5, ytop - 1.4, ytop - 0.6, GZ0 + 0.7, GZ1 - 0.7)                  # side beam
-        g.cyl((x, y0 + 2.4, GZ0 + 0.7), (x, ytop - 1.6, GZ1 - 0.7), 0.3, seg=4, rot=math.pi / 4)
-        g.cyl((x, y0 + 2.4, GZ1 - 0.7), (x, ytop - 1.6, GZ0 + 0.7), 0.3, seg=4, rot=math.pi / 4)
-        g.box(x - 0.3, x + 0.3, y0 + 8.2, y0 + 8.7, GZ0 + 0.7, GZ1 - 0.7)                     # mid strut
-        # gusset plates where the braces land and where they cross, bolted through
-        ym = (y0 + 2.4 + ytop - 1.6) / 2; zm = (GZ0 + GZ1) / 2
-        for (gy, gz, hy, hz) in ((y0 + 2.6, GZ0 + 1.15, 0.75, 0.6), (y0 + 2.6, GZ1 - 1.15, 0.75, 0.6), (ytop - 1.9, GZ0 + 1.15, 0.6, 0.6), (ytop - 1.9, GZ1 - 1.15, 0.6, 0.6), (ym, zm, 0.7, 0.7)):
-            g.box(x - 0.335, x + 0.335, gy - hy, gy + hy, gz - hz, gz + hz)
-            for by in np.linspace(gy - hy + 0.14, gy + hy - 0.14, 4):
-                for bz in np.linspace(gz - hz + 0.14, gz + hz - 0.14, 3): bolts.cyl((x - 0.365, by, bz), (x + 0.365, by, bz), 0.024, seg=6)
-    # trolley girders along the lift, the cross beam between them, the trolleys
+        inward = 1 if x == GX0 else -1
+        for z in (GZ0, GZ1):
+            fillet_xy(x + inward * 0.7, ytop - GD, inward, -1, 3.2, z - 0.62, z + 0.62)             # portal haunch
+            ztow = 1 if z == GZ0 else -1
+            fillet_zy(z + ztow * 0.7, ytop - GD - 0.5, ztow, -1, 2.6, x - 0.55, x + 0.55)           # side haunch
+    for z in (GZ0, GZ1):
+        g.box(GX0 - 1.2, GX1 + 1.2, ytop - GD, ytop + 1.3, z - 0.7, z + 0.7)                     # portal girder
+        for ya, yb in ((ytop - GD - 0.06, ytop - GD), (ytop + 1.3, ytop + 1.36)): g.box(GX0 - 1.2, GX1 + 1.2, ya, yb, z - 0.79, z + 0.79)   # its flanges
+        for x in np.linspace(GX0 - 0.6, GX1 + 0.6, 9): g.box(x - 0.02, x + 0.02, ytop - GD, ytop + 1.3, z - 0.75, z + 0.75)   # web stiffeners
+        g.box(GX0 - 0.95, GX1 + 0.95, ytop + 1.36, ytop + 2.85, z - 0.82, z + 0.82)              # hoist housing
+        g.box(GX0 - 1.0, GX1 + 1.0, ytop + 2.85, ytop + 2.95, z - 0.88, z + 0.88)                # its roof
+        for x in np.linspace(GX0 + 0.5, GX1 - 0.5, 5): g.box(x - 0.6, x + 0.6, ytop + 1.7, ytop + 2.5, z - 0.86, z - 0.82) if z == GZ0 else g.box(x - 0.6, x + 0.6, ytop + 1.7, ytop + 2.5, z + 0.82, z + 0.86)   # access panels
+    for x in (GX0, GX1):
+        g.box(x - 0.55, x + 0.55, ytop - GD - 0.5, ytop + 1.3, GZ0 + 0.7, GZ1 - 0.7)              # side girder
+        for ya, yb in ((ytop - GD - 0.56, ytop - GD - 0.5),): g.box(x - 0.62, x + 0.62, ya, yb, GZ0 + 0.7, GZ1 - 0.7)
+        for zz in np.linspace(GZ0 + 2.0, GZ1 - 2.0, 5): g.box(x - 0.58, x + 0.58, ytop - GD - 0.5, ytop + 1.3, zz - 0.02, zz + 0.02)
+    # trolley girders along the lift between the portals, the cross beam between them
     TZ = (GZ0 + 3.0, GZ1 - 3.0)
     for z in TZ:
         g.box(GX0 + 0.5, GX1 - 0.5, ytop - 0.6, ytop + 0.1, z - 0.3, z + 0.3)
         for ya, yb in ((ytop - 0.64, ytop - 0.6), (ytop + 0.1, ytop + 0.14)): g.box(GX0 + 0.5, GX1 - 0.5, ya, yb, z - 0.38, z + 0.38)
     g.box(GX0, GX1, ytop - 0.5, ytop + 0.25, (GZ0 + GZ1) / 2 - 0.45, (GZ0 + GZ1) / 2 + 0.45)  # cross beam
-    # machinery house and the driver's cab on top
     mx, mz = (GX0 + GX1) / 2 - 1, (GZ0 + GZ1) / 2
-    g.box(mx - 2.6, mx + 2.6, ytop + 1.3, ytop + 3.9, mz - 3.25, mz + 3.25)
-    g.box(mx - 2.75, mx + 2.75, ytop + 3.9, ytop + 4.05, mz - 3.4, mz + 3.4)
-    g.box(GX1 - 2.9, GX1 + 0.5, ytop + 1.3, ytop + 3.5, GZ0 - 0.6, GZ0 + 2.4)
     # hoists: a trolley on each girder, four falls of wire down to a sheave block with its hook
     s = Part('gantry_dark'); rope = Part('gantry_rope')
     HX = (mx - 2.5, mx + 2.5)
@@ -1308,7 +1334,7 @@ def build_gantry():
     out['rope'] = rope.obj()
     hr = Part('gantry_rail')
     for z in (GZ0, GZ1):
-        for dz in (-0.6, 0.6): railing(hr, [(GX0 - 1.1, z + dz), (GX1 + 1.1, z + dz)], ytop + 1.36, h=1.0, step=1.8, r=0.03)
+        for dz in (-0.8, 0.8): railing(hr, [(GX0 - 0.95, z + dz), (GX1 + 0.95, z + dz)], ytop + 2.95, h=1.0, step=1.8, r=0.03)   # along the housing roof
     ladder(hr, GX1 + 0.7, GZ1 - 0.25, GZ1 + 0.25, y0 + 1.0, ytop + 1.3, off=-0.15)
     for yy in np.arange(y0 + 3.0, ytop + 1.2, 0.9): hr.torus((GX1 + 1.15, yy, GZ1), Vector((0, 1, 0)), 0.36, 0.018, 16, 4)
     out['rail'] = hr.obj()
@@ -1405,15 +1431,16 @@ def stage_hero():
         blocks=St('s_blocks', scan=plate, paint=(0.09, 0.09, 0.09), rust=0.7, growth=False),
         timber=lambda m: mat_surface('t_blocks', 'timber', m, scan=wood, tile=1.6, tone=(0.75, 0.68, 0.6)),
         gantry=St('s_gantry', scan=paint, paint=yellow, rust=0.42, lumk=1.1, scanmix=0.3, wear=0.3, primer=(0.25, 0.1, 0.06), fade=0.5, dirt=0.75, streaks=0.6, wash=0.75,
-                  seams=[('Z', 3.4, GSPLICE[0], GY + 1.1, GY + GH - 0.7), ('X', 2.41, GX0 - 0.6 + 1.205, GY + GH - 0.6, GY + GH + 1.3)], seamw=0.014, seamdepth=0.9, runreach=1.8),
+                  seams=[('Z', 3.4, GSPLICE[0], GY + 1.1, GY + GH - 1.2), ('X', 2.41, GX0 - 0.6 + 1.205, GY + GH - 1.1, GY + GH + 1.3)], seamw=0.014, seamdepth=0.9, runreach=1.8),
         bolts=St('s_gbolts', scan=paint, paint=yellow, rust=0.55, lumk=1.0, scanmix=0.3, dirt=0.5),
         dark=St('s_gdark', scan=plate, paint=(0.05, 0.05, 0.05), rust=0.6),
         grope=lambda m: mat_surface('s_grope', 'rope', m, scan=grain),
         rail=St('s_grail', scan=paint, paint=yellow, rust=0.32, lumk=1.0, fade=0.4),
-        hull=lambda m: mat_surface('h_hull', 'hull', m, scan=plate, rustscan=rust, paint=(0.016, 0.017, 0.019), rust=0.12, lumk=0.5, scanmix=0.2, paintrough=0.66, wear=0.15, primer=(0.1, 0.1, 0.1),
-                                   dirt=0.35, dirtcol=(0.75, 0.72, 0.66), streaks=0.5, wash=0.25, scanbump=0.12, tiles=(0.62, SU['x'], SU['y'], 1.38), seamdepth=0.35),
-        sail=lambda m: mat_surface('h_sail', 'hull', m, scan=plate, rustscan=rust, paint=(0.017, 0.018, 0.02), rust=0.12, lumk=0.5, scanmix=0.2, paintrough=0.64, wear=0.2, primer=(0.1, 0.1, 0.1),
-                                   dirt=0.35, dirtcol=(0.75, 0.72, 0.66), streaks=0.5, wash=0.25, scanbump=0.12),
+        # matt black: anechoic tiles in a faint grid, each a slightly different sheen and angle; no markings
+        hull=lambda m: mat_surface('h_hull', 'hull', m, scan=plate, rustscan=rust, paint=(0.014, 0.0145, 0.016), rust=0.06, lumk=0.5, scanmix=0.15, paintrough=0.6, wear=0.08, primer=(0.06, 0.06, 0.06),
+                                   dirt=0.22, dirtcol=(0.62, 0.6, 0.56), streaks=0.3, wash=0.12, scanbump=0.12, tiles=(0.62, SU['x'], SU['y'], 1.38), seamdepth=0.5, bumpdist=0.05, bump=1.0, tilt=1.5, tilerough=0.2),
+        sail=lambda m: mat_surface('h_sail', 'hull', m, scan=plate, rustscan=rust, paint=(0.015, 0.0155, 0.017), rust=0.06, lumk=0.5, scanmix=0.15, paintrough=0.6, wear=0.12, primer=(0.06, 0.06, 0.06),
+                                   dirt=0.22, dirtcol=(0.62, 0.6, 0.56), streaks=0.3, wash=0.12, scanbump=0.12, tiles=(0.62, SU['x'], SU['y'], 1.38), seamdepth=0.5, bumpdist=0.05, bump=1.0, tilt=1.5, tilerough=0.2),
         stern=lambda m: mat_surface('h_stern', 'hull', m, scan=plate, rustscan=rust, paint=(0.022, 0.022, 0.024), rust=0.2, lumk=0.5, wear=0.3, primer=(0.3, 0.2, 0.12), dirt=0.4, wash=0.3, scanbump=0.12),
     )
     groups = [
@@ -1474,13 +1501,35 @@ SHEDS = [  # x, z, w, d, h, wall, roof, band, doors, damaged   (old buildPort sh
 ]
 
 
+def pbox(part, o, eu, ev, en):
+    """parallelepiped from corner o along the edge vectors eu, ev, en (all engine xyz)"""
+    o, eu, ev, en = (np.array(a, float) for a in (o, eu, ev, en))
+    vs = [part.bm.verts.new(E(*(o + a * eu + b * ev + c * en))) for c in (0, 1) for b in (0, 1) for a in (0, 1)]
+    for f in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)):
+        part.bm.faces.new([vs[k] for k in f])
+    return part
+
+
+def spans(a, b, holes, pad=0.0):
+    """the pieces of [a, b] left between the (x0, x1) holes"""
+    out, cur = [], a
+    for h0, h1 in sorted(holes):
+        if h0 - pad > cur + 0.05: out.append((cur, h0 - pad))
+        cur = max(cur, h1 + pad)
+    if b > cur + 0.05: out.append((cur, b))
+    return out
+
+
 def build_shed(i, x, z, w, dd, h, damaged):
-    """walls (plinth, cladding), gable roof with overhangs, gutters, downpipes, doors; returns parts by material"""
-    p = {k: Part(f'shed{i}_{k}') for k in ('plinth', 'wall', 'roof', 'band', 'door', 'trim', 'void')}
+    """A portal-frame industrial shed: concrete plinth (open at the doors) with a drip flashing, box-profile cladding
+    (its ribs are drawn by the engine), corner and verge flashings, a gable roof with overhang, box gutters and
+    swan-neck downpipes, roller shutters in painted frames with guide tracks, hoods, bottom rails and concrete aprons,
+    a personnel door, window rows, wall lights, louvres, ridge cowls and roof extractors, translucent roof lights.
+    Doors face the water (+z). Returns parts by material."""
+    p = {k: Part(f'shed{i}_{k}') for k in ('plinth', 'wall', 'roof', 'band', 'door', 'trim', 'void', 'frame', 'glass', 'apron', 'sky')}
     cut = 0.42 if damaged else 1.0
     wl = w * cut; xa, xb = x - w / 2, x - w / 2 + wl; za, zb = z - dd / 2, z + dd / 2
-    rise = dd * 0.11; Yb = QY
-    p['plinth'].box(xa - 0.05, xb + (0.05 if not damaged else 0), Yb, Yb + 1.1, za - 0.05, zb + 0.05)
+    rise = dd * 0.11; Yb = QY; PH = 1.1; t = 0.12
     nd = 3 if i == 3 else 2
     dw = min(15, wl / nd * 0.62) if not damaged else min(15, w / 2 * 0.62); dh = h * 0.72
     doors = []
@@ -1488,68 +1537,134 @@ def build_shed(i, x, z, w, dd, h, damaged):
         dx = x - w / 2 + wl * (k + 0.5) / nd if not damaged else x - w / 2 + (w / 2) * (k + 0.5) / 2
         if dx + dw / 2 > xb - 1: continue
         doors.append(dx)
-    # front wall (door side) split around the openings; the other three walls whole
-    t = 0.12
-    edges = [xa] + sum(([dx - dw / 2, dx + dw / 2] for dx in doors), []) + [xb]
-    for k in range(0, len(edges), 2):
-        if edges[k + 1] - edges[k] > 0.05: p['wall'].box(edges[k], edges[k + 1], Yb + 1.1, Yb + h, zb - t, zb)
+    pdoor = (xb - 3.4, xb - 2.4)                                   # personnel door, east end of the front
+    holes = [(dx - dw / 2, dx + dw / 2) for dx in doors]
+    # plinth: a ring wall 0.38 thick standing 0.08 proud of the cladding, open at the doors
+    for a, b in spans(xa - 0.08, xb + 0.08, holes + [pdoor]): p['plinth'].box(a, b, Yb, Yb + PH, zb - 0.3, zb + 0.08)
+    p['plinth'].box(xa - 0.08, xb + 0.08, Yb, Yb + PH, za - 0.08, za + 0.3)
+    p['plinth'].box(xa - 0.08, xa + 0.3, Yb, Yb + PH, za + 0.3, zb - 0.3)
+    if not damaged: p['plinth'].box(xb - 0.3, xb + 0.08, Yb, Yb + PH, za + 0.3, zb - 0.3)
+    # drip flashing on the plinth, corner flashings up the arrises
+    for a, b in spans(xa - 0.1, xb + 0.1, holes + [pdoor]): p['frame'].box(a, b, Yb + PH - 0.02, Yb + PH + 0.05, zb - 0.02, zb + 0.13)
+    p['frame'].box(xa - 0.1, xb + 0.1, Yb + PH - 0.02, Yb + PH + 0.05, za - 0.13, za + 0.02)
+    for gx, sg in ([(xa, -1)] if damaged else [(xa, -1), (xb, 1)]):
+        p['frame'].box(min(gx, gx + sg * 0.13), max(gx, gx + sg * 0.13), Yb + PH - 0.02, Yb + PH + 0.05, za, zb)
+    for cx, cz, sx, sz in ((xa, zb, -1, 1), (xa, za, -1, -1)) + (() if damaged else ((xb, zb, 1, 1), (xb, za, 1, -1))):
+        p['frame'].box(min(cx, cx + sx * 0.03), max(cx, cx + sx * 0.03), Yb + PH, Yb + h, min(cz - sz * 0.22, cz + sz * 0.03), max(cz - sz * 0.22, cz + sz * 0.03))
+        p['frame'].box(min(cx - sx * 0.22, cx + sx * 0.03), max(cx - sx * 0.22, cx + sx * 0.03), Yb + PH, Yb + h, min(cz, cz + sz * 0.03), max(cz, cz + sz * 0.03))
+    # cladding: the front split round the openings, the other walls whole
+    for a, b in spans(xa, xb, holes): p['wall'].box(a, b, Yb + PH, Yb + h, zb - t, zb)
+    p['wall'].box(xa, xb, Yb + PH, Yb + h, za, za + t)
+    p['wall'].box(xa, xa + t, Yb + PH, Yb + h, za, zb)
+    if not damaged: p['wall'].box(xb - t, xb, Yb + PH, Yb + h, za, zb)
+    # roller-shutter doors: header panel, hood, painted frame, guide tracks, curtain with bottom rail, apron, guard posts
     for dx in doors:
-        p['wall'].box(dx - dw / 2, dx + dw / 2, Yb + dh + 0.6, Yb + h, zb - t, zb)
-        p['door'].box(dx - dw / 2 + 0.05, dx + dw / 2 - 0.05, Yb, Yb + dh, zb - 0.45, zb - 0.35)          # shutter, recessed
-        p['trim'].box(dx - dw / 2 - 0.25, dx + dw / 2 + 0.25, Yb + dh, Yb + dh + 0.6, zb - 0.1, zb + 0.35) # shutter box
-        for sx in (dx - dw / 2 - 0.12, dx + dw / 2 + 0.12): p['trim'].box(sx - 0.12, sx + 0.12, Yb, Yb + dh, zb - 0.4, zb + 0.08)
-        p['void'].box(dx - dw / 2, dx + dw / 2, Yb, Yb + dh + 0.6, zb - 0.6, zb - 0.5)                     # behind the shutter
-        p['trim'].box(dx - dw / 2 - 0.3, dx + dw / 2 + 0.3, Yb, Yb + 0.035, zb - 0.5, zb + 0.25)           # steel threshold
-        for sx in (dx - dw / 2 - 0.55, dx + dw / 2 + 0.55): p['trim'].cyl((sx, Yb, zb + 0.5), (sx, Yb + 1.05, zb + 0.5), 0.11, seg=10)   # guard posts
-        for lx in (dx - dw * 0.3, dx + dw * 0.3):                                                         # floodlights over the door
-            p['trim'].box(lx - 0.04, lx + 0.04, Yb + dh + 1.25, Yb + dh + 1.33, zb, zb + 0.45)
-            p['trim'].box(lx - 0.28, lx + 0.28, Yb + dh + 1.1, Yb + dh + 1.3, zb + 0.4, zb + 0.72)
-    p['door'].box(xb - 3.4, xb - 2.4, Yb, Yb + 2.2, zb - 0.02, zb + 0.06)                                     # personnel door
-    p['trim'].box(xb - 3.5, xb - 2.3, Yb + 2.2, Yb + 2.3, zb - 0.02, zb + 0.5)                                # its canopy
-    p['trim'].box(xb - 3.48, xb - 3.4, Yb, Yb + 2.2, zb - 0.02, zb + 0.08); p['trim'].box(xb - 2.4, xb - 2.32, Yb, Yb + 2.2, zb - 0.02, zb + 0.08)
-    # louvred vents high on the gables, a row of cowls along the ridge, a service duct and its fan housings on the back wall
+        x0, x1 = dx - dw / 2, dx + dw / 2
+        p['wall'].box(x0, x1, Yb + dh + 0.6, Yb + h, zb - t, zb)
+        p['door'].box(x0 + 0.05, x1 - 0.05, Yb + 0.12, Yb + dh, zb - 0.45, zb - 0.35)                       # curtain
+        p['frame'].box(x0 + 0.05, x1 - 0.05, Yb, Yb + 0.12, zb - 0.47, zb - 0.33)                            # bottom rail
+        p['trim'].box(x0 - 0.25, x1 + 0.25, Yb + dh, Yb + dh + 0.6, zb - 0.1, zb + 0.4)                      # shutter hood
+        p['trim'].box(x0 - 0.3, x1 + 0.3, Yb + dh + 0.6, Yb + dh + 0.66, zb - 0.1, zb + 0.46)                # its weather cap
+        for sx in (x0, x1):                                                                                 # guide tracks
+            p['trim'].box(sx - 0.12, sx + 0.12, Yb, Yb + dh, zb - 0.5, zb - 0.3)
+            p['trim'].box(sx - 0.03, sx + 0.03, Yb, Yb + dh, zb - 0.3, zb - 0.02)
+        for a, b in ((x0 - 0.32, x0), (x1, x1 + 0.32)): p['frame'].box(a, b, Yb, Yb + dh + 0.6, zb - 0.02, zb + 0.06)   # jambs
+        p['frame'].box(x0 - 0.32, x1 + 0.32, Yb + dh + 0.66, Yb + dh + 0.96, zb - 0.02, zb + 0.06)                     # head
+        p['void'].box(x0, x1, Yb, Yb + dh + 0.6, zb - 0.62, zb - 0.52)
+        p['trim'].box(x0 - 0.3, x1 + 0.3, Yb, Yb + 0.035, zb - 0.5, zb + 0.25)                               # threshold plate
+        p['apron'].box(x0 - 1.4, x1 + 1.4, Yb - 0.04, Yb + 0.045, zb + 0.08, zb + 7.5)
+        for sx in (x0 - 0.62, x1 + 0.62): p['trim'].cyl((sx, Yb + 0.045, zb + 0.55), (sx, Yb + 1.15, zb + 0.55), 0.12, seg=12)   # guard posts
+        for lx in (dx - dw * 0.3, dx + dw * 0.3):                                                           # floodlights over the door
+            p['trim'].box(lx - 0.05, lx + 0.05, Yb + dh + 1.3, Yb + dh + 1.4, zb, zb + 0.55)
+            pbox(p['trim'], (lx - 0.38, Yb + dh + 1.18, zb + 0.45), (0.76, 0, 0), (0, 0.06, 0.42), (0, 0.24, -0.04))
+    # personnel door: leaf, frame, canopy, step
+    p['door'].box(pdoor[0], pdoor[1], Yb, Yb + 2.2, zb - 0.06, zb + 0.02)
+    p['frame'].box(pdoor[0] - 0.1, pdoor[1] + 0.1, Yb + 2.2, Yb + 2.3, zb - 0.02, zb + 0.06)
+    for a in (pdoor[0] - 0.1, pdoor[1]): p['frame'].box(a, a + 0.1, Yb, Yb + 2.2, zb - 0.02, zb + 0.06)
+    p['trim'].box(pdoor[0] - 0.4, pdoor[1] + 0.4, Yb + 2.45, Yb + 2.55, zb, zb + 0.9)
+    p['apron'].box(pdoor[0] - 0.5, pdoor[1] + 0.5, Yb - 0.04, Yb + 0.15, zb + 0.06, zb + 1.2)
+    # window rows: front between the openings, gables, back wall
+    def window(cx, cy, cz, ww, hh, nrm):
+        ax = abs(nrm[0]) > 0.5
+        def bx(part, du, dv, d0, d1):
+            if ax: part.box(cx + nrm[0] * d0, cx + nrm[0] * d1, cy - dv, cy + dv, cz - du, cz + du) if nrm[0] > 0 else part.box(cx + nrm[0] * d1, cx + nrm[0] * d0, cy - dv, cy + dv, cz - du, cz + du)
+            else: part.box(cx - du, cx + du, cy - dv, cy + dv, cz + nrm[2] * d0, cz + nrm[2] * d1) if nrm[2] > 0 else part.box(cx - du, cx + du, cy - dv, cy + dv, cz + nrm[2] * d1, cz + nrm[2] * d0)
+        bx(p['frame'], ww / 2 + 0.08, hh / 2 + 0.08, -0.02, 0.05)
+        bx(p['glass'], ww / 2, hh / 2, 0.0, 0.06)
+        sill_y = cy - hh / 2 - 0.1
+        if ax: p['frame'].box(min(cx, cx + nrm[0] * 0.16), max(cx, cx + nrm[0] * 0.16), sill_y - 0.04, sill_y + 0.03, cz - ww / 2 - 0.12, cz + ww / 2 + 0.12)
+        else: p['frame'].box(cx - ww / 2 - 0.12, cx + ww / 2 + 0.12, sill_y - 0.04, sill_y + 0.03, min(cz, cz + nrm[2] * 0.16), max(cz, cz + nrm[2] * 0.16))
+    wy = Yb + min(4.2, dh * 0.42)
+    for a, b in spans(xa + 0.6, xb - 0.6, holes + [pdoor], pad=0.9):
+        n = int((b - a) // 4.2)
+        for k in range(n): window(a + (b - a) * (k + 0.5) / n, wy, zb, 2.4, 1.2, (0, 0, 1))
+    for gx, sg in ([(xa, -1)] if damaged else [(xa, -1), (xb, 1)]):
+        n = int((dd - 4) // 5.0)
+        for k in range(n): window(gx, wy, za + 2 + (dd - 4) * (k + 0.5) / n, 2.4, 1.2, (sg, 0, 0))
+    n = int((wl - 6) // 7.5)
+    for k in range(n): window(xa + 3 + (wl - 6) * (k + 0.5) / n, wy, za, 2.4, 1.2, (0, 0, -1))
+    # wall lights: bulkhead fittings along the front and back walls under the eaves
+    for zz, sg in ((zb, 1), (za, -1)):
+        for lx in np.arange(xa + 6, xb - 4, 12.5):
+            if any(a - 1 < lx < b + 1 for a, b in holes): continue
+            ly = Yb + h - 1.6
+            p['trim'].box(lx - 0.24, lx + 0.24, ly - 0.17, ly + 0.17, min(zz, zz + sg * 0.26), max(zz, zz + sg * 0.26))
+            p['glass'].box(lx - 0.18, lx + 0.18, ly - 0.2, ly - 0.17, min(zz + sg * 0.03, zz + sg * 0.23), max(zz + sg * 0.03, zz + sg * 0.23))
+    # louvred vents high on the gables, ridge cowls, roof extractors, a service duct and fan housings on the back wall
     for gx, sgn in ([(xa, -1)] if damaged else [(xa, -1), (xb, 1)]):
         for vz in (z - dd * 0.22, z + dd * 0.22):
-            p['door'].box(gx + sgn * 0.01, gx + sgn * 0.07, Yb + h - 2.6, Yb + h - 0.9, vz - 1.3, vz + 1.3)
+            p['door'].box(min(gx + sgn * 0.01, gx + sgn * 0.07), max(gx + sgn * 0.01, gx + sgn * 0.07), Yb + h - 2.6, Yb + h - 0.9, vz - 1.3, vz + 1.3)
             for (a, b, c, e) in ((Yb + h - 2.7, Yb + h - 2.6, vz - 1.4, vz + 1.4), (Yb + h - 0.9, Yb + h - 0.8, vz - 1.4, vz + 1.4)):
-                p['trim'].box(min(gx, gx + sgn * 0.12), max(gx, gx + sgn * 0.12), a, b, c, e)
-            for vz2 in (vz - 1.4, vz + 1.3): p['trim'].box(min(gx, gx + sgn * 0.12), max(gx, gx + sgn * 0.12), Yb + h - 2.7, Yb + h - 0.8, vz2, vz2 + 0.1)
+                p['frame'].box(min(gx, gx + sgn * 0.12), max(gx, gx + sgn * 0.12), a, b, c, e)
+            for vz2 in (vz - 1.4, vz + 1.3): p['frame'].box(min(gx, gx + sgn * 0.12), max(gx, gx + sgn * 0.12), Yb + h - 2.7, Yb + h - 0.8, vz2, vz2 + 0.1)
     for vx in np.linspace(xa + 5, xb - 5, max(2, int(wl / 11))):
         p['trim'].cyl((vx, Yb + h + rise + 0.2, z), (vx, Yb + h + rise + 0.95, z), 0.42, seg=14)
         p['trim'].cyl((vx, Yb + h + rise + 0.95, z), (vx, Yb + h + rise + 1.2, z), 0.6, 0.25, seg=14)
     for vx in np.linspace(xa + 6, xb - 6, max(2, int(wl / 16))):
         p['trim'].box(vx - 0.7, vx + 0.7, Yb + h * 0.55, Yb + h * 0.55 + 1.2, za - 0.75, za)
         p['door'].box(vx - 0.55, vx + 0.55, Yb + h * 0.55 + 0.15, Yb + h * 0.55 + 1.05, za - 0.79, za - 0.75)
-    p['wall'].box(xa, xb, Yb + 1.1, Yb + h, za, za + t)
-    p['wall'].box(xa, xa + t, Yb + 1.1, Yb + h, za, zb)
-    if not damaged: p['wall'].box(xb - t, xb, Yb + 1.1, Yb + h, za, zb)
     # gable infills
     for gx in ([xa] if damaged else [xa, xb]):
         vs = [p['wall'].bm.verts.new(E(gx + s, Yb + h, za)) for s in (-t / 2, t / 2)] + [p['wall'].bm.verts.new(E(gx + s, Yb + h, zb)) for s in (t / 2, -t / 2)] + \
              [p['wall'].bm.verts.new(E(gx + s, Yb + h + rise, z)) for s in (-t / 2, t / 2)]
         bm = p['wall'].bm
         bm.faces.new((vs[0], vs[3], vs[4])); bm.faces.new((vs[1], vs[5], vs[2])); bm.faces.new((vs[0], vs[4], vs[5], vs[1])); bm.faces.new((vs[3], vs[2], vs[5], vs[4]))
-    # roof: two slabs with overhang, ridge cap, gutters and downpipes
+    # roof: two slabs with overhang, ridge cap, verge flashings, box gutters, swan-neck downpipes, roof lights, extractors
     ov = 0.7; rx0, rx1 = xa - ov, xb + (0 if damaged else ov)
+    y1 = Yb + h + rise
     for sgn in (-1, 1):
-        zr0, zr1 = z + sgn * (dd / 2 + ov), z
-        y0, y1 = Yb + h - ov * rise / (dd / 2), Yb + h + rise
+        zr0 = z + sgn * (dd / 2 + ov); zw = z + sgn * dd / 2
+        y0 = Yb + h - ov * rise / (dd / 2)
         bm = p['roof'].bm
-        a = [bm.verts.new(E(xx, yy, zz)) for xx, yy, zz in ((rx0, y0, zr0), (rx1, y0, zr0), (rx1, y1, zr1), (rx0, y1, zr1))]
-        b = [bm.verts.new(E(xx, yy + 0.16, zz)) for xx, yy, zz in ((rx0, y0, zr0), (rx1, y0, zr0), (rx1, y1, zr1), (rx0, y1, zr1))]
+        a = [bm.verts.new(E(xx, yy, zz)) for xx, yy, zz in ((rx0, y0, zr0), (rx1, y0, zr0), (rx1, y1, z), (rx0, y1, z))]
+        b = [bm.verts.new(E(xx, yy + 0.16, zz)) for xx, yy, zz in ((rx0, y0, zr0), (rx1, y0, zr0), (rx1, y1, z), (rx0, y1, z))]
         bm.faces.new(a[::-1] if sgn > 0 else a); bm.faces.new(b if sgn > 0 else b[::-1])
         for k in range(4):
             j = (k + 1) % 4; bm.faces.new((a[k], a[j], b[j], b[k]))
-        p['trim'].cyl((rx0, y0 - 0.05, zr0 + sgn * 0.05), (rx1, y0 - 0.05, zr0 + sgn * 0.05), 0.12, seg=10)
-        for dxp in np.linspace(xa + 0.6, xb - 0.6, max(2, int(wl / 15) + 1)):
-            p['trim'].cyl((dxp, y0 - 0.1, zr0 + sgn * 0.05), (dxp, Yb + 0.15, z + sgn * (dd / 2 + 0.12)), 0.055, seg=8)
-    p['trim'].box(rx0, rx1, Yb + h + rise + 0.1, Yb + h + rise + 0.32, z - 0.3, z + 0.3)
+        slope = np.array((0.0, y1 - y0, z - zr0)); nrm = np.array((0.0, abs(z - zr0), sgn * (y1 - y0))); nrm /= np.linalg.norm(nrm)
+        for vx in (rx0, rx1) if not damaged else (rx0,):                                                    # verge flashings
+            pbox(p['frame'], (vx - 0.07, y0 - 0.2, zr0), (0.14, 0, 0), slope, (0, 0.4, 0))
+        gz = sorted((zr0 - sgn * 0.04, zr0 + sgn * 0.24))                                                   # box gutter
+        p['frame'].box(rx0, rx1, y0 - 0.26, y0 + 0.02, gz[0], gz[1])
+        for dxp in np.linspace(xa + 0.6, xb - 0.6, max(2, int(wl / 15) + 1)):                               # downpipes
+            if sgn > 0 and any(a0 - 0.8 < dxp < b0 + 0.8 for a0, b0 in holes + [pdoor]): continue
+            pw = zw + sgn * 0.16
+            p['trim'].tube([(dxp, y0 - 0.26, zr0 + sgn * 0.1), (dxp, y0 - 0.55, zr0 + sgn * 0.1), (dxp, y0 - 1.1, pw), (dxp, Yb + 0.35, pw), (dxp, Yb + 0.12, pw + sgn * 0.3)], 0.075, seg=10)
+            for by in np.arange(Yb + 1.6, y0 - 1.2, 2.6): p['trim'].box(dxp - 0.04, dxp + 0.04, by, by + 0.05, min(zw, pw), max(zw, pw))
+        for sx in np.arange(xa + 4.5, xb - 3.5, 6.0):                                                         # translucent roof lights
+            o = np.array((sx - 0.5, y0 + 0.165, zr0)) + 0.3 * slope + nrm * 0.004
+            pbox(p['sky'], o, (1.0, 0, 0), 0.38 * slope, nrm * 0.02)
+        for k, sx in enumerate(np.linspace(xa + wl * 0.3, xb - wl * 0.3, 2)):                               # roof extractors
+            c = np.array((sx, y0 + 0.16, zr0)) + 0.72 * slope
+            p['trim'].cyl(tuple(c), tuple(c + np.array((0, 0.75, 0))), 0.34, seg=14)
+            p['trim'].cyl(tuple(c + np.array((0, 0.75, 0))), tuple(c + np.array((0, 1.0, 0))), 0.4, 0.12, seg=14)
+    p['frame'].box(rx0, rx1, y1 + 0.1, y1 + 0.3, z - 0.32, z + 0.32)                                        # ridge cap
     if i in (0, 1):
         p['band'].box(xa - 0.05, xb + (0 if damaged else 0.05), Yb + h * 0.8, Yb + h, za - 0.06, zb + 0.06)
     out = {k: v for k, v in p.items()}
     if damaged:
         hx = xb
-        fr = Part(f'shed{i}_frame'); deb = Part(f'shed{i}_debris'); sheet = Part(f'shed{i}_sheet')
+        fr = Part(f'shed{i}_portal'); deb = Part(f'shed{i}_debris'); sheet = Part(f'shed{i}_sheet')
         R = rng(21)
         for k in range(5):                     # portal frames still standing, bent and leaning
             fx = hx + 1.5 + k * w * 0.11; lean = 0.15 + k * 0.17; hh = h * (0.95 - k * 0.16)
@@ -1572,7 +1687,7 @@ def build_shed(i, x, z, w, dd, h, damaged):
             for v in res['verts']: v.co.z += math.sin(v.co.x * 1.7) * 0.25
             bmesh.ops.transform(sheet.bm, matrix=M2, verts=res['verts'])
         bmesh.ops.solidify(sheet.bm, geom=sheet.bm.faces[:], thickness=0.02)
-        out['frame'] = fr; out['debris'] = deb; out['sheet'] = sheet
+        out['portal'] = fr; out['debris'] = deb; out['sheet'] = sheet
     return out
 
 
@@ -1736,24 +1851,32 @@ def stage_yard():
         (yard['lanterns'][0].obj(), St('b_red', scan=S_paint, paint=(0.42, 0.05, 0.03), rust=0.4)),
         (yard['lanterns'][1].obj(), St('b_green', scan=S_paint, paint=(0.05, 0.25, 0.1), rust=0.4)),
     ], {'quay_top': 0.35, 'quay_wall': 1.6}))
-    # sheds
-    sp = []
+    # sheds: cladding, roof and shutters are their own meshes (the engine draws their ribs and slats); the atlas
+    # spends its texels on the fittings, the broad faces carry stains and light at half the density
+    sp = []; uvs = {}
+    glass_fn = lambda m: mat_surface('sh_glass', 'glass', m, scan=S_grain)
+    apron_fn = C('sh_apron', scan=S_conc, tile=3.0, tone=(0.8, 0.78, 0.74), streaks=0.0, weather=0.9)
+    sky_fn = St('sh_sky', scan=S_plate, paint=(0.6, 0.6, 0.53), rust=0.02, lumk=0.35, scanmix=0.2, dirt=0.9, paintrough=0.42, wear=0.0)
+    def tag(ob, en): ob['export'] = en; return ob
     for i, (x, z, w, dd, h, wc, rc, bc, nd, dmg) in enumerate(SHEDS):
         s = sheds[i]
-        sp += [(s['plinth'].obj(bevel=0.02), C(f'sh{i}_plinth', scan=S_wall, tile=2.5, streaks=0.6)),
-               (s['wall'].obj(bevel=0.0), St(f'sh{i}_wall', scan=S_clad, tile=2.0, paint=wc, rust=0.24, lumk=0.9, scanmix=0.55, wear=0.2, bump=0.9, bumpdist=0.04, fade=0.35, eave=QY + h, dirt=0.6,
-                                           seams=[('Z', 1.5, QY + 1.1 + 0.9, QY + 1.3, QY + h - 0.3)], seamw=0.035, seamdepth=0.25, runreach=0.7)),
-               (s['roof'].obj(bevel=0.0), St(f'sh{i}_roof', scan=S_clad, tile=2.0, paint=rc, rust=0.34, lumk=0.9, scanmix=0.55, wear=0.2, bump=0.9, bumpdist=0.04, fade=0.5, dirt=0.5,
-                                           seams=[('Y', 1.6, -z + 0.8, QY, QY + 60)], seamw=0.04, seamdepth=0.25)),
-               (s['door'].obj(bevel=0.01), St(f'sh{i}_door', scan=S_shut, tile=2.0, paint=tuple(c * 0.85 for c in rc), rust=0.3, lumk=1.0, scanmix=0.6)),
+        fc = tuple(c * 0.92 for c in bc) if bc else tuple(c * 0.55 for c in wc)
+        clad = dict(scan=S_paint, tile=3.0, rust=0.2, lumk=0.45, scanmix=0.3, wear=0.12, bump=0.0, fade=0.4, dirt=0.5, streaks=0.45, runreach=0.9, runrust=0.9, paintrough=0.45)
+        sp += [(s['plinth'].obj(bevel=0.02), C(f'sh{i}_plinth', scan=S_wall, tile=2.5, tone=(0.82, 0.79, 0.74), streaks=0.6, splash=(QY, 0.9, 0.8))),
+               (tag(s['wall'].obj(bevel=0.0), 'sheds_clad'), St(f'sh{i}_wall', paint=wc, eave=QY + h * (0.8 if bc else 1.0), eavek=0.9, eavereach=h * 0.55, eavecol=(0.55, 0.5, 0.43), splash=(QY + 1.1, 0.9, 0.35),
+                                                                 seams=[('Z', 1.6, QY + 1.4, QY + 1.3, QY + h - 0.3)], seamw=0.02, seamdepth=0.0, **clad)),
+               (tag(s['roof'].obj(bevel=0.0), 'sheds_roof'), St(f'sh{i}_roof', paint=rc, **{**clad, 'rust': 0.3, 'fade': 0.55, 'streaks': 0.3})),
+               (tag(s['door'].obj(bevel=0.01), 'sheds_shutter'), St(f'sh{i}_door', scan=S_paint, tile=2.0, paint=tuple(c * 0.85 for c in rc), rust=0.3, lumk=0.6, scanmix=0.3, bump=0.0, dirt=0.6, streaks=0.5, paintrough=0.55)),
                (s['trim'].obj(bevel=0.01), G(f'sh{i}_trim', rust=0.35)),
-               (s['void'].obj(), lambda m: mat_surface('void', 'glass', m, scan=S_grain))]
-        if bc: sp.append((s['band'].obj(), St(f'sh{i}_band', scan=S_clad, tile=2.0, paint=bc, rust=0.25, lumk=0.8, scanmix=0.5, bump=0.9, bumpdist=0.04)))
+               (s['frame'].obj(bevel=0.008, seg=1), St(f'sh{i}_frame', scan=S_paint, tile=2.0, paint=fc, rust=0.3, lumk=1.0, scanmix=0.35, fade=0.35, dirt=0.6, wear=0.4)),
+               (s['void'].obj(), glass_fn), (s['glass'].obj(), glass_fn), (s['apron'].obj(bevel=0.02), apron_fn), (s['sky'].obj(), sky_fn)]
+        if bc: sp.append((tag(s['band'].obj(), 'sheds_clad'), St(f'sh{i}_band', paint=bc, **{**clad, 'fade': 0.5})))
         if dmg:
-            sp += [(s['frame'].obj(), St(f'sh{i}_frame', scan=S_plate, paint=(0.08, 0.07, 0.065), rust=0.8)),
+            sp += [(s['portal'].obj(), St(f'sh{i}_portal', scan=S_plate, paint=(0.08, 0.07, 0.065), rust=0.8)),
                    (s['debris'].obj(smooth=30), C(f'sh{i}_debris', scan=S_debris, tile=3.0, tone=(0.8, 0.78, 0.75))),
-                   (s['sheet'].obj(), St(f'sh{i}_sheet', scan=S_clad, tile=2.0, paint=rc, rust=0.6, lumk=0.9, scanmix=0.5))]
-    groups.append(('sheds', 4096, sp, None))
+                   (s['sheet'].obj(), St(f'sh{i}_sheet', scan=S_paint, tile=2.0, paint=rc, rust=0.6, lumk=0.9, scanmix=0.5))]
+        uvs.update({f'shed{i}_wall': 0.55, f'shed{i}_roof': 0.45, f'shed{i}_band': 0.55, f'shed{i}_apron': 0.5, f'shed{i}_plinth': 0.8})
+    groups.append(('sheds', 3072, sp, uvs))
     # yard objects, craft, buoys
     cpal = [(0.3, 0.1, 0.07), (0.1, 0.18, 0.26), (0.35, 0.3, 0.2), (0.16, 0.2, 0.16), (0.34, 0.34, 0.33)]
     misc = [(c.obj(bevel=0.03, seg=1), St(f'cont{k}', scan=S_cont, tile=2.44, paint=cpal[k], rust=0.45, lumk=0.9, scanmix=0.5, bump=0.8, bumpdist=0.03)) for k, c in enumerate(yard['containers'])]

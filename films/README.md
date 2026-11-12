@@ -103,6 +103,14 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   B metal), OpenGL normal.
 - Sources are cached in `$DOW_CACHE` (default `/opt/dow-cache`) and never committed; the exported `.glb`
   files are, so the films build without Blender.
+- `blender/port.py` builds film 3's harbour in stages (`node tools/blender.mjs port rocklib|rocks|hero|yard`;
+  a group name after the stage, e.g. `port yard sheds` or `port hero sub`, re-bakes only that group, `draft`
+  bakes at quarter size). Structures are baked per group into one atlas each (base, ORM, normal, and a light
+  map: R occlusion, G sun visibility for the film's fixed sun); stones carry the same light per vertex.
+  `src/corsair_port.js` loads the `port_*.glb` files and adds what an atlas cannot hold, filtered to the pixel:
+  the box-profile ribs, sheet tones and fastener rows of the shed cladding (meshes `sheds_clad`, `sheds_roof`),
+  the slats of the roller shutters (`sheds_shutter`), the wet and weed bands of the rock at the water; and it
+  widens thin tubes and bars (rails, posts, ropes, downpipes, found at load time) to about a pixel at any range.
 - `src/lookdev.js` is a turntable for checking any packed asset under the films' sky and grade:
   `node tools/shot.mjs lookdev <prefix> --q="glb=quarterhorse/quarterhorse.glb&el=10&dist=20" t` (t from 0 to 12
   orbits once; `--q` passes any URL parameters to the page).
@@ -160,7 +168,10 @@ outwards) and draws lace foam and stirred water against it; `src/corsair_port.js
 models (`port.userData.shoreMap(renderer)`).
 
 **Effects** (`engine/fx.js`): `makePlume` (ray-marched afterburner with shock cells), `makeHeatHaze`,
-`makeShockCone`, `Trail` (stateless particles), `makeGlow`.
+`makeShockCone`, `Trail` (stateless particles), `makeGlow`. Film 3's detonations are `src/corsair_fx.js`
+(`makeBlast(pipe, {x, z, T, ocean, wind, dust, water})`, then `finishBlasts(film)` once per frame): one sorted
+cloud of camera-facing particles cut out of 3D billow noise (soot, spray, mist, debris), all a pure function of
+film time.
 
 **Development tools**: `node tools/shot.mjs <film> <outPrefix> [--w --h --nres --prof=1 --off=a,b
 --cam=x,y,z,lookx,looky,lookz,fov --debug=scene|ao|vel|tile] t1 t2 …` renders stills at film times;

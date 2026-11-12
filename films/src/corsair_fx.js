@@ -2,9 +2,13 @@
 // Every part is a pure function of film time, so frames render in any order:
 //   - a hard flash for a frame or two, and the light it throws on the pier, the gantry and the hull;
 //   - a fireball that lasts a few tenths of a second and rolls over into its own soot (a rising, turning head);
-//   - a column of white water: fibrous jets that go up fast, hang, and fall back as curtains, a low crown of
-//     spray thrown outwards, a base surge of mist along the surface, and foam spreading on the water;
-//   - debris: small fast fragments blurred along their flight, each landing with a small splash and a ring;
+//   - a column of white water: a dense mass that goes straight up, with ragged spires of spray standing out of its
+//     crown (each a string of puffs along one steep path, stretched along their flight so the spray reads as
+//     fibres); slowing at the top the spray thins into mist, the mass slumps and falls back as curtains, a base
+//     surge of mist rolls out along the surface and drifts downwind, and foam spreads on the water;
+//   - the soot of the fireball, held inside the water column at first (dirty spray) and thrown out to the lee side;
+//   - debris: small fast fragments blurred along their flight, some still glowing, each landing in the sea with a
+//     small splash and a ring;
 //   - a pressure ring racing out across the water (and a refraction shell in the air);
 //   - dust shaken off the pier and the gantry when the shock reaches them;
 //   - a turbulent smoke column fed by the fire at the foot of the pier, leaning with the wind and paling.
@@ -61,6 +65,10 @@ void main(){
     float px = size/max(-mv.z, 0.1)*projectionMatrix[1][1]*uRes.y*0.5;
     thin = min(px/0.85, 1.0); size /= thin;
     len = min(max(iC.w*thin, 1.0)+0.5*sp*uShutter/size, kind > 2.5 ? 40.0 : 4.0);   // its own shape, smeared by its speed over the open shutter
+  } else if (iC.w > 1.01){
+    // spray in flight: the puff lines up with its motion and stretches with its speed (the noise in it becomes fibres)
+    vec3 vv = (viewMatrix*vec4(iVel, 0.0)).xyz; float sp = length(vv.xy);
+    if (sp > 0.3){ ax = vv.xy/sp; len = 1.0+(iC.w-1.0)*smoothstep(1.0, 22.0, sp); }
   }
   vec2 s0 = (projectionMatrix*mv).xy/max(-mv.z, 1e-3);
   mv.xy += (ax*position.x*len+vec2(-ax.y, ax.x)*position.y)*size;
@@ -93,7 +101,9 @@ void main(){
   if (kind < 1.5){
     // smoke, mist: an island of billow noise inside the quad; the threshold rises as the puff ages and thins
     if (r2 >= 1.0) discard;
-    vec3 nq = vec3(q*0.21+vec2(seed*3.71, seed*7.13), seed*5.3+vD.x*0.03);
+    float sf = clamp((vC.z-1.0)/1.2, 0.0, 1.0);                                       // stretched spray: fibres along the flight
+    float wetq = smoothstep(0.5, 0.8, vB.g);
+    vec3 nq = vec3(q*vec2(mix(0.21, 0.11, sf), mix(0.21, 0.38, sf))*mix(1.0, 1.55, wetq)+vec2(seed*3.71, seed*7.13), seed*5.3+vD.x*0.03);
     vec4 n1 = texture(tNoise3, nq);
     vec4 n2 = texture(tNoise3, nq*3.3+vec3(0.37, 0.11, 0.53));
     float det = texture2D(tDetail, q*0.23+vec2(seed*9.7, seed*4.3)).r;
@@ -113,6 +123,7 @@ void main(){
     vec3 alb = vB.rgb*(kind < 0.5 ? mix(1.0, mix(0.6, 0.9, wet), core) : 1.0);
     col = alb*(sun*sunT*sh+amb*(0.45+0.55*sh)*(kind < 0.5 ? mix(1.0-0.35*core, 1.25-0.15*core, wet) : 1.3));
     if (kind > 0.5) col += vB.rgb*sun*pow(max(vS.w, 0.0), 5.0)*0.55*(1.0-0.7*core)*(0.4+0.6*sh);     // mist glows towards the sun
+    else col += vB.rgb*sun*pow(max(vS.w, 0.0), mix(4.0, 3.0, wet))*mix(1.3, 0.7, wet)*(1.0-mix(0.8, 0.6, wet)*core)*sh;   // thin edges light up towards the sun: soot brown, spray silver
     col += alb*uFireCol*vD.y;
     if (vC.y > 0.002){
       float cracks = clamp(1.25-1.5*big, 0.0, 1.0)*(0.4+1.2*fine);               // as it cools the billows soot over and the creases still glow
@@ -139,6 +150,7 @@ void main(){
     float e = (1.0-q.y*q.y)*(1.0-q.x*q.x);
     a = smoothstep(0.0, 0.45, e);
     col = vB.rgb*(sun*0.55+amb)+vB.rgb*uFireCol*vD.y*4.0;
+    if (vC.y > 0.002) emis = fireRamp(vC.y)*vC.y*uFire*a*0.6;                       // a hot fragment, cooling in flight
   }
   a *= vB.a*soft;
   if (a < 0.003) discard;
@@ -235,7 +247,7 @@ void main(){
 // water, ages in seconds; both drift downwind faster the higher they are.
 const headY = a => 3.0 + 9.0 * (1 - Math.exp(-a / 1.0)) + 3.4 * a / (1 + a / 60);
 const headR = a => 6.6 * (1 - Math.exp(-a / 0.11)) * (1 + 0.05 * a);
-const roll = a => 1.5 * a / (1 + a / 2.2);
+const roll = a => 0.9 * a / (1 + a / 1.5);
 const PL = { y0: 1.4, h1: 10, t1: 2.5, w: 2.4, r0: 1.5, rk: 1.25, rp: 0.8 };
 const plumeY = al => PL.y0 + PL.h1 * (1 - Math.exp(-al / PL.t1)) + PL.w * al;
 const plumeR = al => PL.r0 + PL.rk * Math.pow(al, PL.rp);
@@ -252,7 +264,7 @@ function ballistic(q, a, wx, wz, out) {
 // ---------------------------------------------------------------- one detonation
 // o: { x, z, T, noise3 (3D billow noise; the cloud layer's), ocean (foam and splash rings), wind: [x, z] m/s at
 //      10 m, seed, scale (1 = a boat-borne charge against a pier), dust: [[x0,y0,z0, x1,y1,z1], ...] edges the
-//      shock shakes, light: false to skip the fireball's point light }
+//      shock shakes, light: false to skip the fireball's point light, water(x, z): true where debris lands in the sea }
 const clouds = new WeakMap();
 export function makeBlast(pipe, o) {
   const X = o.x, Z = o.z, T = o.T, seed = o.seed ?? Math.round(X * 7 + Z * 13), sc = o.scale ?? 1;
@@ -268,11 +280,13 @@ export function makeBlast(pipe, o) {
 
   // ---- the head: the fireball's own gas, thrown out in a tenth of a second, then rising and turning over
   const head = [];
-  const lobes = []; for (let j = 0; j < 7; j++) { const az = r() * 6.2832, cy = 0.15 + 0.85 * r(), sy = Math.sqrt(1 - cy * cy); lobes.push([Math.cos(az) * sy, cy, Math.sin(az) * sy, 0.65 + 0.8 * r()]); }
+  // lobes thrown mostly up and to the lee side (never a full ring round the column, which would read as a doughnut)
+  const waz = Math.atan2(wind[1], wind[0]);
+  const lobes = []; for (let j = 0; j < 7; j++) { const az = waz + (j / 6 - 0.5) * 3.4 + (r() - 0.5) * 0.5, cy = 0.35 + 0.65 * r(), sy = Math.sqrt(1 - cy * cy); lobes.push([Math.cos(az) * sy, cy, Math.sin(az) * sy, 0.65 + 0.8 * r()]); }
   for (let i = 0; i < 90; i++) {
-    const L = lobes[i % 7], az = r() * 6.2832, cy = 2 * r() - 1, sy = Math.sqrt(1 - cy * cy), j = 0.75;
+    const L = lobes[i % 7], az = r() * 6.2832, cy = 2 * r() - 1, sy = Math.sqrt(1 - cy * cy), j = 0.9;
     let dx = L[0] + j * Math.cos(az) * sy, dy = Math.max(L[1] + j * cy, 0.03), dz = L[2] + j * Math.sin(az) * sy; const dl = Math.hypot(dx, dy, dz);
-    head.push({ d: [dx / dl, dy / dl, dz / dl], s0: (14 + 40 * Math.pow(r(), 0.7)) * L[3] * sc, t0: r() * 0.03, u: r(), seed: r(), rv: (r() - 0.5) * 1.6, size: 0.75 + 0.55 * r() });
+    head.push({ d: [dx / dl, dy / dl, dz / dl], s0: (14 + 40 * Math.pow(r(), 0.7)) * L[3] * sc, t0: r() * 0.03, u: r(), seed: r(), rv: (r() - 0.5) * 1.6, size: 0.75 + 0.55 * r(), alb: 0.72 + 0.56 * r() });
   }
   // ---- water
   const core = [], jets = [], mist = [], debris = [], st = new Float32Array(6);
@@ -281,26 +295,35 @@ export function makeBlast(pipe, o) {
   // 10 m up in 0.3 s, tops out near 25 m at two seconds, then slumps back and spreads. The first water out is the
   // fastest; a wider, slower part makes the shoulders round its foot
   for (let i = 0; i < 190; i++) {
+    // every parcel goes up steeply (nothing is thrown out sideways to hang on its own); the shoulders are the slow,
+    // wide parcels at the foot
     const az = r() * 6.2832, late = r() * r(), steep = r() < 0.7;
-    const el = (steep ? 90 - 9 * r() : 80 - 34 * r()) * Math.PI / 180, sp = (steep ? 26 + 28 * Math.pow(r(), 0.75) : 12 + 16 * r()) * (1 - 0.45 * late) * Math.sqrt(sc), ce = Math.cos(el), rr = 2.4 * Math.sqrt(r()) * sc;
+    const el = (steep ? 90 - 8 * r() : 86 - 10 * r()) * Math.PI / 180, sp = (steep ? 26 + 28 * Math.pow(r(), 0.75) : 9 + 12 * r()) * (1 - 0.45 * late) * Math.sqrt(sc), ce = Math.cos(el), rr = (steep ? 2.4 * Math.sqrt(r()) : 2.2 + 2.6 * r()) * sc;
     const q = { t0: T + 0.01 + 0.34 * late, p: [X + Math.cos(az) * rr, 0.3, Z + Math.sin(az) * rr], v: [Math.cos(az) * ce * sp, Math.sin(el) * sp, Math.sin(az) * ce * sp],
       k: 0.95 + 0.6 * r(), grav: 0.55 + 0.25 * r(), s0: 0.9 + 0.5 * r(), s1: 2.6 + 1.5 * r(), a: 0.8 + 0.2 * r(), seed: r(), rv: (r() - 0.5) * 1.2, ph: r() * 6.2832, floor: 0.2 };
     q.life = Math.min(flight(q, 10), 9); core.push(q);
   }
-  // fingers: short ragged jets that outrun the mass at its leading edge and break up within a second or two, and
-  // the drops flung ahead of them. Each bundle shares a direction; gravity bends the path; nothing is drawn
-  // longer than its own speed smears it over the shutter
-  const bundle = (n, steep) => {
-    const az = r() * 6.2832, el = (steep ? 76 + 13 * r() : 40 + 30 * r()) * Math.PI / 180, V = (steep ? 40 + 20 * r() : 20 + 14 * r()) * Math.sqrt(sc), kk = 0.55 + 0.3 * r(), r0 = 1.4 * Math.sqrt(r()) * sc, a0 = r() * 6.2832;
+  // spikes: the jets that stand out of the crown. Each is a string of spray thrown along one steep path, the
+  // fastest water at its head; drawn as puffs stretched along their flight, they read as ragged, feathered spires
+  // that bend over under gravity, thin out as they slow and fall back as rain. A few fine fibres fly off the tips.
+  const spike = (steep) => {
+    const az = r() * 6.2832, el = (steep ? 77 + 12 * r() : 70 + 10 * r()) * Math.PI / 180, V = (steep ? 36 + 24 * r() : 26 + 14 * r()) * Math.sqrt(sc);
+    const kk = 0.45 + 0.3 * r(), r0 = 1.5 * Math.sqrt(r()) * sc, a0 = r() * 6.2832, n = steep ? 10 : 7;
     for (let i = 0; i < n; i++) {
-      const drop = i >= n * 0.55, a2 = az + (r() - 0.5) * (drop ? 0.5 : 0.03), e2 = Math.min(el + (r() - 0.5) * (drop ? 0.4 : 0.03), 1.56), ce = Math.cos(e2), sp = V * (drop ? 0.55 + 0.75 * r() : 0.55 + 0.45 * (i + r()) / (n * 0.55));      // one path, the water strung out along it by speed
-      const q = { t0: T + 0.01 + 0.03 * r(), p: [X + Math.cos(a0) * r0, 0.3, Z + Math.sin(a0) * r0], v: [Math.cos(a2) * ce * sp, Math.sin(e2) * sp, Math.sin(a2) * ce * sp],
-        k: drop ? kk + 0.5 + 0.5 * r() : kk, grav: 1, w0: drop ? 0.05 + 0.06 * r() : 0.3 + 0.2 * r(), w1: drop ? 0.12 + 0.1 * r() : 0.9 + 0.6 * r(), a: drop ? 0.3 + 0.35 * r() : 0.45 + 0.25 * r(), seed: r(), floor: -0.2 };
-      q.life = Math.min(flight(q, 7), drop ? 0.8 + 1.0 * r() : 1.5 + 1.3 * r()); jets.push(q);
+      const f = (i + 0.3 + 0.5 * r()) / n, sp = V * (0.3 + 0.7 * f), a2 = az + (r() - 0.5) * 0.1, e2 = Math.min(el + (r() - 0.5) * 0.08, 1.56), ce = Math.cos(e2);
+      const q = { t0: T + 0.01 + 0.06 * r(), p: [X + Math.cos(a0) * r0, 0.4, Z + Math.sin(a0) * r0], v: [Math.cos(a2) * ce * sp, Math.sin(e2) * sp, Math.sin(a2) * ce * sp],
+        k: kk + 0.35 * (1 - f), grav: 0.85, s0: (0.25 + 0.2 * r()) * (0.6 + 0.6 * f), s1: (1.0 + 1.0 * r()) * (0.6 + 0.7 * f), a: 0.5 + 0.3 * r(), seed: r(), floor: 0.2, fib: false };
+      q.life = Math.min(flight(q, 6), 1.4 + 1.6 * r()); jets.push(q);
+    }
+    for (let i = 0; i < (steep ? 3 : 2); i++) {
+      const sp = V * (0.9 + 0.25 * r()), a2 = az + (r() - 0.5) * 0.3, e2 = Math.min(el + (r() - 0.5) * 0.25, 1.56), ce = Math.cos(e2);
+      const q = { t0: T + 0.01 + 0.03 * r(), p: [X + Math.cos(a0) * r0, 0.4, Z + Math.sin(a0) * r0], v: [Math.cos(a2) * ce * sp, Math.sin(e2) * sp, Math.sin(a2) * ce * sp],
+        k: kk + 0.6 + 0.5 * r(), grav: 1, w0: 0.04 + 0.04 * r(), w1: 0.1 + 0.1 * r(), a: 0.22 + 0.15 * r(), seed: r(), floor: -0.2, fib: true };
+      q.life = Math.min(flight(q, 6), 0.7 + 0.8 * r()); jets.push(q);
     }
   };
-  for (let g = 0; g < 14; g++) bundle(11, true);
-  for (let g = 0; g < 12; g++) bundle(10, false);
+  for (let g = 0; g < 17; g++) spike(true);
+  for (let g = 0; g < 5; g++) spike(false);
   // mist: what the column sheds as it slumps. It hangs low, spreads along the surface and drifts off downwind
   for (let i = 0; i < 70; i++) {       // high: the fine part left hanging where the column stood
     const az = r() * 6.2832, rr = (0.5 + 2.8 * r()) * sc;
@@ -314,14 +337,16 @@ export function makeBlast(pipe, o) {
   }
   // ---- debris: small, fast, most of it gone in a second; each piece lands with a little splash and a ring
   const splash = [];
-  for (let i = 0; i < 46; i++) {
-    const az = r() * 6.2832, el = (8 + 74 * Math.pow(r(), 0.8)) * Math.PI / 180, sp = (16 + 44 * Math.pow(r(), 1.3)) * Math.sqrt(sc), big = r() < 0.2;
-    const q = { t0: T + 0.01 + r() * 0.04, p: [X, 1.0 + r() * 1.5, Z], v: [Math.cos(az) * Math.cos(el) * sp, Math.sin(el) * sp, Math.sin(az) * Math.cos(el) * sp],
-      k: big ? 0.07 : 0.14 + 0.2 * r(), grav: 1, w: big ? 0.055 + 0.04 * r() : 0.02 + 0.03 * r(), st: 1.5 + 2.5 * r(), seed: r(), big };
+  for (let i = 0; i < 64; i++) {
+    // most fragments are thrown low and lose their speed fast (a few metres to a few tens up); a few heavy ones arc higher
+    const big = r() < 0.15, az = r() * 6.2832, el = (6 + 58 * Math.pow(r(), 1.3)) * Math.PI / 180, sp = (20 + 36 * Math.pow(r(), 1.4)) * Math.sqrt(sc);
+    const q = { t0: T + 0.01 + r() * 0.04, p: [X + (r() - 0.5) * 1.5, 0.8 + r() * 1.5, Z + (r() - 0.5) * 1.5], v: [Math.cos(az) * Math.cos(el) * sp, Math.sin(el) * sp, Math.sin(az) * Math.cos(el) * sp],
+      k: big ? 0.25 + 0.1 * r() : 0.7 + 0.8 * r(), grav: 1, w: big ? 0.05 + 0.035 * r() : 0.016 + 0.022 * r(), st: 1.5 + 2.5 * r(), seed: r(), big, hot: r() < 0.3 ? 0.25 + 0.4 * r() : 0 };
     q.life = flight(q, 9); if (q.life >= 9) continue;
     debris.push(q);
     ballistic(q, q.life, 0, 0, st);
     const lx = st[0], lz = st[2], tl = q.t0 + q.life, n = big ? 7 : 4;
+    if (o.water && !o.water(lx, lz)) continue;          // came down on the quay or the pier: no splash
     for (let j = 0; j < n; j++) {
       const a2 = r() * 6.2832, s2 = (2.2 + 3.2 * r()) * (big ? 1.5 : 1);
       splash.push({ t0: tl + r() * 0.03, p: [lx, 0.05, lz], v: [Math.cos(a2) * s2 * 0.22, s2, Math.sin(a2) * s2 * 0.22], k: 0.6, grav: 1, w0: 0.035, w1: big ? 0.2 : 0.11, st: 3 + 2 * r(), a: 0.75, seed: r(), life: 0.45 + 0.4 * r(), floor: -0.2 });
@@ -365,11 +390,12 @@ export function makeBlast(pipe, o) {
     group.visible = live;
     if (!live) return 0;
     const A = Math.max(a, 0), sunD = film.pipe.atmo.sunDir;
+    const only = film.params && film.params.get('bfx'), on = k => !only || only.split(',').includes(k);   // dev: ?bfx=head,plume,core,jets,mist,splash,debris
     const sh = Math.hypot(sunD.x, sunD.z) || 1, sx = sunD.x / sh, sz = sunD.z / sh;
     tmp.set(X, 0, Z); film.place(group, tmp);
     const fire = 7.0 * Math.exp(-A / 0.1) + 1.6 * Math.exp(-A / 0.32);                 // the fireball's light on what is near it
     const glowNear = A > 0 ? 0.5 * Math.exp(-A / 0.1) + 0.06 * Math.exp(-A / 0.35) : 0;
-    if (A > 0) {
+    if (A > 0 && on('head')) {
       // ---- head
       const hy = headY(A) * sc, hR = headR(A) * sc, hd = A * shear(hy * 0.7), hx = X + wind[0] * hd * 0.85, hz = Z + wind[1] * hd * 0.85, ph = roll(A), cs = Math.cos(ph), sn = Math.sin(ph);
       const grow = 1 + 0.05 * A, hAlpha = 0.95 * smooth(30, 55, 85 - A) / (1 + A / 10), hAlb = 0.055 + 0.22 * smooth(1.0, 22, A), hEro = 0.06 + 0.5 * smooth(1.5, 32, A);
@@ -385,9 +411,14 @@ export function makeBlast(pipe, o) {
         const em = (15 * Math.exp(-aa / 0.075) + 4.0 * Math.exp(-aa / 0.16) * (0.4 + c.u) + 0.45 * Math.exp(-aa / 0.5) * c.u * c.u) * smooth(0, 0.012, aa);
         const size = (1.1 + 2.5 * (1 - Math.exp(-aa / 0.16))) * c.size * sc * (1 + 0.075 * aa);
         const warm = 1 - smooth(2, 20, A);
-        cloud.push(hx + ox, Math.max(hy + oy, 0.6), hz + oz, 0, 0, 0, size, c.seed, K_SMOKE, hEro + 0.1 * c.u, hAlb * (1 + 0.1 * warm), hAlb, hAlb * (1 - 0.14 * warm),
-          hAlpha * smooth(0, 0.02, aa), shade, em, c.seed * 6.283 + c.rv * aa / (1 + aa / 4), 1, aa, 0);
+        const incol = 1 - smooth(2.0, 6.0, Math.hypot(ox, oz)), early = smooth(0.25, 0.6, aa) * (1 - smooth(0.6, 2.2, aa));   // in the water column, once the fireball is out, while the column stands
+        const hid = 1 - early * (0.35 + 0.4 * incol);
+        const ab = hAlb * c.alb * (1 + 1.6 * early * incol);                                                    // soot through spray: dirty grey
+        cloud.push(hx + ox, Math.max(hy + oy, 0.6), hz + oz, 0, 0, 0, size, c.seed, K_SMOKE, hEro + 0.1 * c.u, ab * (1.04 + 0.12 * warm), ab, ab * (0.94 - 0.14 * warm),
+          hAlpha * smooth(0, 0.02, aa) * hid, shade, em, c.seed * 6.283 + c.rv * aa / (1 + aa / 4), 1, aa, 0);
       }
+    }
+    if (A > 0 && on('plume')) {
       // ---- the column behind it
       const k1 = Math.floor((t - T0C) * RATE), k0 = Math.max(0, Math.ceil((t - T0C - LIFE) * RATE));
       for (let k = k0; k <= k1; k++) {
@@ -399,14 +430,14 @@ export function makeBlast(pipe, o) {
         const alpha = 0.82 * smooth(0, 0.3, al) / (1 + al / 5.5) * (1 - smooth(0.7 * LIFE, LIFE, al)) * src;
         const depth = clamp((R - (ox * sx + oz * sz)) / (2 * R)), opac = clamp(alpha * 2.2);
         const shade = 1 - opac + opac * Math.max(Math.exp(-2.8 * depth), 0.06);
-        const alb = 0.05 + 0.33 * smooth(0.5, 15, al), fl = al < 0.8 ? 2.0 * (1 - al / 0.8) ** 2 * (0.6 + 0.4 * Math.sin(t * 21 + u4 * 40)) * (0.4 + u5) * src : 0;
+        const alb = (0.05 + 0.33 * smooth(0.5, 15, al)) * (0.8 + 0.4 * u3), fl = al < 0.8 ? 2.0 * (1 - al / 0.8) ** 2 * (0.6 + 0.4 * Math.sin(t * 21 + u4 * 40)) * (0.4 + u5) * src : 0;
         cloud.push(X + wind[0] * al * shr + ox, y + (u6 - 0.5) * 0.7 * R, Z + wind[1] * al * shr + oz, 0, 0, 0, R * (0.55 + 0.5 * u5), u4, K_SMOKE, 0.1 + 0.42 * smooth(1, LIFE, al) + 0.08 * u6,
           alb * 1.04, alb, alb * 0.95, alpha, shade, fl, u2 * 6.283 + (u3 - 0.5) * 0.5 * al, 1, al, 0);
       }
     }
     // ---- water
     const wx = wind[0] * 0.3, wz = wind[1] * 0.3;
-    for (const q of core) {
+    for (const q of on('core') ? core : []) {
       const aa = t - q.t0; if (aa <= 0 || aa >= q.life) continue;
       ballistic(q, aa, wx, wz, st);
       const f = aa / q.life, size = (q.s0 + (q.s1 - q.s0) * (1 - Math.exp(-aa / 1.1))) * sc, wob = 0.3 * size * Math.min(aa, 1);
@@ -415,19 +446,28 @@ export function makeBlast(pipe, o) {
       const fall = st[4] < 0 ? smooth(-1, -7, st[4]) : 0;                                   // falling back: the mass thins into curtains
       const alpha = q.a * smooth(0, 0.03, aa) * (1 - smooth(0.72, 1, f)) / (1 + 0.1 * aa * aa), shade = Math.max(Math.exp(-1.8 * depth), 0.36) * (0.72 + 0.28 * smooth(0, 7, y));
       const gl = glowNear * Math.exp(-(ox * ox + oz * oz + y * y) / 150);
-      cloud.push(x, y, z, 0, 0, 0, size, q.seed, K_SMOKE, 0.04 + 0.42 * smooth(0.2, 1, f) + 0.1 * fall, 0.9, 0.92, 0.94, alpha * (1 - 0.55 * fall), shade, 0, q.seed * 6.283 + q.rv * aa / (1 + aa / 3), 1, aa, gl);
+      cloud.push(x, y, z, st[3], st[4], st[5], size, q.seed, K_SMOKE, 0.04 + 0.42 * smooth(0.2, 1, f) + 0.1 * fall, 0.93, 0.95, 0.97, alpha * (1 - 0.55 * fall), shade, 0, q.seed * 6.283 + q.rv * aa / (1 + aa / 3), 1.7, aa, gl);
       if (fall > 0.01) cloud.push(x, y - 0.5 * size, z, st[3], st[4], st[5], size * 0.75, q.seed + 0.31, K_WATER, 0.22 + 0.25 * f, 0.9, 0.92, 0.94, alpha * fall * 0.75, shade, 0, 0, 2.2, aa, 0);
     }
-    for (const q of jets) {
+    for (const q of on('jets') ? jets : []) {
       const aa = t - q.t0; if (aa <= 0 || aa >= q.life) continue;
       ballistic(q, aa, wx, wz, st);
-      const f = aa / q.life, w = (q.w0 + (q.w1 - q.w0) * Math.pow(f, 0.7)) * sc;
-      const ox = st[0] - X, oz = st[2] - Z, depth = clamp((5 - (ox * sx + oz * sz)) / 10);
-      cloud.push(st[0], st[1], st[2], st[3], st[4], st[5], w, q.seed, K_WATER, 0.04 + 0.5 * smooth(0.3, 1, f), 0.9, 0.92, 0.94,
-        q.a * smooth(0, 0.03, aa) * (1 - smooth(0.6, 1, f)) * clamp((st[1] + 0.6) / 1.2), Math.max(Math.exp(-1.4 * depth), 0.4), 0, 0, 1, aa, glowNear * Math.exp(-(ox * ox + oz * oz + st[1] * st[1]) / 150));
+      const f = aa / q.life, ox = st[0] - X, oz = st[2] - Z, depth = clamp((5 - (ox * sx + oz * sz)) / 10), spd = Math.hypot(st[3], st[4], st[5]);
+      const gl = glowNear * Math.exp(-(ox * ox + oz * oz + st[1] * st[1]) / 150), lo = clamp((st[1] + 0.6) / 1.2);
+      if (q.fib) {
+        const w = (q.w0 + (q.w1 - q.w0) * Math.pow(f, 0.7)) * sc;
+        cloud.push(st[0], st[1], st[2], st[3], st[4], st[5], w, q.seed, K_WATER, 0.1 + 0.5 * smooth(0.3, 1, f), 0.92, 0.94, 0.96,
+          q.a * smooth(0, 0.03, aa) * (1 - smooth(0.5, 1, f)) * lo, Math.max(Math.exp(-1.4 * depth), 0.45), 0, 0, 1, aa, gl);
+      } else {
+        // slowing at the top of its flight the spray spreads into mist and thins: no clot of water is left hanging
+        const size = (q.s0 + (q.s1 - q.s0) * (1 - Math.exp(-aa / 0.7))) * sc * (1 + 0.6 * smooth(10, 2, spd) * smooth(0.3, 1.2, aa));
+        const alpha = q.a * smooth(0, 0.04, aa) * (1 - smooth(0.55, 1, f)) * (0.12 + 0.88 * smooth(3, 13, spd)) * lo;
+        cloud.push(st[0], st[1], st[2], st[3], st[4], st[5], size, q.seed, K_SMOKE, 0.08 + 0.4 * smooth(0.25, 1, f) + 0.25 * smooth(10, 3, spd), 0.93, 0.95, 0.97,
+          alpha, Math.max(Math.exp(-1.2 * depth), 0.45), 0, q.seed * 6.283, 2.1, aa, gl);
+      }
     }
     const mw = [wind[0], wind[1]];
-    for (const q of mist) {
+    for (const q of on('mist') ? mist : []) {
       const aa = t - q.t0; if (aa <= 0 || aa >= q.life) continue;
       ballistic(q, aa, mw[0] * q.wk, mw[1] * q.wk, st);
       if (st[1] < 0.3) st[1] = 0.3 + (0.3 - st[1]) * 0.2;
@@ -435,17 +475,17 @@ export function makeBlast(pipe, o) {
       cloud.push(st[0], st[1], st[2], 0, 0, 0, (q.s0 + (q.s1 - q.s0) * Math.pow(f, 0.55)) * sc, q.seed, K_MIST, 0.07 + q.e1 * smooth(0.15, 1, f), q.col[0], q.col[1], q.col[2],
         q.a * smooth(0, 0.08, f) * (1 - smooth(0.6, 1, f)), Math.max(Math.exp(-1.6 * depth), 0.3), 0, q.seed * 6.283 + q.rv * aa, 1, aa, glowNear * Math.exp(-(ox * ox + oz * oz + st[1] * st[1]) / 150));
     }
-    for (const q of splash) {
+    for (const q of on('splash') ? splash : []) {
       const aa = t - q.t0; if (aa <= 0 || aa >= q.life) continue;
       ballistic(q, aa, 0, 0, st); if (st[1] < q.floor) continue;
       const f = aa / q.life;
       cloud.push(st[0], st[1], st[2], st[3], st[4], st[5], q.w0 + (q.w1 - q.w0) * Math.sqrt(f), q.seed, K_WATER, 0.05 + 0.3 * f, 0.92, 0.94, 0.95, q.a * (1 - smooth(0.5, 1, f)), 1, 0, 0, q.st, aa, 0);
     }
     // ---- debris
-    for (const q of debris) {
+    for (const q of on('debris') ? debris : []) {
       const aa = t - q.t0; if (aa <= 0 || aa >= q.life) continue;
       ballistic(q, aa, 0, 0, st);
-      cloud.push(st[0], st[1], st[2], st[3], st[4], st[5], q.w, q.seed, K_DEBRIS, 0, 0.035, 0.032, 0.03, 1, 1, 0, 0, q.st, aa, glowNear);
+      cloud.push(st[0], st[1], st[2], st[3], st[4], st[5], q.w, q.seed, K_DEBRIS, 0, 0.035, 0.032, 0.03, 1 - smooth(0.75, 1, aa / q.life) * 0.5, 1, q.hot * 3.0 * Math.exp(-aa / 0.35), 0, q.st, aa, glowNear);
     }
     // ---- flash and glow
     flash.userData.set(A > 0 ? 110 * Math.exp(-A / 0.022) : 0, 11 * sc); flash.position.set(0, 2.2 * sc, 0);

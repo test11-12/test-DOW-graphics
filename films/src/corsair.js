@@ -87,7 +87,8 @@ async function build(film) {
   const PP = PORT.pier, F = PORT.finger, Y = PP.y;
   const dust = [[PP.x0, Y - 0.1, PORT.quayZ, PP.x0, Y - 0.1, PP.z1], [PP.x1, Y - 0.1, PORT.quayZ, PP.x1, Y - 0.1, PP.z1], [PP.x0, Y - 0.6, PP.z1, PP.x1, Y - 0.6, PP.z1],
     [F.x0, Y - 0.1, PORT.quayZ, F.x0, Y - 0.1, F.z1], [F.x1, Y - 0.1, PORT.quayZ, F.x1, Y - 0.1, F.z1], [-12.2, 18.2, 21, 5.9, 18.2, 21], [-12.2, 18.2, 35, 5.9, 18.2, 35]];
-  const blasts = PORT.hits.map(([x, z], i) => makeBlast(pipe, { x, z, T: HIT[i], ocean, wind: [3.4, 1.1], seed: 17 + i * 31, dust, noise3: clouds.noise.texture }));
+  const water = (x, z) => z > PORT.quayZ + 0.5 && !(x > PP.x0 - 0.5 && x < F.x1 + 0.5 && z < (x < PP.x1 + 0.5 ? PP.z1 : x > F.x0 - 0.5 ? F.z1 : PORT.lift.z1));
+  const blasts = PORT.hits.map(([x, z], i) => makeBlast(pipe, { x, z, T: HIT[i], ocean, wind: [3.4, 1.1], seed: 17 + i * 31, dust, water, noise3: clouds.noise.texture }));
   if (film.off.has('clouds')) CLOUDS.cover = 0;
   W = { clouds, ocean, boats, port, ship, spray, blasts, hills };
   return W;
