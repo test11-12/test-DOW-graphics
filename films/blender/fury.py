@@ -46,8 +46,9 @@ def build(shape_only=False):
     fus = part('fuselage', G.fuselage(), 'fus', 'A', smooth=38)
     part('blister', G.blister(), 'blister', 'A')
     part('spine', G.spine(), 'spine', 'A')
-    body, lip, duct, splitter = G.box_parts()
+    body, doors, lip, duct, splitter = G.box_parts()
     part('box', body, 'box', 'A', bevel=(0.014, 3, 22), smooth=30)
+    part('bay_doors', doors, 'boxdoor', 'AD', smooth=30)          # painted with the body, its own object (gear up only)
     part('lip', lip, 'lip', 'A', bevel=(0.006, 2, 30), smooth=30)
     part('duct', duct, 'duct', 'A', smooth=60)
     part('splitter', splitter, 'splitter', 'A', bevel=(0.004, 2), smooth=30)
@@ -81,7 +82,7 @@ def build(shape_only=False):
 
     sc = bpy.context.scene
     if not shape_only:
-        for tex, sets in (('A', 'A'), ('B', 'B'), ('C', 'CG')):
+        for tex, sets in (('A', ('A', 'AD')), ('B', ('B',)), ('C', ('C', 'G'))):
             objs = [o for o, t, _ in parts if t in sets]
             ap.pack(objs, 0.0025 if tex != 'C' else 0.004)
             ref = {'A': fus, 'B': wing, 'C': blades}[tex]
@@ -99,8 +100,10 @@ def build(shape_only=False):
     if shape_only:
         return objs
     d.ensure_world()
-    for tex, names in (('A', ['A']), ('B', ['B_R']), ('C', ['C', 'C_R', 'G', 'G_R'])):
+    for tex, names in (('A', ['A', 'AD']), ('B', ['B_R']), ('C', ['C', 'C_R', 'G', 'G_R'])):
+        objs['AD'].hide_render = tex == 'C'          # the bays are baked open (gear down); their closed doors only with the skin
         ap.bake_maps([objs[n] for n in names], SIZE[tex], tex, OUT, ao_size=SIZE[tex] // 2 if tex != 'C' else SIZE[tex], ao_samples=24, ao_distance=1.0)
+    objs['AD'].hide_render = False
     bpy.ops.wm.save_as_mainfile(filepath=BLEND)
     return objs
 
@@ -261,7 +264,8 @@ def side_layers():
         r.dots((sf + 0.016, yl), (sf + 0.016, yh), 0.038, 0.0030)
     c.line([(hx - 0.14, hy), (hx - 0.083, hy + 0.072), (hx + 0.083, hy + 0.072), (hx + 0.14, hy), (hx + 0.083, hy - 0.072), (hx - 0.083, hy - 0.072)], gw, closed=True)
     c.line([(2.585, -0.012), (2.795, -0.012), (2.895, 0.142), (2.685, 0.142)], gw, closed=True)
-    # (the main-gear bays open in the keel-box sides while the gear is down: their doors hang from the lower edge)
+    # main-gear doors: the openings in the keel-box sides (closed in flight, hanging from the lower edge on the ground)
+    c.rrect(G.MAIN_BAY[0], -0.580 + NOSE_Y, G.MAIN_BAY[1], -0.272 + NOSE_Y, 0.012, 0.0040)
     r.dots((G.MAIN_BAY[0] - 0.03, -0.30), (G.MAIN_BAY[0] - 0.03, -0.56), 0.04, 0.0032); r.dots((G.MAIN_BAY[1] + 0.03, -0.30), (G.MAIN_BAY[1] + 0.03, -0.56), 0.04, 0.0032)
     c.line([(3.05, -0.44), (G.MAIN_BAY[0] - 0.01, -0.44)], gw); c.line([(G.MAIN_BAY[1] + 0.01, -0.44), (7.2, -0.44)], gw)
     # fin: rudder hinge and cut, ribs, spar
@@ -367,7 +371,7 @@ def paint_body(M, texel, S, T):
     P, N, ID = M['P'], M['N'], M['ID']
     s = X0 - P[..., 0]; y = P[..., 1]; z = P[..., 2]; az = np.abs(z); port = z < 0
     ny = N[..., 1]; nz = np.abs(N[..., 2])
-    fus = (ID == 1) | (ID == 2) | (ID == 3); fin = ID == 8; box = (ID == 4) | (ID == 5) | (ID == 7); duct = ID == 6
+    fus = (ID == 1) | (ID == 2) | (ID == 3); fin = ID == 8; kb = (ID == 4) | (ID == 9); box = kb | (ID == 5) | (ID == 7); duct = ID == 6
     sidew = smoothstep(0.30, 0.55, nz); topw = smoothstep(0.45, 0.70, ny) * (fus | box); botw = smoothstep(0.45, 0.70, -ny) * (fus | box)
     sidew = np.where(fin, 1.0, sidew).astype(np.float32)
     yoff = G._F['y'](s).astype(np.float32)
@@ -377,7 +381,7 @@ def paint_body(M, texel, S, T):
     under = ((ID == 1) & (ym < CH + yoff - 0.004)).astype(np.float32)
     aftw = smoothstep(4.85, 5.45, s).astype(np.float32)
     low = np.where(box, 1.0, under).astype(np.float32)
-    mid = S['mid'](s, y) * sidew * ((ID == 1) | (ID == 4))
+    mid = S['mid'](s, y) * sidew * ((ID == 1) | kb)
     col = np.broadcast_to(lin(BODY), P.shape).copy()
     col = tone(col, PALE, (fin & port).astype(np.float32)); col = tone(col, FIN_S, (fin & ~port).astype(np.float32))
     col = tone(col, LOW, under * (1 - aftw)); col = tone(col, LOWAFT, under * aftw); col = tone(col, KEEL, box.astype(np.float32))
@@ -398,10 +402,10 @@ def paint_body(M, texel, S, T):
     col = col * (1 + 0.030 * tA + 0.028 * n1 + 0.014 * n2 + 0.006 * n3 - 0.05 * sh)[..., None]
     rough = rough + 0.035 * tB + 0.03 * n1 - 0.02 * n2 + (0.22 - 0.12 * lsurf) * sh
     # ---- markings
-    ink = np.where(port, S['inkP'](s, y), S['inkS'](s, y)) * sidew * (fus | fin | (ID == 4))
+    ink = np.where(port, S['inkP'](s, y), S['inkS'](s, y)) * sidew * (fus | fin | kb)
     lowl = (y < -0.27).astype(np.float32)          # the lettering low on the aft fuselage: paler ink, half strength, on the dark paint
     col = tone(col, INK, ink * (0.93 * (1 - lowl) + LOWINK * lowl)); rough = rough - 0.07 * ink
-    dk = S['dk'](s, y) * sidew * ((ID == 1) | (ID == 4))
+    dk = S['dk'](s, y) * sidew * ((ID == 1) | kb)
     col = tone(col, DKINK, dk); rough = rough - 0.16 * dk
     # ---- the flush intake on the nose flank: a recess whose floor ramps down from a lit lower lip to a shadowed slot
     # at the top (colour for what the engine's shading cannot resolve at this size, the step in the normal map)
@@ -604,24 +608,25 @@ def paint_export():
             del M, res
             gc.collect()
         mats[tex] = d.gltf_material(name, base=maps['base'], orm=maps['orm'], normal=maps['normal'], emissive=maps.get('emissive'), emissive_strength=2.5)
-    for n, tex in (('A', 'A'), ('B_R', 'B'), ('B_L', 'B'), ('C', 'C'), ('C_R', 'C'), ('C_L', 'C'), ('G', 'C'), ('G_R', 'C'), ('G_L', 'C')):
+    for n, tex in (('A', 'A'), ('AD', 'A'), ('B_R', 'B'), ('B_L', 'B'), ('C', 'C'), ('C_R', 'C'), ('C_L', 'C'), ('G', 'C'), ('G_R', 'C'), ('G_L', 'C')):
         d.set_material(obj[n], mats[tex])
     body = obj['A']; body.name = 'body'
+    doors = ap.join([obj['AD']], 'bay_doors')                # the closed gear doors: the film shows them while the gear is up
     wings = ap.join([obj['B_R'], obj['B_L']], 'wings')
     misc = ap.join([obj['C'], obj['C_R'], obj['C_L']], 'misc')
     gmesh = ap.join([obj['G'], obj['G_R'], obj['G_L']], 'gear_mesh')
     tyres = split_pid(gmesh, PID['tyre'], 'tyres_own')      # the film swaps these for the ramp tyres (assets/fury/tyres.glb)
     pylons = split_pid(wings, PID['pylon'], 'pylons')       # their own node, so the film can set their shadow receiving apart
-    out = [body, wings, misc, gmesh, tyres, pylons]
+    out = [body, doors, wings, misc, gmesh, tyres, pylons]
     gear = bpy.data.objects.new('gear', None); sc.collection.objects.link(gear); gmesh.parent = gear; tyres.parent = gear; out.append(gear)
     for k, p in G.NAV.items():
         e = bpy.data.objects.new('nav_' + k, None); sc.collection.objects.link(e); e.location = (p[0], -p[2], p[1]); out.append(e)
-    for o in (body, wings, misc, gmesh, tyres, pylons):
+    for o in (body, doors, wings, misc, gmesh, tyres, pylons):
         d.log(d.stats(o))
     path = d.out_path('fury', 'fury.glb')
     d.export_glb(path, out, quality=int(os.environ.get('FURY_Q', '92')))
     if 'clean' in ARGS:     # look-development variant without the landing gear (assets/_test is not committed)
-        d.export_glb(d.out_path('_test', 'fury_clean.glb'), [body, wings, pylons, misc], quality=85)
+        d.export_glb(d.out_path('_test', 'fury_clean.glb'), [body, doors, wings, pylons, misc], quality=85)
     if 'preview' in ARGS:
         d.preview(os.path.join(OUT, 'preview.png'), target=(0.3, 0, 0), cam=(3.0, 16.0, 1.2), lens=70, size=(1280, 540), sun_el=40, sun_az=200)
 

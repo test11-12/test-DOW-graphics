@@ -102,8 +102,9 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   engine's body frame (lofts, wings, lathes), per-part ids, and projection painting: the livery, panel
   breaks, fasteners and sealant are drawn with Pillow in metres in side elevation and plan, where the
   reference photographs show them, and projected onto the baked position of every texel.
-- `blender/fury.py` (+ `fury_geo.py`) builds `assets/fury/fury.glb`, the YFQ-44A (nodes `body`, `wings`,
-  `pylons`, `misc`, `gear` with its own plain `tyres_own`, and the `nav_*` light positions: `green`, `red`, the
+- `blender/fury.py` (+ `fury_geo.py`) builds `assets/fury/fury.glb`, the YFQ-44A (nodes `body`, `bay_doors` (the
+  closed gear doors that fill the open bays in the keel box while the gear is up), `wings`, `pylons`, `misc`,
+  `gear` with the bay interiors, hanging doors and its own plain `tyres_own`, and the `nav_*` light positions: `green`, `red`, the
   white `wg` / `wr` beside them, `tail`); `blender/amraam.py` builds `assets/fury/amraam.glb` (nodes `aim120`,
   `motor_glow`; stations measured on the released photographs). `fury geo` / `fury paint [A|B|C]` run the Cycles
   bakes and the repaint separately. `src/fury_assets.js` loads both behind the interface of `src/fury_model.js`

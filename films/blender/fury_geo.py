@@ -51,7 +51,7 @@ def stab_te(z):
 
 
 # part ids the painter keys on
-PID = dict(fus=1, blister=2, spine=3, box=4, lip=5, duct=6, splitter=7, fin=8, wing=10, stab=11,
+PID = dict(fus=1, blister=2, spine=3, box=4, lip=5, duct=6, splitter=7, fin=8, boxdoor=9, wing=10, stab=11,
            shroud=20, pipe=21, cone=22, rail=30, railhw=31, pylon=32,
            tyre=40, hub=41, strut=42, chrome=43, dark=44, door=45, doorin=46, steel=47, bay=48,
            blade=50, probe=51, lens_r=52, lens_g=53, lens_w=54)
@@ -193,11 +193,14 @@ def box_parts():
     body = Mesh().grid(rings)                  # open on top: that face is inside the fuselage
     nv = rings.shape[1]
     keep_f, keep_uv = [], []
+    doors = Mesh()                             # the skin of the openings: the closed doors, shown while the gear is up
     for k, (f, u) in enumerate(zip(body.f, body.uv)):
         i, j = divmod(k, nv - 1)
         main = MAIN_BAY[0] - 1e-6 <= st[i] and st[i + 1] <= MAIN_BAY[1] + 1e-6 and j in (1, 7)
         nose = NOSE_BAY[0] - 1e-6 <= st[i] and st[i + 1] <= NOSE_BAY[1] + 1e-6 and j == 4
-        if not (main or nose):
+        if main or nose:
+            doors.poly([body.v[q] for q in f], u)
+        else:
             keep_f.append(f); keep_uv.append(u)
     body.f, body.uv = keep_f, keep_uv
     rings = [box_ring(q) for q in BOX]         # the six-point sections for the intake lip and duct
@@ -211,7 +214,7 @@ def box_parts():
     duct = ap.ring_loft([r0, r1, r2, r3], caps=(False, True)).flipped()
     y = CH - 0.092
     splitter = ap.plate([[X(2.40), y, 0], [X(2.63), y, 0.47], [X(3.30), y, 0.50], [X(3.30), y, -0.50], [X(2.63), y, -0.47]], [0, 1, 0], 0.014)
-    return body, lip, duct, splitter
+    return body, doors, lip, duct, splitter
 
 
 def wing_mesh():

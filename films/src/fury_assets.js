@@ -55,8 +55,9 @@ export async function buildFury(pipe, opts = {}) {
   }
   const at = n => { const o = scene.getObjectByName(n); return o ? o.position.clone() : new THREE.Vector3(); };
   const navPos = [at('nav_green'), at('nav_red')], navWhite = [at('nav_wg'), at('nav_wr')];
-  // the retracted gear leaves closed doors: nothing else on the model moves
-  root.userData = { gear, navPos, navWhite, tailLight: at('nav_tail'), setGear(down) { gear.visible = !!down; } };
+  // gear down: the bays stand open (their doors hang on the gear group); gear up: the closed door skins fill them
+  const doors = scene.getObjectByName('bay_doors');
+  root.userData = { gear, navPos, navWhite, tailLight: at('nav_tail'), setGear(down) { gear.visible = !!down; if (doors) doors.visible = !down; } };
   return root;
 }
 
