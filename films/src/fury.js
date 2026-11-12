@@ -155,11 +155,12 @@ function poseAir(film, sig, t, o = {}) {
   return s;
 }
 // o.blur: metres the smoke streams past the (formation) camera while its shutter is open
+// (an accumulated frame, --accum, blurs the smoke for real over the shutter: the stand-in is off then)
 // White smoke, lit by the low sun's own colour on the edges that face it (the sun's colour only slightly paled) and by
 // the sky; a forward-peaked first order so the edges towards the sun glow and the thick of it goes grey. A reduced-smoke
 // motor: the trail starts thin and widens late; its edge breaks into wisps; where it is thick the sun cannot show through.
 const TRAIL = { light: [0.3, 0.05, 1.5, 0.2], albedo: [0.92, 0.92, 0.92], rad: [0.07, 0.13, 0.05, 0.41], mass: [2.6, 0.75, 0.85, 0.6], phase: [0.76, 0.22, 0.2, 0.03] };
-function setTrail(film, sig, o = {}) { tB.copy(IGNITION).sub(film.origin); W.trail.userData.set(sig, tB, HDG, W.sunDir, { ...TRAIL, density: o.density ?? 1, plume: o.trailGlow ?? 1, blur: o.blur ?? 0, stretch: o.stretch ?? 1, deck: o.deck, wander: o.wander ?? 0, ...(o.trailLook || {}), ...DEV().trail }); }
+function setTrail(film, sig, o = {}) { tB.copy(IGNITION).sub(film.origin); W.trail.userData.set(sig, tB, HDG, W.sunDir, { ...TRAIL, density: o.density ?? 1, plume: o.trailGlow ?? 1, blur: film.accum?.n > 1 ? 0 : o.blur ?? 0, stretch: o.stretch ?? 1, deck: o.deck, wander: o.wander ?? 0, ...(o.trailLook || {}), ...DEV().trail }); }
 // point given in a heading-aligned frame around state s: [forward, up, right]; full attitude if `rigid`
 function body(s, off, rigid = false, out = v3()) {
   attitude(s.hdg, rigid ? s.pitch : 0, rigid ? s.roll : 0, q2);
@@ -247,7 +248,7 @@ const shots = [
     pose: (lt, t, f) => poseAir(f, SIG.s09(t), t, { blur: V / 30 * 0.25, wander: 1.2, glow: 8, glowPx: 6, trailLook: { rad: [0.07, 0.5, 0.08, 0.41] } }),   // a wider young trail and a flame of a few pixels, so the trail runs on to its point of light
     camera: (lt, t) => { const sig = SIG.s09(t), s = acAt(sig), k = ease(lt / 6); const cp = DEV().s09 || [-100, 6, 12, 1500, -30, -190, 24, 6, 3];
       return { pos: body(s, [cp[0] - 10 * k, cp[1] + cp[8] * k, cp[2] - 2 * k]), look: body(s, [cp[3], cp[4] - 48 * k, cp[5]]), fov: cp[6] + cp[7] * k, shake: { rot: 0.05, freq: 0.6, seed: 9 }, focus: s.p.clone(), focusRadius: 8 }; },
-    post: { ...AIR_POST, ...BACKLIT, exposure: 0.18, tone: { ...AIR_TONE, black: 0.05, grad: [0.9, 0.8] } } },
+    post: { ...AIR_POST, ...BACKLIT, exposure: 0.18, tone: { ...AIR_TONE, black: 0.05, grad: [0.9, 0.8] }, accumShutter: 0.25 } },   // accumShutter: the trail's 90 degree smear under --accum
   { id: 's10', name: 'Resolved as data', t0: 58.2, t1: 65.3, terrain: 'top', note: 'Back on the plot: the missile track runs out to the digital target. No physical target, no explosion.',
     pose: (lt, t, f) => poseAir(f, 20, t, { missile: false, haze: 0, nav: 0 }),
     camera: (lt) => plotCam(lt + 10.4),
