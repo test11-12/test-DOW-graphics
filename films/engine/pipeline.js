@@ -664,8 +664,12 @@ void main(){
     l = l/(1.0+l);
     l = clamp((l-uThermal.y)*uThermal.x+0.5, 0.0, 1.0);
     l = mix(l, 1.0-l, uThermal.w);
+    #ifdef SS_FINAL
+    float n = 0.0, line = 0.0;   // supersampled: the sensor noise is drawn per output pixel, after the filter (PRESENT_FRAG)
+    #else
     float n = (hash12(floor(gl_FragCoord.xy/1.0)+uFrame*17.0)-0.5)*uThermal.z;
     float line = (hash12(vec2(floor(gl_FragCoord.y/2.0), uFrame))-0.5)*uThermal.z*0.35;
+    #endif
     o = vec3(pow(clamp(l+n+line,0.0,1.0), 0.92));
   } else {
     o = agx(col);
@@ -703,12 +707,12 @@ void main(){
   c = max(c, vec3(0.0))*uK.w;
   gl_FragColor = vec4((uFirst > 0.5 ? vec3(0.0) : texelFetch(tAcc, p, 0).rgb)+c, 1.0);
 }`;
-// supersampled output: Lanczos-2 downsample of the display-referred frame by uK, then the sensor grain, fade and
-// dither that the final pass leaves out at the internal size (same formulas, at output pixels)
+// supersampled output: Lanczos-2 downsample of the display-referred frame by uK, then the thermal sensor noise, grain,
+// fade and dither that the final pass leaves out at the internal size (same formulas, at output pixels)
 const PRESENT_FRAG = /* glsl */`
 precision highp float;
 ${NOISE}
-uniform sampler2D tIn, tDetail; uniform float uK, uGrain, uFade, uFrame;
+uniform sampler2D tIn, tDetail; uniform float uK, uGrain, uFade, uFrame; uniform int uMode; uniform vec4 uThermal;
 float lz(float x){ x = abs(x); if (x >= 2.0) return 0.0; if (x < 1e-4) return 1.0; float a = 3.14159265*x; return 2.0*sin(a)*sin(a*0.5)/(a*a); }
 void main(){
   ivec2 isz = textureSize(tIn, 0);
@@ -721,6 +725,13 @@ void main(){
     acc += texelFetch(tIn, clamp(q, ivec2(0), isz-1), 0).rgb*w; ws += w;
   }
   vec3 o = acc/ws;
+  if (uMode == 1){
+    // thermal: undo the final pass's output curve, add the per-pixel and per-line sensor noise, redo the curve
+    float l = pow(clamp(dot(o, vec3(0.3333333)), 0.0, 1.0), 1.0/0.92);
+    float n = (hash12(floor(gl_FragCoord.xy/1.0)+uFrame*17.0)-0.5)*uThermal.z;
+    float line = (hash12(vec2(floor(gl_FragCoord.y/2.0), uFrame))-0.5)*uThermal.z*0.35;
+    o = vec3(pow(clamp(l+n+line,0.0,1.0), 0.92));
+  }
   if (uGrain > 0.0){
     vec2 g = gl_FragCoord.xy/1.6+vec2(hash11(uFrame*0.37)*731.0, hash11(uFrame*0.73+4.1)*557.0);
     float n = texture2D(tDetail, g/512.0).a + texture2D(tDetail, (g+97.3)/512.0*1.93).a - 1.0;
@@ -839,7 +850,7 @@ export class Pipeline {
     this.ss = 1;             // supersampling factor: internal buffers at ss x the canvas
     this.pAccum = new Pass(ACCUM_FRAG, { tColor: { value: null }, tBloom: { value: null }, tRays: { value: null }, tFlare: { value: null }, tAcc: { value: null }, uK: { value: new THREE.Vector4() }, uBloomTint: { value: new THREE.Vector3(1, 1, 1) }, uFirst: { value: 1 } });
     this.pFinalSS = new Pass(FINAL_FRAG, { ...this.pFinal.u, uSharpenPx: { value: 1 } }, { defines: { SS_FINAL: '' } });
-    this.pPresent = new Pass(PRESENT_FRAG, { tIn: { value: null }, tDetail: shared.tDetail, uK: { value: 1 }, uGrain: { value: 0 }, uFade: { value: 1 }, uFrame: shared.uFrame });
+    this.pPresent = new Pass(PRESENT_FRAG, { tIn: { value: null }, tDetail: shared.tDetail, uK: { value: 1 }, uGrain: { value: 0 }, uFade: { value: 1 }, uFrame: shared.uFrame, uMode: this.pFinal.u.uMode, uThermal: this.pFinal.u.uThermal });
 
     // environment probe (image-based lighting for PBR materials)
     this.pmrem = new THREE.PMREMGenerator(r);
@@ -941,11 +952,13 @@ export class Pipeline {
   // post: { exposure, bloom, bloomTint, vignette, grain, ca, lensK, fade, sat, contrast, wb, lift, tint, shutter, shimmer:[amp,scale,far],
   //         sunDisk, aerial, mode, thermal, sharpen, envKey, cirrus:{alt,cover,opacity,scale,wind}, clouds:{...},
   //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, flare:{ghost,halo,streak,thr} }
-  render(time, frameIndex, post = {}) {
+  // seed (accumulation sub-renders only): the noise seed of the scene passes' ray-march and sample dithering, so it
+  // differs per sub-render and converges in the mean; accumEnd() gives the final pass the frame's own seed back
+  render(time, frameIndex, post = {}, seed) {
     const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene;
     if (this.prof) { this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }
     this.frame = frameIndex;
-    S.uTime.value = time; S.uFrame.value = frameIndex % 1024;
+    S.uTime.value = time; S.uFrame.value = (seed ?? frameIndex) % 1024;
     S.uCamAlt.value = this.camAlt; S.uOrigin.value.copy(this.origin);
     sc.updateMatrixWorld(true); cam.updateMatrixWorld(true);
     S.uInvProj.value.copy(cam.projectionMatrixInverse);
@@ -1165,7 +1178,7 @@ export class Pipeline {
   // exposure applied) into a float buffer instead of grading it. The caches that otherwise keep whatever the
   // first frame of a shot computed (sky table, reflection probe, cloud ambient) are rebuilt for this frame, so an
   // accumulated frame does not depend on what was rendered before it.
-  accumBegin() {
+  accumBegin(frame = 0) {
     this.skyKey = null; this.envKey = null; if (this.clouds) this.clouds._ambKey = null;
     const w = this.w, h = this.h;
     if (!this.rtAcc || this.rtAcc[0].width !== w || this.rtAcc[0].height !== h) {
@@ -1174,7 +1187,7 @@ export class Pipeline {
       const o = { type: f32 ? THREE.FloatType : THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
       this.rtAcc = [new THREE.WebGLRenderTarget(w, h, o), new THREE.WebGLRenderTarget(w, h, o)];
     }
-    this.accum = { n: 0, i: 0 };
+    this.accum = { n: 0, i: 0, frame };
   }
   accumAdd() {
     const a = this.accum, u = this.pAccum.u, uf = this.pFinal.u;
@@ -1190,6 +1203,7 @@ export class Pipeline {
     const a = this.accum; this.accum = null;
     if (!a || !a.n) return;
     const r = this.renderer, uf = this.pFinal.u;
+    this.shared.uFrame.value = a.frame % 1024;   // grain, thermal noise and dither: the frame's seed (shared uniform)
     this.grade(post);
     uf.tColor.value = this.rtAcc[a.i].texture; uf.tBloom.value = this.black; uf.uBloom.value = 0;
     uf.tRays.value = this.black; uf.uRays.value = 0; uf.tFlare.value = this.black; uf.uFlare.value = 0;

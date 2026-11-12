@@ -25,8 +25,34 @@ const R2G = 1.32471795724474602596;   // plastic number: R2 low-discrepancy sequ
 const halton = (i, b) => { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; };
 // uniform point on the unit disc from two numbers in [0, 1) (Shirley-Chiu concentric map)
 const disc = (u, v) => { const a = 2 * u - 1, b = 2 * v - 1; if (a === 0 && b === 0) return [0, 0]; let r, th; if (Math.abs(a) > Math.abs(b)) { r = a; th = Math.PI / 4 * (b / a); } else { r = b; th = Math.PI / 2 - Math.PI / 4 * (a / b); } return [r * Math.cos(th), r * Math.sin(th)]; };
-// 0..n-1 in a fixed shuffled order (shutter strata, decorrelated from the other dimensions)
-const shuffled = n => { const p = Array.from({ length: n }, (_, i) => i); let s = (0x9e3779b9 ^ n) >>> 0; for (let i = n - 1; i > 0; i--) { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const j = s % (i + 1); [p[i], p[j]] = [p[j], p[i]]; } return p; };
+// point i of the R2 sequence, toroidally shifted by o (Cranley-Patterson rotation): well spread in 2D for any N
+const r2 = (i, o) => [fract(o[0] + i / R2G), fract(o[1] + i / (R2G * R2G))];
+// [0, 1) -> [-1, 1] with a tent density (importance-samples a 1-pixel-radius tent reconstruction filter)
+const tent = u => u < 0.5 ? Math.sqrt(2 * u) - 1 : 1 - Math.sqrt(2 - 2 * u);
+// 0..n-1 in a fixed shuffled order; seed picks the order
+const hash32 = x => { x = Math.imul(x ^ (x >>> 16), 0x7feb352d); x = Math.imul(x ^ (x >>> 15), 0x846ca68b); return (x ^ (x >>> 16)) >>> 0; };
+const shuffled = (n, seed = 0) => { const p = Array.from({ length: n }, (_, i) => i); for (let i = n - 1; i > 0; i--) { const j = Math.floor(hash32((Math.imul(seed + 1, 0x9e3779b9) ^ Math.imul(n, 0x85ebca6b) ^ i) >>> 0) / 4294967296 * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; } return p; };
+const corr = (a, b) => { const n = a.length; let ma = 0, mb = 0; for (let i = 0; i < n; i++) { ma += a[i] / n; mb += b[i] / n; } let c = 0, va = 0, vb = 0; for (let i = 0; i < n; i++) { c += (a[i] - ma) * (b[i] - mb); va += (a[i] - ma) ** 2; vb += (b[i] - mb) ** 2; } return c / Math.sqrt(va * vb || 1); };
+// The N samples of one accumulated frame: sub-render k gets time stratum time[k], sub-pixel offset R2(k), lens point
+// Halton(lens[k] + 1) and sun-disc and shadow-texel points R2(sun[k]), R2(texel[k]) (each with its own toroidal
+// shift). Each dimension is low-discrepancy on its own; the orders pair them up. Of 64 candidate sets of orders the
+// one whose worst correlation between any two dimensions is smallest is kept (about 0.39 at N = 16, 0.19 at 64), so
+// no dimension leans on another (a sun offset that follows the pixel offset would sharpen penumbrae along one axis).
+const SUN_O = [0.271, 0.613], TEX_O = [0.147, 0.889], plans = new Map();
+function samplePlan(N) {
+  if (plans.has(N)) return plans.get(N);
+  let best = null;
+  for (let s = 0; s < 64 && N > 2; s++) {
+    const time = shuffled(N, 4 * s), sun = shuffled(N, 4 * s + 1), texel = shuffled(N, 4 * s + 2), lens = shuffled(N, 4 * s + 3), d = Array.from({ length: 9 }, () => []);
+    for (let k = 0; k < N; k++) [(time[k] + 0.5) / N, fract(0.5 + k / R2G), fract(0.5 + k / (R2G * R2G)), halton(lens[k] + 1, 2), halton(lens[k] + 1, 3), ...r2(sun[k], SUN_O), ...r2(texel[k], TEX_O)].forEach((x, i) => d[i].push(x));
+    let worst = 0;   // across dimensions (the two coordinates of one 2D point set do not depend on the order)
+    for (let a = 0; a < 9; a++) for (let b = a + 1; b < 9; b++) if (!(a % 2 === 1 && b === a + 1)) worst = Math.max(worst, Math.abs(corr(d[a], d[b])));
+    if (!best || worst < best.worst) best = { time, sun, texel, lens, worst };
+  }
+  if (!best) { const id = Array.from({ length: N }, (_, i) => i); best = { time: id, sun: id, texel: id, lens: id, worst: 0 }; }
+  plans.set(N, best);
+  return best;
+}
 
 const fmt = s => { s = Math.max(0, s); const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, '0')}`; };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
@@ -142,11 +168,13 @@ export class Film {
     this.def.frame && this.def.frame(t, shot, lt, this, c);
     const post = this.postOf(shot, lt, t);
     if (sub) {
-      if (!sub.plain) { post.shutter = 0; post.dof = null; }     // real shutter and aperture replace the screen-space blurs
+      // the lens replaces the DOF pass; the screen-space motion blur stays, but only across this sub-render's own slice
+      // of the shutter (sub.stratum, a fraction of a frame), so the N slices join into one continuous smear
+      if (!sub.plain) { post.shutter = sub.stratum || 0; post.dof = null; }
       else if (sub.ss > 1 && post.dof && post.dof.max) post.dof = { ...post.dof, max: post.dof.max * sub.ss };
       sub.post = post;
     }
-    pipe.render(t, sub ? sub.frame : Math.floor(t * this.fps + 1e-6), post);
+    pipe.render(t, sub ? sub.frame : Math.floor(t * this.fps + 1e-6), post, sub ? sub.seed : undefined);
     if (!sub) this.updateOverlays(t, shot, lt);
   }
   // sub-render camera: thin-lens aperture offset (the frustum sheared so the focus plane stays put) plus sub-pixel jitter
@@ -163,13 +191,16 @@ export class Film {
   }
 
   // ---------------------------------------------------------------- offline accumulation (tools: --accum=N --ss=K)
-  // One output frame = the mean of N sub-renders of the shutter interval around t (post.shutter of a frame,
-  // centred, kept inside the shot), each jittered in time (stratified), sub-pixel position (R2), lens position over
-  // the aperture of post.dof (focus plane kept), and the shadow light across the solar disc. Screen-space motion
-  // blur and depth of field are off in the sub-renders; frame-seeded noise keeps the frame's seed; scene-referred
-  // HDR (with bloom, rays, flare) is summed and graded once, grain added once. ss = K renders everything at K x the
-  // size and filters down (Lanczos-2). Deterministic: the same t, N and K give the same image, whatever was rendered
-  // before it (per-shot caches are rebuilt and a discarded warm-up sub-render comes first; N + 1 renders in all).
+  // One output frame = the mean of N sub-renders of the shutter interval around t (the shot's post.accumShutter, else
+  // post.shutter, as a fraction of a frame, centred, kept inside the shot), each jittered in time (stratified),
+  // sub-pixel position (R2, tent filter), lens position over the aperture of post.dof (focus plane kept) and the
+  // shadow light across the solar disc (R2), the dimensions decorrelated (samplePlan). Each sub-render keeps the
+  // screen-space motion blur across its own 1/N slice of the shutter only, so fast motion is one continuous smear and
+  // never N separate copies; the DOF pass is off (the lens does it). Ray-march dithering is seeded per sub-render so it
+  // converges; grain, thermal noise and dither are drawn once, on the mean, with the frame's seed. Scene-referred HDR
+  // (with bloom, rays, flare) is summed and graded once. ss = K renders everything at K x the size and filters down
+  // (Lanczos-2). Deterministic: the same t, N and K give the same image, whatever was rendered before it (per-shot
+  // caches are rebuilt and a discarded warm-up sub-render comes first; N + 1 renders in all).
   renderAccum(t, o = {}) {
     const N = Math.max(1, Math.round(+o.accum || 1)), K = Math.max(1, +o.ss || 1), pipe = this.pipe;
     t = clamp(t, 0, this.duration - 1e-4);
@@ -177,31 +208,42 @@ export class Film {
     const shot = this.shotAt(t), lt = t - shot.t0, next = this.shots[this.shots.indexOf(shot) + 1];
     const lo = shot.t0, hi = Math.min(next ? next.t0 : this.duration, this.duration) - 1e-4;
     const frame = Math.floor(t * this.fps + 1e-6), p0 = this.postOf(shot, lt, t);
-    // o.shutter / o.dof override the shot's (look development: tools/shot.mjs t:{"accum":16,"dof":{"focus":3,"fstop":1}})
-    const shutter = o.shutter ?? p0.shutter ?? 0.5, lens = o.dof !== undefined ? o.dof : p0.dof;
-    const win = N > 1 ? Math.max(0, Math.min(1, shutter)) / this.fps : 0;
+    // o.shutter / o.dof / o.filter / o.stratumBlur override the defaults (look development:
+    // tools/shot.mjs t:'{"accum":16,"dof":{"focus":3,"fstop":1}}'; stratumBlur:false shows the bare samples)
+    const shutter = clamp(o.shutter ?? p0.accumShutter ?? p0.shutter ?? 0.5), lens = o.dof !== undefined ? o.dof : p0.dof;
+    const win = N > 1 ? shutter / this.fps : 0, stratum = N > 1 && o.stratumBlur !== false ? shutter / N : 0;
     let a = t - win / 2; a = Math.max(lo, Math.min(a, hi - win));
-    const dof = N > 1 && lens && lens.fstop > 0 && lens.focus > 0 ? lens : null;
-    const perm = shuffled(N), SUN_R = 0.53 / 2 * Math.PI / 180;
+    const dof = N > 1 && lens && lens.fstop > 0 && lens.focus > 0 ? lens : null, fr = o.filter ?? 1;
+    const plan = samplePlan(N), SUN_R = 0.53 / 2 * Math.PI / 180;
     this.accum = { n: N, ss: K };
-    pipe.accumBegin();
+    pipe.accumBegin(frame);
     let fade = 0;
-    // k = -1: a discarded warm-up of sub-render 0. Some passes read what the previous render left (the sea's
+    // it = -1: a discarded warm-up of sub-render 0. Some passes read what the previous render left (the sea's
     // reflection pass runs before the sun, sky and reflection probe are updated; the sea and terrain read the cloud
     // layer's previous position), so without it the first sample would depend on whatever was rendered before.
-    for (let it = N > 1 ? -1 : 0; it < N; it++) {
-      const k = Math.max(it, 0), sub = { frame, ss: K, plain: N === 1 };   // a single sample is the ordinary frame (screen-space blurs on), supersampled
+    for (let it = -1; it < N; it++) {
+      // a single sample (ss only) is the ordinary frame, supersampled: screen-space blurs on, the frame's noise seed
+      const k = Math.max(it, 0), sub = { frame, ss: K, plain: N === 1 };
       let tk = t;
       pipe.accum.skip = it < 0;
       if (N > 1) {
-        tk = Math.max(lo, Math.min(hi, a + win * (perm[k] + 0.5) / N));
-        sub.px = (fract(0.5 + k / R2G) - 0.5) * K; sub.py = (fract(0.5 + k / (R2G * R2G)) - 0.5) * K;   // output pixels -> internal
-        if (dof) {   // aperture diameter = focal length / f-number (focal length on a 24 mm-high sensor, as in the DOF pass)
-          const c = this.cameraOf(shot, tk - shot.t0, tk), f = 0.012 / Math.tan(c.fov * Math.PI / 360), R = f / (2 * dof.fstop), d = disc(halton(k + 1, 2), halton(k + 1, 3));
-          sub.lens = [d[0] * R, d[1] * R]; sub.focus = dof.focus;
+        tk = Math.max(lo, Math.min(hi, a + win * (plan.time[k] + 0.5) / N));
+        sub.stratum = stratum; sub.seed = frame * N + k;
+        // sub-pixel offset in internal pixels: a tent of radius `filter` output pixels; supersampled, one internal
+        // pixel (box), as the Lanczos filter down to the output size does the reconstruction
+        const u = fract(0.5 + k / R2G), v = fract(0.5 + k / (R2G * R2G));
+        if (K > 1) { sub.px = u - 0.5; sub.py = v - 0.5; } else { sub.px = tent(u) * fr; sub.py = tent(v) * fr; }
+        if (dof) {
+          // The DOF pass blurs by a disc whose radius is the circle of confusion of an f/N lens (its diameter on a
+          // 24 mm-high sensor), capped at dof.max px. An aperture of radius f/N * S/(S - f) gives the thin lens the same
+          // blur at every depth, so the art-directed look carries over; its blur at infinity is held to the same cap.
+          const c = this.cameraOf(shot, tk - shot.t0, tk), th = Math.tan(c.fov * Math.PI / 360), f = 0.012 / th, S = dof.focus;
+          const kInf = pipe.h / (2 * th) / S, maxC = Math.min(dof.max != null ? dof.max * K : 0.022 * pipe.h, 0.03 * pipe.h);
+          const R = Math.min(f * S / (dof.fstop * Math.max(S - f, 1e-3)), maxC / kInf), d = disc(halton(plan.lens[k] + 1, 2), halton(plan.lens[k] + 1, 3));
+          sub.lens = [d[0] * R, d[1] * R]; sub.focus = S;
         }
-        const s = disc(halton(k + 1, 5), halton(k + 1, 7));
-        pipe.sunJitter = { dir: [s[0] * SUN_R, s[1] * SUN_R], texel: [halton(k + 1, 11) - 0.5, halton(k + 1, 13) - 0.5] };
+        const s = disc(...r2(plan.sun[k], SUN_O));
+        pipe.sunJitter = { dir: [s[0] * SUN_R, s[1] * SUN_R], texel: r2(plan.texel[k], TEX_O).map(x => x - 0.5) };
       }
       this.accum.k = k;
       this.renderFrame(tk, sub);
@@ -329,6 +371,7 @@ export class Film {
     if (this.pipe.ss !== 1) this.pipe.setSupersample(1, this.W0, this.H0);   // back from a supersampled render
     this.renderFrame(t);
     const gl = this.pipe.renderer.getContext(), px = new Uint8Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    if (gl.isContextLost()) throw new Error('WebGL context lost');   // the canvas holds nothing; never let it be saved as a frame
     return true;
   }
   // o: { accum: N sub-renders, ss: K supersampling }; returns timings (ms, wall clock, GPU finished)
@@ -336,7 +379,8 @@ export class Film {
     const t0 = performance.now();
     this.renderAccum(t, o);
     const gl = this.pipe.renderer.getContext(), px = new Uint8Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    const ms = performance.now() - t0, n = Math.max(1, Math.round(+o.accum || 1)), renders = n > 1 ? n + 1 : 1;   // + the warm-up
+    if (gl.isContextLost()) throw new Error('WebGL context lost');
+    const ms = performance.now() - t0, n = Math.max(1, Math.round(+o.accum || 1)), renders = n + 1;   // + the warm-up
     return { accum: n, ss: Math.max(1, +o.ss || 1), renders, ms: Math.round(ms), msPerSub: Math.round(ms / renders) };
   }
   async audioChunks() {
@@ -351,7 +395,8 @@ export function startFilm(def) {
   const film = new Film(def);
   window.FILM = {
     ready: film.ready, duration: def.duration, fps: film.fps, film,
-    // renderFrame(t) as always; renderFrame(t, { accum: N, ss: K }) accumulates / supersamples (offline quality)
+    // renderFrame(t) as always; renderFrame(t, { accum: N, ss: K }) accumulates / supersamples (offline quality);
+    // both throw if the WebGL context was lost
     renderFrame: (t, o) => o && ((+o.accum || 1) > 1 || (+o.ss || 1) > 1) ? film.offlineAccum(t, o) : film.offlineFrame(t),
     audioChunks: () => film.audioChunks(),
     shots: def.shots.map(s => ({ id: s.id, name: s.name, t0: s.t0, t1: s.t1, note: s.note || '' })),

@@ -82,37 +82,72 @@ exactly the frames they always did (checked: stills before and after this code a
 **Accumulation** (`--accum=N`, `engine/film.js` `renderAccum`): each output frame is the mean of N sub-renders of
 the same moment, each jittered in
 
-- time, across the shot's shutter (`post.shutter` of a frame, default 0.5, centred on the frame time and kept
-  inside the shot), so everything that moves blurs for real, the camera included: stratified, in shuffled order;
-- sub-pixel position (R2 sequence, through the camera's view offset): anti-aliasing of edges, wires, glitter and
-  the deferred terrain and sea, which the MSAA scene pass does not reach;
+- time, across the shot's shutter (`post.accumShutter` if the shot sets one, else `post.shutter`, default 0.5, as
+  a fraction of a frame, centred on the frame time and kept inside the shot): stratified, in shuffled order, so
+  everything that moves blurs for real, the camera included;
+- sub-pixel position (R2 sequence, through the camera's view offset), drawn from a tent filter of radius 1 output
+  pixel (`--filter=R` changes the radius; with `--ss` it is one internal pixel, and the Lanczos filter down does
+  the reconstruction): anti-aliasing of edges, wires, glitter and the deferred terrain and sea, which the MSAA
+  scene pass does not reach;
 - the shadow light across the solar disc (0.53°) plus a fraction of a shadow-map texel: soft, unstepped hero
   shadows (only the shadow map moves: the sky, the sun disc and the baked terrain keep the true sun);
-- the lens over the aperture of `post.dof` (diameter = focal length / f-number, focal length on a 24 mm-high
-  sensor as in the DOF pass), with the frustum sheared so the focus plane stays put: real depth of field.
+- the lens over an aperture disc perpendicular to the view, with the frustum sheared so the focus plane of
+  `post.dof` stays put: real depth of field. The aperture is sized to give the same blur as the screen-space DOF
+  pass at every depth (that pass uses the circle of confusion of an f/N lens, its diameter, as the blur radius,
+  so its blur is twice a physical f/N; the radius is f/N x S/(S - f), focal length f on a 24 mm-high sensor,
+  focus distance S), and the blur at infinity is held to the pass's `dof.max` cap. Nearer than the focus plane
+  the lens is not capped as the pass is, so a foreground very close to the lens blurs more than today.
 
-While accumulating, the screen-space motion-blur and depth-of-field passes are off, every sub-render keeps the
-frame's noise seed (so nothing seeded by frame index flickers or averages away), and the sum is taken on the
-scene-referred HDR frame (scene plus bloom, rays and flare, times exposure) before tone mapping; the grade, AgX,
-grain and dither run once on the mean. `post.fade` is averaged over the shutter. A frame is a pure function of
-(t, N, K), whatever was rendered before it in the session: the per-shot caches (sky table, reflection probe,
-cloud ambient) are rebuilt for the frame, and a discarded warm-up sub-render comes first, because a few passes
-read state the previous render left (the sea's reflection pass runs before the sun and probe are updated; sea
-and terrain read the cloud layer's previous position). So a frame costs N + 1 sub-renders. Film code can test
-`film.accum` (non-null while sub-rendering) to drop its own shutter approximations; none does so yet (film 2's
-smoke `blur` is still applied per sub-render).
+Each sample dimension (time, pixel, lens, sun disc, shadow texel) is low-discrepancy on its own (stratified time,
+R2 with its own toroidal shift, Halton 2,3 for the lens), and the orders that pair them up are chosen, of 64
+fixed candidates, to keep the worst correlation between any two dimensions small (about 0.39 at N = 16, 0.19 at
+N = 64), so a sun offset never follows the pixel offset and penumbrae stay round. While accumulating:
+
+- the screen-space DOF pass is off (the lens does it);
+- the screen-space motion blur stays on in each sub-render, but only across that sub-render's own 1/N slice of the
+  shutter (`post.shutter` = shutter / N, centred on the slice). The slices join, so anything that moves more than
+  N pixels in a frame is one continuous smear, not N separate copies (`"stratumBlur":false` in a `shot.mjs`
+  override shows the bare samples);
+- the ray-march and sample dithering of the scene passes (clouds, plumes, smoke, light shafts, the blur itself)
+  is seeded per sub-render (`frame x N + k`), so its noise averages away; grain, the thermal sensor noise and the
+  dither are drawn once, on the mean, with the frame's own seed, so they keep their art-directed strength;
+- the sum is taken on the scene-referred HDR frame (scene plus bloom, rays and flare, times exposure) before tone
+  mapping; the grade and AgX run once on the mean, and `post.fade` is averaged over the shutter.
+
+Film code can test `film.accum` (non-null while sub-rendering; `film.accum.n` is N) to drop its own shutter
+stand-ins. Film 2 does: its smoke trail's `blur` (lumps shorter than the smear fade to their mean) is off when
+N > 1, and the fly-out (s09) sets `accumShutter: 0.25`, the 90° shutter its smoke was tuned for, so the trail
+smears the art-directed distance and keeps its billows.
+
+Real motion blur changes a few shots' look, not just their quality, because the screen-space pass never blurred
+the effects layer correctly (it has no motion vectors of its own, so the pass smears it with whatever is behind
+it, or not at all):
+
+- film 2, s08 and s09: the smoke trail streams past the formation camera and now really smears over the shutter.
+  Its large billows stay, but the near trail is softer than today's, which was never smeared at all. Lower the
+  shot's `accumShutter` for a crisper trail.
+- film 1, s08 (the pass): the shock cone's edge-on "line" aid (`line: 0.12`) shows as faint straight lines across
+  the sky. The cone moves with the jet, which the camera tracks, so it stays sharp under accumulation; today the
+  screen-space blur smears it away with the fast-moving background. Set `line` to 0 under accumulation if the
+  shot should not show it.
+- anything that moved fast across the frame keeps the length of smear its shutter implies, where the screen-space
+  pass capped it at 5.5% of the frame height (film 1's pass: roughly 200 px at 1080p instead of 59).
+
+A frame is a pure function of (t, N, K), whatever was rendered before it in the session: the per-shot caches (sky
+table, reflection probe, cloud ambient) are rebuilt for the frame, and a discarded warm-up sub-render comes first,
+because a few passes read state the previous render left (the sea's reflection pass runs before the sun and probe
+are updated; sea and terrain read the cloud layer's previous position). So a frame costs N + 1 sub-renders (two
+with `--ss` alone).
 
 **Supersampling** (`--ss=K`): every internal buffer at K times the output size, the bloom pyramid and pixel-sized
 kernels (DOF cap, sharpen) kept at their output-pixel size, then a Lanczos-2 filter down to the output size, with
-grain and dither added at the output resolution. `--ss` works with or without `--accum` (alone it keeps the
-screen-space blurs). With accumulation the jitter already anti-aliases; `--ss=2` mainly buys texture and shading
-detail (the sea's glitter and fine waves, which the engine filters by pixel size) at about 3 to 4x the cost per
-sub-render; its result matches a real render at twice the size scaled down.
-
-Real motion blur changes some shots' look, not just their quality: in film 2's fly-out (s09) the smoke trail
-streams past the formation camera at 245 m/s and now smears into streaks over the 180° shutter, where the
-screen-space pass (which sees the smoke as sky) left it crisp. Lower that shot's `post.shutter` if the crisp
-look is wanted.
+the thermal sensor noise, grain and dither added at the output resolution (so they keep their strength). `--ss`
+works with or without `--accum` (alone it keeps the screen-space blurs). With accumulation the jitter already
+anti-aliases; `--ss=2` mainly buys texture and shading detail (the sea's glitter and fine waves, which the engine
+filters by pixel size) at about 3 to 4x the cost per sub-render; its result matches a real render at twice the
+size scaled down. It does not add geometry: the sea and terrain meshes are capped at the density of a 1080p frame
+(about one column per 3 output pixels), so `--ss=2` at 1080p has the same sea and terrain silhouettes as an
+ordinary 1080p frame, only anti-aliased and more finely shaded.
 
 ```bash
 node tools/shot.mjs fury /tmp/f --w=640 --h=360 --accum=16 48.6 56          # stills
@@ -120,7 +155,12 @@ node tools/shot.mjs fury /tmp/f 18:'{"accum":32,"dof":{"focus":3.4,"fstop":1.4}}
 node tools/render.mjs fury --w=1920 --h=1080 --accum=16                      # frames/fury/1920x1080@30_a16_ss1/
 ```
 
-`window.FILM.renderFrame(t, { accum: N, ss: K })` is the page API (returns timings); `renderFrame(t)` is unchanged.
+`window.FILM.renderFrame(t, { accum: N, ss: K, filter: R })` is the page API (returns timings); `renderFrame(t)` is
+unchanged. Both throw if the WebGL context was lost. `render.mjs` writes each frame under a temporary name and
+renames it, so a frame on disk is always whole; a frame that fails (lost context after a driver reset or Windows
+TDR, crashed page or browser) is deleted and retried once in a fresh browser, and a second failure stops the run
+(exit 4; re-run to resume). With `--gpu` the film's own context is re-checked in every new browser and every 200
+frames, so a browser that fell back to a software rasteriser mid-run stops the render instead of producing frames.
 
 **GPU mode** (`--gpu`, `tools/gpu.mjs`): runs WebGL on the real GPU instead of SwiftShader. Linux: Playwright's
 full Chromium in the new headless mode with ANGLE over Vulkan (`--enable-gpu --use-angle=vulkan
@@ -138,17 +178,20 @@ Once, on Linux (driver 570 or newer, its Vulkan ICD installed; `nvidia-smi` and 
 list the card):
 
 ```bash
-cd films && npm ci && npm install --no-save playwright && npx playwright install chromium
+cd films && npm ci && npm install --no-save playwright && npx playwright install --with-deps chromium
 node tools/build.mjs
-node tools/shot.mjs fury /tmp/gpucheck --gpu --w=1920 --h=1080 48.6          # prints "WebGL: ANGLE (NVIDIA ..., GeForce RTX 5090 ...)"
+node tools/shot.mjs fury /tmp/gpucheck --gpu --w=1920 --h=1080 --accum=16 48.6
+# prints "WebGL: ANGLE (NVIDIA ..., GeForce RTX 5090 ...)" and the cost per sub-render ("... ms each")
 ```
+
+(`--with-deps` installs the system libraries the full Chromium needs; it uses `sudo` for the package manager.)
 
 On Windows (PowerShell; Chrome installed):
 
 ```powershell
 cd films; npm ci; npm install --no-save playwright; npx playwright install chromium
 node tools/build.mjs
-node tools/shot.mjs fury $env:TEMP\gpucheck --gpu --channel=chrome --w=1920 --h=1080 48.6
+node tools/shot.mjs fury $env:TEMP\gpucheck --gpu --channel=chrome --w=1920 --h=1080 --accum=16 48.6
 ```
 
 Then each film (the same on both; add `--channel=chrome` on Windows):
@@ -158,19 +201,21 @@ node tools/render.mjs quarterhorse --gpu --w=1920 --h=1080 --fps=30 --accum=16
 node tools/render.mjs fury         --gpu --w=1920 --h=1080 --fps=30 --accum=16
 node tools/render.mjs corsair      --gpu --w=1920 --h=1080 --fps=30 --accum=16
 # final masters: --accum=32 or 64, optionally --ss=2; frames are cached per setting under
-# frames/<film>/1920x1080@30_a<N>_ss<K>/, so a re-run resumes where it stopped
+# frames/<film>/1920x1080@30_a<N>_ss<K>/ (plus _f<R> with --filter), so a re-run resumes where it stopped
 ```
 
 If the probe refuses (software renderer): try `--angle=gl-egl`, then `--channel=chrome`, then `--headed` from a
 desktop session, and open `chrome://gpu` in the same browser to see why.
 
-**Cost.** A sub-render costs a little less than an ordinary frame (no screen-space blur or DOF, no grade);
-measured here at 640x360 on SwiftShader (4 shared cores, load 12 to 16): ordinary frames 3.8 to 7.5 s, sub-renders
-3.0 to 4.3 s (6.6 s in the close-up with DOF), so `--accum=16` (17 sub-renders with the warm-up) costs about 14x an
-ordinary frame; `--ss=2` alone costs about 3x. A frame of N is (N + 1) sub-renders plus one screenshot. The 5090's
-time per 1080p sub-render is not measured yet (no GPU here); the first `shot.mjs ... --gpu --accum=16` prints it
-("ms each"). Assuming 25 to 60 ms per 1080p sub-render (JavaScript scene update plus about twenty GPU passes and
-three ray-marched volumes) and about 50 ms per screenshot:
+**Cost.** A sub-render costs a little less than an ordinary frame (no DOF pass, no grade; the motion blur runs over
+its short slice). Measured here at 640x360 on SwiftShader (4 shared cores, load 12 to 17): ordinary frames 4 to 8 s
+(up to 15 s for the first frame of a shot); sub-renders 2.4 to 3.9 s, 5.2 s on the apron at sunset and 5.8 s in the
+DOF close-up (film 2, t = 3 and 18); so `--accum=16` (17 sub-renders with the warm-up) is 41 to 99 s a still, about
+12x an ordinary frame. `--ss=2` alone is 12 s (two renders at twice the size). At 1920x1080 (film 1's pass,
+film 2's fly-out, film 3's boat pass; load 17 to 21) an ordinary frame took 25 to 33 s and a sub-render 15 to 24 s,
+so `--accum=16` was 4.3 to 6.9 min a still. A frame of N is (N + 1) sub-renders plus one screenshot. The 5090's time per 1080p sub-render is not measured yet (no GPU
+here); the first `shot.mjs ... --gpu --accum=16` prints it ("ms each"). Assuming 25 to 60 ms per 1080p sub-render (JavaScript scene
+update plus about twenty GPU passes and three ray-marched volumes) and about 50 ms per screenshot:
 
 | Film | Frames (30 fps) | `--accum=16` | `--accum=32` | `--accum=64` | `--accum=16 --ss=2` |
 |---|---|---|---|---|---|

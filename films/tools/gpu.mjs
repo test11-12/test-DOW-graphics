@@ -36,7 +36,7 @@ export async function launchBrowser(opt, cpuArgs) {
   try { return await chromium.launch(o); }
   catch (e) {
     console.error(`--gpu: could not start ${o.executablePath || o.channel} (${e.message.split('\n')[0]}).\n` +
-      `  Install it with "npx playwright install chromium" (or pass --channel=chrome to use the installed Google Chrome).`);
+      `  Install it with "npx playwright install ${process.platform === 'linux' ? '--with-deps ' : ''}chromium" (or pass --channel=chrome to use the installed Google Chrome).`);
     process.exit(3);
   }
 }
@@ -46,17 +46,17 @@ export async function glInfo(page) {
   return page.evaluate(() => {
     const own = window.FILM && window.FILM.film && window.FILM.film.pipe;
     const gl = own ? own.renderer.getContext() : document.createElement('canvas').getContext('webgl2', { powerPreference: 'high-performance' });
-    if (!gl) return null;
+    if (!gl || gl.isContextLost()) return null;
     const e = gl.getExtension('WEBGL_debug_renderer_info');
     return { renderer: gl.getParameter(e ? e.UNMASKED_RENDERER_WEBGL : gl.RENDERER), vendor: gl.getParameter(e ? e.UNMASKED_VENDOR_WEBGL : gl.VENDOR), version: gl.getParameter(gl.VERSION), maxTexture: gl.getParameter(gl.MAX_TEXTURE_SIZE), source: own ? 'film' : 'probe' };
   });
 }
 
-// print the renderer; with --gpu, exit if WebGL is missing or is a software rasteriser
-export async function checkGL(page, opt, label = '') {
+// print the renderer (unless quiet); with --gpu, exit if WebGL is missing, lost or a software rasteriser
+export async function checkGL(page, opt, label = '', quiet = false) {
   const info = await glInfo(page);
-  const s = info ? `${info.renderer} | ${info.vendor} | ${info.version}` : 'no WebGL 2 context';
-  console.log(`WebGL${label ? ' (' + label + ')' : ''}: ${s}`);
+  const s = info ? `${info.renderer} | ${info.vendor} | ${info.version}` : 'no WebGL 2 context (or it was lost)';
+  if (!quiet || !info || SOFTWARE_GL.test(info.renderer) || SOFTWARE_GL.test(info.vendor)) console.log(`WebGL${label ? ' (' + label + ')' : ''}: ${s}`);
   if (opt.gpu && (!info || SOFTWARE_GL.test(info.renderer) || SOFTWARE_GL.test(info.vendor))) {
     console.error(`\n--gpu was asked for, but WebGL is ${info ? 'running on a software rasteriser (' + info.renderer + ')' : 'not available'}. Refusing to render.\n` +
       `  Linux: check "nvidia-smi" and "vulkaninfo --summary" (the NVIDIA Vulkan ICD must be installed, driver 570+ for an RTX 50xx);\n` +

@@ -1,7 +1,8 @@
 // Dev helper: render single frames of a built film at given times and save PNGs.
-//   node tools/shot.mjs <film> <outPrefix> [--w=960 --h=540] [--msaa=4] [--accum=N --ss=K] [--gpu ...] t1[:json] t2[:json] ...
+//   node tools/shot.mjs <film> <outPrefix> [--w=960 --h=540] [--msaa=4] [--accum=N --ss=K --filter=R] [--gpu ...] t1[:json] t2[:json] ...
 //   --accum=N: each still is the mean of N jittered sub-renders (motion blur, anti-aliasing, soft sun shadows, lens
-//   depth of field); --ss=K: rendered at K x the size and filtered down; --gpu: WebGL on the real GPU (tools/gpu.mjs)
+//   depth of field); --ss=K: rendered at K x the size and filtered down; --gpu: WebGL on the real GPU (tools/gpu.mjs).
+//   :json overrides per still: accum, ss, filter, shutter, dof:{focus,fstop,max}, stratumBlur:false
 import path from 'node:path';
 import { launchBrowser, checkGL } from './gpu.mjs';
 import fs from 'node:fs';
@@ -15,7 +16,7 @@ const W = +(opt.w || 960), H = +(opt.h || 540);
 const browser = await launchBrowser(opt, ['--ignore-gpu-blocklist', '--enable-unsafe-swiftshader']);
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
 await checkGL(page, opt);
-const acc = opt.accum || opt.ss ? { ...(opt.accum ? { accum: +opt.accum } : {}), ...(opt.ss ? { ss: +opt.ss } : {}) } : null;
+const acc = opt.accum || opt.ss ? { ...(opt.accum ? { accum: +opt.accum } : {}), ...(opt.ss ? { ss: +opt.ss } : {}), ...(opt.filter ? { filter: +opt.filter } : {}) } : null;
 const logs = [];
 page.on('console', m => { const t = m.text(); if (!/GPU stall|GL Driver Message/.test(t)) logs.push(`[${m.type()}] ${t}`); });
 page.on('pageerror', e => logs.push('[pageerror] ' + e.message));

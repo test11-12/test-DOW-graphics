@@ -1,11 +1,13 @@
 // Offline renderer: steps a built film frame by frame in headless Chromium and encodes an MP4.
 //   node tools/render.mjs <film> [--w=1920 --h=1080 --fps=30 --from=0 --to=<s> --workers=2 --nres=4096]
 //                                 [--quality=95 --crf=17 --out=out/<film>.mp4 --force --frames-only --encode-only]
-//                                 [--accum=N --ss=K] [--gpu --channel=chromium|chrome --angle=vulkan|gl-egl|d3d11 ...]
+//                                 [--accum=N --ss=K --filter=R] [--gpu --channel=chromium|chrome --angle=vulkan|gl-egl|d3d11 ...]
 // Frames are cached in films/frames/<film>/<w>x<h>@<fps>/ so a re-run only renders what is missing (with --accum or
 // --ss, in <w>x<h>@<fps>_a<N>_ss<K>/). --accum=N: every frame is the mean of N sub-renders jittered over the shutter,
-// the pixel, the lens aperture and the solar disc; --ss=K: rendered at K x the size and filtered down. --gpu: WebGL on
-// the real GPU, refused if it turns out to be a software rasteriser (see tools/gpu.mjs); workers default to 4.
+// the pixel (tent filter of radius R output pixels, default 1), the lens aperture and the solar disc; --ss=K: rendered
+// at K x the size and filtered down. --gpu: WebGL on the real GPU, refused if it turns out to be a software rasteriser
+// (see tools/gpu.mjs); workers default to 4. A frame that fails (lost WebGL context, crashed browser) is retried once
+// in a fresh browser; frames are written whole (temporary name, then rename), so a re-run resumes safely.
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -15,25 +17,35 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2), film = args.find(a => !a.startsWith('--'));
 const opt = Object.fromEntries(args.filter(a => a.startsWith('--')).map(a => { const s = a.slice(2), i = s.indexOf('='); return i < 0 ? [s, '1'] : [s.slice(0, i), s.slice(i + 1)]; }));   // values may hold '=' (--gpu-args)
 const W = +(opt.w || 1920), H = +(opt.h || 1080), FPS = +(opt.fps || 30), workers = +(opt.workers || (opt.gpu ? 4 : 2)), Q = +(opt.quality || 95);
-const ACC = Math.max(1, Math.round(+opt.accum || 1)), SS = Math.max(1, +opt.ss || 1), acc = ACC > 1 || SS > 1 ? { accum: ACC, ss: SS } : null;
-const dir = path.join(root, 'frames', film, `${W}x${H}@${FPS}` + (acc ? `_a${ACC}_ss${SS}` : '')); fs.mkdirSync(dir, { recursive: true });
+const ACC = Math.max(1, Math.round(+opt.accum || 1)), SS = Math.max(1, +opt.ss || 1), acc = ACC > 1 || SS > 1 ? { accum: ACC, ss: SS, ...(opt.filter ? { filter: +opt.filter } : {}) } : null;
+const dir = path.join(root, 'frames', film, `${W}x${H}@${FPS}` + (acc ? `_a${ACC}_ss${SS}` + (opt.filter ? `_f${opt.filter}` : '') : '')); fs.mkdirSync(dir, { recursive: true });
 const out = path.resolve(root, opt.out || `out/${film}.mp4`); fs.mkdirSync(path.dirname(out), { recursive: true });
 const url = pathToFileURL(path.join(root, 'dist', `${film}.offline.html`)).href + '?' + new URLSearchParams({ render: '1', w: W, h: H, ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}) });
 const fname = i => path.join(dir, `f_${String(i).padStart(6, '0')}.jpg`);
 
 let glShown = false;
+// a browser with the film loaded; with --gpu the film's own WebGL context is checked every time (a browser that
+// fell back to a software rasteriser after a GPU-process crash is refused, see tools/gpu.mjs)
 async function open() {
   const browser = await launchBrowser(opt, ['--ignore-gpu-blocklist', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--disable-renderer-backgrounding']);
   const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
-  if (!glShown || opt.gpu) { await checkGL(page, opt, glShown ? '' : 'probe'); }
+  if (!glShown || opt.gpu) { await checkGL(page, opt, glShown ? '' : 'probe', glShown); }
   page.on('pageerror', e => console.error('[pageerror]', e.message));
   page.on('console', m => { if (m.type() === 'error') console.error('[console]', m.text()); });
   await page.goto(url);
   await page.waitForFunction(() => window.FILM && window.FILM.ready, null, { timeout: 600000 });
   await page.evaluate(() => window.FILM.ready);
-  if (opt.gpu && !glShown) await checkGL(page, opt, 'film');
+  if (opt.gpu) await checkGL(page, opt, 'film', glShown);
   glShown = true;
   return { browser, page };
+}
+// one frame to disk: render, screenshot, write to a temporary name and rename, so a frame on disk is always complete
+// (a re-run skips the frames that exist). renderFrame throws if the WebGL context was lost (driver reset, Windows
+// TDR, GPU-process crash), so a black or stale canvas is never saved.
+async function frameToDisk(page, i) {
+  await page.evaluate(([t, o]) => window.FILM.renderFrame(t, o), [i / FPS, acc]);
+  const buf = await page.screenshot({ type: 'jpeg', quality: Q });
+  const tmp = fname(i) + '.tmp'; fs.writeFileSync(tmp, buf); fs.renameSync(tmp, fname(i));
 }
 
 const t0 = Date.now();
@@ -49,14 +61,24 @@ if (!opt['encode-only'] && todo.length) {
   todo.forEach((f, k) => chunks[Math.min(workers - 1, Math.floor(k / per))].push(f));
   let done = 0; const total = todo.length;
   const run = async (list, sess) => {
-    const { browser, page } = sess || await open();
+    let s = sess || await open(), n = 0;
     for (const i of list) {
-      await page.evaluate(([t, o]) => window.FILM.renderFrame(t, o), [i / FPS, acc]);
-      await page.screenshot({ path: fname(i), type: 'jpeg', quality: Q });
+      try { await frameToDisk(s.page, i); }
+      catch (e) {
+        // lost context, crashed page or browser: drop anything half-written, start a fresh browser (re-checked
+        // under --gpu) and try the frame once more; a second failure stops the render
+        console.error(`  frame ${i}: ${String(e.message || e).split('\n')[0]}; restarting the browser and retrying once`);
+        for (const f of [fname(i), fname(i) + '.tmp']) if (fs.existsSync(f)) fs.rmSync(f);
+        try { await s.browser.close(); } catch (e2) { /* already gone */ }
+        s = await open();
+        try { await frameToDisk(s.page, i); }
+        catch (e2) { console.error(`  frame ${i} failed again (${String(e2.message || e2).split('\n')[0]}); stopping. Re-run to resume.`); try { await s.browser.close(); } catch (e3) { /* gone */ } process.exit(4); }
+      }
       done++;
+      if (opt.gpu && ++n % 200 === 0) await checkGL(s.page, opt, 'film', true);   // still on the GPU?
       if (done % 25 === 0 || done === total) { const el = (Date.now() - t0) / 1000; console.log(`  ${done}/${total}  ${(el / done).toFixed(2)} s/frame  eta ${Math.round((total - done) * el / done / 60)} min`); }
     }
-    await browser.close();
+    await s.browser.close();
   };
   await Promise.all(chunks.map((c, k) => c.length ? run(c, k === 0 ? first : null) : (k === 0 ? first.browser.close() : null)));
 } else if (!opt['frames-only']) { /* keep `first` for audio */ }
