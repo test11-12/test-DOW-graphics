@@ -125,6 +125,9 @@ const ENV_FRAG = /* glsl */`
 precision highp float;
 ${ATMOSPHERE}
 uniform float uCamAlt; uniform vec3 uGroundAlb; uniform vec2 uDeck;   // cloud deck below the camera: top altitude (m), brightness (0 = none)
+uniform vec4 uOver;   // opt-in (post.envOver / post.envDesat): cloud layer above the camera: base (m), cover, brightness; w: clear-sky desaturation
+uniform vec4 uEnvG;   // opt-in (post.envGround): the ground right under the camera: albedo (rgb), w: camera height above it (m; 0 = off)
+uniform float uEnvGShade; uniform sampler2D tAmbient;
 varying vec3 vDir;
 void main(){
   vec3 rd = normalize(vDir);
@@ -137,6 +140,19 @@ void main(){
   atmoIntegrate(ro, rd, tD>0.0 ? tD : (tG>0.0 ? tG : 1.0e9), 0.5, 14, LR, LM, LMS, T);
   float cv = dot(rd,uSunDir);
   vec3 col = LR*phaseR(cv)+LM*min(phaseM(cv),1.5)+LMS;
+  // single scattering alone paints a deeper blue than a real sky (no multiple scattering, no fine aerosol): bare metal
+  // must not reflect a sky more saturated than the one on screen
+  col = mix(col, vec3(dot(col, vec3(0.2126, 0.7152, 0.0722))), uOver.w);
+  if (uOver.y > 0.0 && rd.y > 0.0 && uCamAlt < uOver.x){   // the underside of a broken layer overhead
+    float se = max(rd.y, 0.015), dist = (uOver.x-uCamAlt)/se;
+    float cov = 1.0-pow(clamp(1.0-uOver.y, 0.0, 1.0), 1.0/max(se*1.5, 0.05));          // seen at a slant the gaps close up
+    float mu = uSunDir.y;
+    vec3 Es = uSunE*exp(-sunTau(RG+uOver.x, max(mu, 0.02)));
+    float fwd = 0.6+1.6*pow(max(cv, 0.0), 6.0);                     // diffused light is brightest toward the sun
+    vec3 Lc = (Es*(0.10+0.30*max(mu, 0.0))*fwd + uSunE*0.05*smoothstep(-0.1, 0.2, mu) + Es*max(mu, 0.0)*uGroundAlb*0.35)*0.3183*uOver.z;
+    Lc = mix(Lc, col, 1.0-exp(-dist/40000.0));                        // haze between the camera and a distant cloud base
+    col = mix(col, Lc, cov);
+  }
   if (tD>0.0){        // a bright, softly lit cloud floor
     vec3 p = ro+rd*tD; float mu = dot(normalize(p), uSunDir);
     vec3 E = uSunE*exp(-sunTau(RG+uDeck.x, max(mu, 0.02)))*(0.2+0.8*max(mu, 0.0)) + uSunE*0.07*smoothstep(-0.1,0.2,uSunDir.y);
@@ -145,6 +161,15 @@ void main(){
     vec3 p = ro+rd*tG; float mu = max(dot(normalize(p), uSunDir), 0.0);
     vec3 E = uSunE*exp(-sunTau(RG, mu))*mu + uSunE*0.06*smoothstep(-0.1,0.2,uSunDir.y);
     col += T*uGroundAlb*E*0.3183;
+  }
+  if (uEnvG.w > 0.0 && rd.y < 0.0){
+    // a camera standing on a runway: what metal mirrors below the horizon is the pavement a few metres away, lit as the
+    // terrain shader lights it (sun + sky hemisphere), not the albedo-tinted ground of the sky model seen through
+    // kilometres of air. The steep rays look at the ground under the airframe, which the airframe hides from the sky.
+    float tg = uEnvG.w/max(-rd.y, 1e-3), mu = uSunDir.y;
+    vec3 Es = uSunE*exp(-sunTau(RG+max(uCamAlt-uEnvG.w, 0.0), max(mu, 0.02)))*max(mu, 0.0);
+    vec3 Lg = uEnvG.rgb*0.3183*(Es + texture2D(tAmbient, vec2(0.5)).rgb)*(1.0-uEnvGShade*smoothstep(-0.3, -0.8, rd.y));
+    col = mix(col, Lg, smoothstep(0.0, -0.05, rd.y)*exp(-tg/8000.0));
   }
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -798,11 +823,12 @@ export class Pipeline {
     this.envScene = new THREE.Scene();
     const envMat = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthTest: false, depthWrite: false,
-      uniforms: { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb, uDeck: { value: new THREE.Vector2(0, 0) } },
+      uniforms: { ...A, uCamAlt: shared.uCamAlt, uGroundAlb: shared.uGroundAlb, uDeck: { value: new THREE.Vector2(0, 0) }, uOver: { value: new THREE.Vector4(0, 0, 0, 0) },
+        uEnvG: { value: new THREE.Vector4(0, 0, 0, 0) }, uEnvGShade: { value: 0 }, tAmbient: shared.tAmbient },
       vertexShader: `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
       fragmentShader: ENV_FRAG,
     });
-    this.envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat)); this.envDeck = envMat.uniforms.uDeck.value;
+    this.envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), envMat)); this.envDeck = envMat.uniforms.uDeck.value; this.envOver = envMat.uniforms.uOver.value; this.envMat = envMat;
     this.envRT = null; this.envKey = '';
     this.setSize(opts.width || 1280, opts.height || 720);
   }
@@ -893,7 +919,8 @@ export class Pipeline {
   // post: { exposure, bloom, bloomTint, vignette, grain, ca, lensK, fade, sat, contrast, wb, lift, tint, shutter, shimmer:[amp,scale,far],
   //         sunDisk, aerial, mode, thermal, sharpen, envKey, cirrus:{alt,cover,opacity,scale,wind}, clouds:{...},
   //         ao:{radius,strength}|false, dof:{focus,fstop,max}, rays, rayShape:{reach,fall,cone,cap}, flare:{ghost,halo,streak,thr},
-  //         tone:{black (display black point, 0), blueSat (1), grad:[top, bottom] (stops, 0), shadows:[r,g,b], highlights:[r,g,b] (split tone, 1)} }
+  //         tone:{black (display black point, 0), blueSat (1), grad:[top, bottom] (stops, 0), shadows:[r,g,b], highlights:[r,g,b] (split tone, 1)},
+  //         envDeck, envOver:{base,cover,gain}|true, envDesat, envGround:{albedo,h,shade} (reflection probe, opt-in) }
   render(time, frameIndex, post = {}) {
     const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene;
     if (this.prof) { this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }
@@ -921,6 +948,12 @@ export class Pipeline {
     { // reflections: a cloud deck under the camera brightens the lower half of what metal sees
       const dk = post.envDeck ?? (this.clouds && post.clouds ? { alt: this.clouds.top - 350, k: 0.6 * Math.min(1, (post.clouds.cover ?? 0.35) * 1.5) } : null);
       this.envDeck.set(dk ? dk.alt : 0, dk ? dk.k : 0);
+      // opt-in: a cloud layer above the camera (true: the volumetric layer and its cover) and a less saturated clear sky
+      const ov = post.envOver === true ? (this.clouds && post.clouds ? { base: this.clouds.base, cover: post.clouds.cover ?? 0.35 } : null) : post.envOver;
+      this.envOver.set(ov ? ov.base : 0, ov ? ov.cover : 0, ov ? (ov.gain ?? 1) : 0, post.envDesat ?? 0);
+      // opt-in: the pavement under a camera on the ground, {albedo:[r,g,b] linear, h: camera height (m), shade: 0..1}
+      const eg = post.envGround, gu = this.envMat.uniforms;
+      gu.uEnvG.value.set(eg ? eg.albedo[0] : 0, eg ? eg.albedo[1] : 0, eg ? eg.albedo[2] : 0, eg ? (eg.h ?? 2) : 0); gu.uEnvGShade.value = eg ? (eg.shade ?? 0) : 0;
     }
     this.updateEnvironment(post.envKey ?? 'default');
     // aerial-perspective froxels follow the camera every frame

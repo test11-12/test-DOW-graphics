@@ -16,9 +16,9 @@ async function init() {
   await Promise.all([document.fonts.load('700 64px "Saira Condensed"'), document.fonts.load('400 20px "B612 Mono"')]);
   terrain = new Terrain(pipe, { ...NM_TERRAIN, near: { ...NM_TERRAIN.near, res: nres } });
   pipe.atmo.groundAlbedo.setRGB(0.3, 0.24, 0.18);
-  ac = buildQuarterhorse(pipe); sc.add(ac);
-  plume = makePlume(pipe, { length: 10, radius: QH.nozzleR }); plume.position.set(QH.nozzleX, 0.06, 0); ac.add(plume);
-  haze = makeHeatHaze(pipe, { length: 40, radius: 0.55 }); haze.position.set(QH.nozzleX, 0.06, 0); ac.add(haze);
+  ac = await buildQuarterhorse(pipe); sc.add(ac);
+  plume = makePlume(pipe, { length: 10, radius: QH.nozzleR }); plume.position.set(QH.nozzleX, QH.nozzleY, 0); ac.add(plume);
+  haze = makeHeatHaze(pipe, { length: 40, radius: 0.55 }); haze.position.set(QH.nozzleX, QH.nozzleY, 0); ac.add(haze);
   shock = makeShockCone(pipe, { length: 70 }); shock.position.set(QH.noseX + 0.2, 0, 0); ac.add(shock);
   pipe.registerDynamic(ac);
   plume.layers.set(LAYER.FX); haze.layers.set(LAYER.DISTORT); shock.layers.set(LAYER.DISTORT);
