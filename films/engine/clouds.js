@@ -208,12 +208,17 @@ export class CloudLayer {
     };
   }
   // o: { cover, scale (km), wind:[kx,kz] km/s, hole:[x,z,radius,strength], density, tile (m), steps, lightStep, maxDist, erosion, shadow, base, top }
-  render(pipe, o, time) {
-    const u = this.pass.u, r = pipe.renderer, A = pipe.atmo;
+  // the column-coverage uniforms for options o at film time `time` (also used by the reflection probe)
+  setCover(o, time) {
     if (o.base !== undefined) this.base = o.base; if (o.top !== undefined) this.top = o.top;
     const wx = (o.wind?.[0] ?? 0) * time, wz = (o.wind?.[1] ?? 0) * time;
     this.cover.uCov.value.set(o.cover ?? 0.35, o.scale ?? 1, wx / (o.scale ?? 1), wz / (o.scale ?? 1));
     const hole = o.hole; this.cover.uCovHole.value.set(hole ? hole[0] : 0, hole ? hole[1] : 0, hole ? hole[2] : 1, hole ? (hole[3] ?? 1) : 0);
+    return [wx, wz];
+  }
+  render(pipe, o, time) {
+    const u = this.pass.u, r = pipe.renderer, A = pipe.atmo;
+    const [wx, wz] = this.setCover(o, time);
     u.uLayer.value.set(this.base, this.top, o.density ?? 0.012, o.tile ?? 4500);
     u.uMarch.value.set(Math.min(96, o.steps ?? 48), o.lightStep ?? 90, o.maxDist ?? 70000, o.erosion ?? 0.42);
     u.uGain.value = o.gain ?? 1; if (o.shear) u.uShear.value.set(o.shear[0], o.shear[1]);

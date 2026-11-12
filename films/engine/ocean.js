@@ -60,6 +60,10 @@ uniform float uPixAngle, uReflOn, uFogK, uDetailAmp, uGlitter, uThermal, uSparkl
 uniform vec4 uBandAmp;    // rms slope of the four short-wave bands
 uniform vec3 uCloudK;     // cloud layer for reflections and shadows: mid altitude (m), shadow strength, reflection strength
 uniform vec2 uPh[NS]; uniform float uSc[NS];
+// hulls running through the water (up to 3): contact foam round each waterline footprint
+uniform vec4 uHullP[3];       // world x, z of the origin; heading (unit x, z)
+uniform vec4 uHullK[3];       // spray root (hull x), strength, on, transom half-breadth
+uniform vec4 uHullB[12];      // waterline half-breadth at 16 stations from x = -3.65 to 3.65, four per vec4
 ${CLOUD_COVER}
 varying vec2 vUv;
 vec3 vRel; vec2 gGx, gGy;     // camera-relative position (m); pixel footprint axes on the water (m)
@@ -86,6 +90,11 @@ float glints(vec2 w, float fp, float t){
   return acc;
 }
 vec4 dtex(vec2 uv, int i){ return dtexR(uv, i); }
+float hullB(int h, float u){
+  float f = clamp((u+3.65)/7.3, 0.0, 1.0)*15.0; int j = int(min(floor(f), 14.0)); float t = f-float(j);
+  int j1 = j+1; float a = uHullB[h*4+j/4][j-(j/4)*4], b = uHullB[h*4+j1/4][j1-(j1/4)*4];
+  return mix(a, b, t);
+}
 vec3 skyRad(vec3 d){
   vec2 uv = skyUV(d); float v = clamp(uv.y, 0.004, 0.996); float cv = dot(d, uSunDir);
   return textureLod(tSky, vec2(uv.x,(v+0.0)/3.0), 0.0).rgb*phaseR(cv)
@@ -178,10 +187,11 @@ void main(){
       float lace = max(smoothstep(0.34, 0.56, c1), 0.75*smoothstep(0.38, 0.6, c2));
       float n = clamp(lace*0.7+fn.r*0.45+0.3*(fn2-0.5), 0.0, 1.0);
       n = mix(n, 0.55, clamp(fp*0.5, 0.0, 1.0));
-      foam = smoothstep(1.0-wk.r*1.08, 1.0-wk.r*1.08+0.16, n);
+      float fwn = max(fwidth(n), 0.01), th0 = 1.0-wk.r*1.08;
+      foam = smoothstep(th0, th0+max(0.10, 2.0*fwn), n)*step(0.004, wk.r);   // lace edge widened by the pixel's footprint (no foam without wake)
       foam = max(foam, smoothstep(0.94, 1.0, wk.r)*(0.7+0.3*lace));
       foam = mix(foam, smoothstep(0.2, 0.8, wk.r)*0.85, clamp(fp*0.6-0.2, 0.0, 1.0));   // too far to resolve the lace: an even white
-      churn = wk.b*(0.55+0.9*fn.r);
+      churn = wk.b*(0.55+0.9*fn.r)*(0.6+0.8*dtex(duv(0)*0.37+0.19, 0).g);   // patchy, not a uniform stripe
       var += churn*0.03;                                 // aerated water is matt: no glitter in the wash
     }
   }
@@ -191,6 +201,36 @@ void main(){
     float wc = smoothstep(uWhitecap, uWhitecap+0.16, pinch*uChop+0.22*(wn-0.5)+0.10*(slick-0.5));
     wc *= smoothstep(0.35, 0.6, wn+wc*0.3)*clamp(1.0-fp*0.02, 0.25, 1.0);
     foam = max(foam, wc*0.9);
+  }
+  // contact foam: white water round the waterline of each hull, a bow-wave ridge along the forward part of the
+  // wetted length, and the boil behind the transom (hull-relative, so it is crisp at any distance)
+  for (int h=0;h<3;h++){
+    if (uHullK[h].z < 0.5) continue;
+    vec2 f = uHullP[h].zw, rt = vec2(-f.y, f.x), rel = vW-uHullP[h].xy;
+    float u = dot(rel, f), v = dot(rel, rt), av = abs(v), xr = uHullK[h].x, kk = uHullK[h].y;
+    if (u < -16.0 || u > xr+4.0 || av > 7.0) continue;
+    float b = u < xr ? hullB(h, u) : 0.0;
+    float d = u > xr ? length(vec2(u-xr, av)) : (u < -3.65 ? length(vec2(-3.65-u, max(av-uHullK[h].w, 0.0))) : av-b);
+    float aft = clamp((xr-u)/max(xr+3.65, 0.5), 0.0, 1.0);
+    float root = exp(-pow((xr-0.5-u)/0.9, 2.0));                         // just aft of the spray root the water breaks hardest
+    float W = (0.10+0.42*aft+0.30*root)*kk;
+    vec4 fnC = dtex(duv(3), 3);
+    float cc1 = dtex(duv(4)*1.7+0.21, 4).b, cc2 = dtex(duv(3)*2.9+0.57, 3).b;
+    float laceC = max(smoothstep(0.34, 0.56, cc1), 0.75*smoothstep(0.38, 0.6, cc2));
+    float nC = clamp(laceC*0.7+fnC.r*0.45, 0.0, 1.0);
+    float coll = (1.0-smoothstep(0.0, W, max(d, 0.0)))*smoothstep(-3.65-0.6, -3.65+0.2, u)*kk;
+    // behind the transom: the jet's boil, widening and thinning aft
+    float bh = -3.65-u, wb = uHullK[h].w*0.8+0.22*max(bh, 0.0);
+    float boil = bh > 0.0 ? exp(-bh/2.6)*(1.0-smoothstep(wb*0.6, wb, av))*kk : 0.0;
+    float c = max(coll, boil);
+    float fwc = max(fwidth(nC), 0.02), thc = 1.0-c*1.1;
+    foam = max(foam, smoothstep(thc, thc+max(0.12, 2.0*fwc), nC)*step(0.004, c));
+    foam = max(foam, (1.0-smoothstep(0.0, 0.05+0.06*aft, max(d, 0.0)))*0.92*kk*step(-3.65, u));    // a solid white rim at the hull
+    churn = max(churn, max(coll*0.8, boil));
+    var += c*0.02;
+    // the bow wave: water heaped against the forward part of the wetted length
+    float ridge = 0.11*kk*exp(-max(d, 0.0)/0.30)*exp(-pow((xr-0.9-u)/1.3, 2.0))*step(0.0, d);
+    slope -= (ridge/0.30)*sign(v)*rt;
   }
   vec3 N = normalize(vec3(-slope.x, 1.0-uChop*pinch*0.6, -slope.y));
   float sigma = sqrt(max(var, 1.0e-5));
@@ -237,7 +277,7 @@ void main(){
   }
   float sunUp = max(uSunDir.y, 0.0);
   vec3 body = uWaterCol*0.3183*(uSunColor*sunUp*shadow+amb);
-  body = mix(body, vec3(0.20, 0.38, 0.36)*0.3183*(uSunColor*sunUp*shadow+amb), clamp(churn*0.7, 0.0, 0.75));   // aerated water: pale turquoise
+  body = mix(body, vec3(0.256, 0.364, 0.352)*0.3183*(uSunColor*sunUp*shadow+amb), clamp(churn*0.7, 0.0, 0.75));   // aerated water: pale, greyish turquoise
   // light scattered forward through thin crests when looking up-sun
   float crest = clamp(dot(slope, -normalize(uSunDir.xz+1e-5))*2.2, 0.0, 1.0);
   body += vec3(0.02, 0.09, 0.075)*uSunColor*shadow*0.3183*crest*pow(max(dot(-V, normalize(vec3(uSunDir.x, 0.0, uSunDir.z))), 0.0), 3.0);
@@ -259,8 +299,8 @@ void main(){
   // foam: diffuse, lit by sun and sky
   float fl = max(dot(N, uSunDir), 0.0)*0.8+sunUp*0.2;
   vec3 foamC = uFoamCol*0.3183*(uSunColor*fl*shadow+amb);
-  col = mix(col, foamC, clamp(foam, 0.0, 1.0));
-  col += uThermal*vec3(1.0)*(foam*0.9+churn*0.12);   // disturbed water reads warm in the simulated IR view
+  col = mix(col, foamC*(1.0-0.75*uThermal), clamp(foam, 0.0, 1.0));   // (in the IR view white water is warm, not sunlit)
+  col += uThermal*vec3(1.0)*(foam*0.30+churn*0.07);  // disturbed water reads warm in the simulated IR view (below the hot engine)
   gl_FragColor = vec4(sc.rgb+col*cov, 1.0);
 }`;
 
@@ -280,7 +320,8 @@ void main(){
     float edge = smoothstep(0.5, 0.82, ax)*(1.0-smoothstep(0.9, 1.0, ax));    // the two bright shoulders of the wake
     float core = 1.0-smoothstep(0.0, 0.8, ax);
     o.r = (fresh*pow(prof, 0.4)*1.15+edge*exp(-vDat.y*8.0)*(0.25+0.8*n)+core*exp(-vDat.y*16.0)*(0.15+1.1*n*n2*2.0))*k*0.85;
-    o.b = pow(prof, 0.8)*exp(-vDat.y*2.2)*k;
+    float wn = texture2D(tDetail, vec2(vDat.z*0.013+0.3, 0.41)).g;                  // the band breathes along the track
+    o.b = pow(prof, 0.8)*smoothstep(1.0, 0.55+0.3*wn, ax)*exp(-vDat.y*2.2)*k*(0.7+0.5*wn);
   } else if (vType < 1.5){     // bow-wave arm
     float prof = max(1.0-vDat.x*vDat.x, 0.0);
     float n = texture2D(tDetail, vec2(vDat.z*0.11, vDat.x*0.4)).g;
@@ -381,6 +422,7 @@ export class Ocean {
       uCov: cl ? cl.cover.uCov : { value: new THREE.Vector4(0, 1, 0, 0) }, uCovHole: cl ? cl.cover.uCovHole : { value: new THREE.Vector4(0, 0, 1, 0) },
       uWA: mu.uWA, uWB: mu.uWB, uCalm: mu.uCalm, uCalmK: mu.uCalmK,
       uPh: { value: Array.from({ length: NS }, () => new THREE.Vector2()) }, uSc: { value: this.scales },
+      uHullP: { value: Array.from({ length: 3 }, () => new THREE.Vector4()) }, uHullK: { value: Array.from({ length: 3 }, () => new THREE.Vector4()) }, uHullB: { value: Array.from({ length: 12 }, () => new THREE.Vector4()) },
       uRot: { value: this.rots.map(([deg, sx, sy]) => { const a = deg * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a); return new THREE.Vector4(c * sx, sn * sx, -sn * sy, c * sy); }) },
     };
     this.clouds = cl;
@@ -408,6 +450,8 @@ export class Ocean {
     });
     const wm = new THREE.Mesh(wg, this.wakeMat); wm.frustumCulled = false; this.wakeScene.add(wm);
     this.wakes = [];     // { pos(time, outVec3), beam, on(time) }
+    this.hulls = [];     // up to 3 { x, z, fx, fz, b: Float32Array(16) half-breadths -3.65..3.65, xr, k, bt } (contact foam)
+    this._wakeTexel = 0.4;
     this.discs = [];     // { x, z, t0, dur, r0, r1, k }
 
     // planar reflection
@@ -480,7 +524,8 @@ export class Ocean {
         const s = sample(t - a - (w.stern ?? 3.3) / v0), k = Math.min(1, Math.max(0, (s[4] - 2.5) / 7));
         core.push([s[0], s[1], -s[3], s[2], beam * 0.72 + 0.62 * Math.pow(a, 0.62), a / life, (t - a) * 9, k * (w.k ?? 1)]);
         if (a < life * 0.5) {
-          const b = sample(t - a + (w.bow ?? 0.8) / v0), off = beam * 0.8 + s[4] * a * tan, hw = 0.16 + 0.13 * Math.pow(a, 0.85), ka = Math.min(1, Math.max(0, (b[4] - 3) / 7)) * (w.k ?? 1);
+          const b = sample(t - a + (w.bow ?? 0.8) / v0), off = beam * 0.8 + s[4] * a * tan, hw0 = 0.16 + 0.13 * Math.pow(a, 0.85), hw = Math.max(hw0, 1.5 * this._wakeTexel);
+          const ka = Math.min(1, Math.max(0, (b[4] - 3) / 7)) * (w.k ?? 1) * hw0 / hw;     // at least two texels wide, same energy
           aL.push([b[0] - b[3] * off, b[1] + b[2] * off, -b[3], b[2], hw, a / (life * 0.5), (t - a) * 9, ka]);
           aR.push([b[0] + b[3] * off, b[1] - b[2] * off, -b[3], b[2], hw, a / (life * 0.5), (t - a) * 9 + 3.7, ka]);
         }
@@ -538,8 +583,16 @@ export class Ocean {
     const cl = this.clouds, cs = opt.cloudShadow ?? (cl ? 0.75 : 0), cr = opt.cloudReflect ?? (cl ? 0.9 : 0);
     this.cloudK.value.set(cl ? (cl.base + cl.top) / 2 : 5000, opt.cloudsOn === false ? 0 : cs, opt.cloudsOn === false ? 0 : cr);
 
+    // hull footprints for the contact foam
+    for (let i = 0; i < 3; i++) {
+      const hb = this.hulls[i], P = U.uHullP.value[i], K = U.uHullK.value[i];
+      if (!hb || opt.thermal) { K.z = 0; continue; }
+      P.set(hb.x, hb.z, hb.fx, hb.fz); K.set(hb.xr, hb.k, 1, hb.bt ?? 0.95);
+      for (let j = 0; j < 16; j++) U.uHullB.value[i * 4 + (j >> 2)].setComponent(j & 3, hb.b[j]);
+    }
     // wake map
     const wk = opt.wake;
+    if (wk) this._wakeTexel = wk.size / this.wakeSize;
     if (wk && (this.wakes.length || this.discs.length)) {
       U.uWakeRegion.value.set(wk.x, wk.z, wk.size, 1); this.wakeMat.uniforms.uRegion.value.set(wk.x, wk.z, wk.size);
       this._ribbons(t);

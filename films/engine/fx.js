@@ -193,19 +193,30 @@ export function makeShockCone(pipe, { length = 60, strength = 0.006 } = {}) {
 
 // ---------------------------------------------------------------- particle trails (stateless, deterministic)
 // Each particle is born at k/rate seconds; its state is a pure function of (now, birth time, seed), so frames
-// can be rendered in any order. emitter(time, outVec3) returns the world position of the source.
+// can be rendered in any order. emitter(time, outVec3, k) returns the world position of the source (k: the
+// particle's integer id, for emitters that spread particles along a line); vel(time, outVec3, k) its launch velocity.
+// Options for water droplets (all off by default):
+//   ballistic: launch at vel, then linear drag towards the terminal velocity `drift` (gravity / drag)
+//   stretch:   streak each particle along its screen-space motion over `stretch` seconds (motion blur of a drop;
+//              set mat.uniforms.uCamVel to the camera's world velocity when the camera moves)
+//   hard:      0 soft puff .. 1 a crisp disc; minPx: no particle smaller than this many pixels (its alpha falls
+//              with the area instead, so sub-pixel drops do not alias); sizeLog: sizes log-distributed from size0
+//              to size1 (many small, few large) instead of growing with age
+//   phase:     [g, k] Henyey-Greenstein forward scattering of the sun, k = weight (backlit spray glows at its rim)
 const hash = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 export class Trail {
   constructor(pipe, o = {}) {
     this.pipe = pipe;
-    this.o = { rate: 60, life: 6, size0: 0.4, size1: 6, grow: 0.6, color: [0.9, 0.9, 0.92], alpha: 0.6, jitter: 0.3, drift: [0, 0.3, 0], drag: 2.0, spreadV: 1.5, lit: 1, emissive: [0, 0, 0], emissiveLife: 0.15, additive: false, softness: 2, fadeIn: 0.04, start: -1e9, stop: 1e9, noise: 1, color1: null, ...o };
+    this.o = { rate: 60, life: 6, size0: 0.4, size1: 6, grow: 0.6, color: [0.9, 0.9, 0.92], alpha: 0.6, jitter: 0.3, drift: [0, 0.3, 0], drag: 2.0, spreadV: 1.5, lit: 1, emissive: [0, 0, 0], emissiveLife: 0.15, additive: false, softness: 2, fadeIn: 0.04, start: -1e9, stop: 1e9, noise: 1, color1: null,
+      ballistic: false, stretch: 0, hard: 0, minPx: 0, sizeLog: false, phase: [0, 0], fadeOut: 0.55, ...o };
     const N = this.N = Math.ceil(this.o.rate * this.o.life);
     const geo = new THREE.InstancedBufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
     geo.setIndex([0, 1, 2, 0, 2, 3]);
     this.aPos = new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3); this.aDat = new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4);
-    this.aPos.setUsage(THREE.DynamicDrawUsage); this.aDat.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('iPos', this.aPos); geo.setAttribute('iDat', this.aDat);
+    this.aVel = new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3);
+    this.aPos.setUsage(THREE.DynamicDrawUsage); this.aDat.setUsage(THREE.DynamicDrawUsage); this.aVel.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('iPos', this.aPos); geo.setAttribute('iDat', this.aDat); geo.setAttribute('iVel', this.aVel);
     geo.instanceCount = 0;
     const S = pipe.shared;
     this.mat = new THREE.ShaderMaterial({
@@ -213,25 +224,38 @@ export class Trail {
       blending: this.o.additive ? THREE.AdditiveBlending : THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
       uniforms: { ...fxU(pipe), uSunDir: S.uSunDir, uSunColor: S.uSunColor, tAmbient: S.tAmbient,
         uColor: { value: new THREE.Vector3(...this.o.color) }, uColor1: { value: new THREE.Vector3(...(this.o.color1 || this.o.color)) }, uAlpha: { value: this.o.alpha }, uLit: { value: this.o.lit },
-        uEmis: { value: new THREE.Vector3(...this.o.emissive) }, uEmisLife: { value: this.o.emissiveLife }, uSoft: { value: this.o.softness }, uNoise: { value: this.o.noise }, uFadeIn: { value: this.o.fadeIn } },
+        uEmis: { value: new THREE.Vector3(...this.o.emissive) }, uEmisLife: { value: this.o.emissiveLife }, uSoft: { value: this.o.softness }, uNoise: { value: this.o.noise }, uFadeIn: { value: this.o.fadeIn },
+        uFadeOut: { value: this.o.fadeOut }, uStretch: { value: this.o.stretch }, uHard: { value: this.o.hard }, uMinPx: { value: this.o.minPx }, uPhase: { value: new THREE.Vector2(...this.o.phase) }, uCamVel: { value: new THREE.Vector3() } },
       vertexShader: /* glsl */`
-        attribute vec3 iPos; attribute vec4 iDat; // size, age01, seed, rotation
-        varying vec2 vQ; varying float vZ; varying float vAge; varying float vSeed; varying vec3 vSunV;
-        uniform vec3 uSunDir;
+        attribute vec3 iPos; attribute vec4 iDat; attribute vec3 iVel; // size, age01, seed, rotation; velocity (m/s)
+        varying vec2 vQ; varying float vZ; varying float vAge; varying float vSeed; varying vec3 vSunV; varying float vAk; varying vec3 vView;
+        uniform vec3 uSunDir, uCamVel; uniform float uStretch, uMinPx; uniform vec2 uRes;
         void main(){
           vec4 mv = viewMatrix*vec4(iPos,1.0);
           float c = cos(iDat.w), s = sin(iDat.w);
-          vQ = position.xy; vAge = iDat.y; vSeed = iDat.z;
-          mv.xy += vec2(position.x*c-position.y*s, position.x*s+position.y*c)*iDat.x;
-          vZ = -mv.z; vSunV = (viewMatrix*vec4(uSunDir,0.0)).xyz;
-          vQ = vec2(position.x*c-position.y*s, position.x*s+position.y*c);
+          vAge = iDat.y; vSeed = iDat.z; vAk = 1.0;
+          float size = iDat.x;
+          // keep every particle at least uMinPx pixels across; what it lacks in area it loses in opacity
+          float pxw = 2.0*max(-mv.z, 0.05)/(projectionMatrix[1][1]*uRes.y);          // metres per pixel here
+          if (uMinPx > 0.0){ float m = 0.5*uMinPx*pxw; if (size < m){ vAk = (size*size)/(m*m); size = m; } }
+          vec2 q = vec2(position.x*c-position.y*s, position.x*s+position.y*c);
+          vQ = q;
+          vec2 off = q*size;
+          if (uStretch > 0.0){                                                       // streak along the motion
+            vec3 vv = (viewMatrix*vec4(iVel-uCamVel,0.0)).xyz*uStretch;              // motion relative to the camera
+            vec2 sv = vv.xy - mv.xy*(vv.z/min(mv.z, -0.05));                          // screen-plane motion at this depth
+            float L = length(sv);
+            if (L > size*0.2){ vec2 a = sv/L; vec2 b = vec2(-a.y, a.x); vQ = position.xy; off = a*position.x*(size+0.5*L) + b*position.y*size; vAk *= sqrt(size/(size+0.5*L)); }
+          }
+          mv.xy += off;
+          vZ = -mv.z; vSunV = (viewMatrix*vec4(uSunDir,0.0)).xyz; vView = normalize(mv.xyz);
           gl_Position = projectionMatrix*mv;
         }`,
       fragmentShader: /* glsl */`
         precision highp float;
         ${SOFT}
-        uniform sampler2D tDetail, tAmbient; uniform vec3 uColor, uColor1, uSunColor, uEmis; uniform float uAlpha, uLit, uEmisLife, uSoft, uNoise, uFadeIn;
-        varying vec2 vQ; varying float vZ; varying float vAge; varying float vSeed; varying vec3 vSunV;
+        uniform sampler2D tDetail, tAmbient; uniform vec3 uColor, uColor1, uSunColor, uEmis; uniform float uAlpha, uLit, uEmisLife, uSoft, uNoise, uFadeIn, uFadeOut, uHard; uniform vec2 uPhase;
+        varying vec2 vQ; varying float vZ; varying float vAge; varying float vSeed; varying vec3 vSunV; varying float vAk; varying vec3 vView;
         void main(){
           float r2 = dot(vQ,vQ); if (r2 > 1.0) discard;
           float sd = sceneDist(); if (vZ > sd) discard;
@@ -239,15 +263,23 @@ export class Trail {
           float n2 = texture2D(tDetail, vQ*0.55+vec2(vSeed*1.7, vSeed*9.1)).g;
           float body = (1.0-r2);
           float a = smoothstep(0.0, 0.6, body*(0.55+0.9*mix(1.0, n*1.2+n2*0.5-0.35, uNoise)));
-          a *= smoothstep(0.0, uFadeIn, vAge)*(1.0-smoothstep(0.55, 1.0, vAge));
+          if (uHard > 0.0){ float r = sqrt(r2), fw = max(fwidth(r), 1e-3); a = mix(a, 1.0-smoothstep(1.0-fw*1.5, 1.0, r), uHard); }
+          a *= smoothstep(0.0, uFadeIn, vAge)*(1.0-smoothstep(uFadeOut, 1.0, vAge));
           a *= clamp((sd-vZ)/uSoft, 0.0, 1.0)*clamp((vZ-0.6)/1.5, 0.0, 1.0);
-          a *= uAlpha;
+          a *= uAlpha*vAk;
           // sphere-impostor shading
           vec3 N = normalize(vec3(vQ, sqrt(max(1.0-r2, 0.0))+0.35));
-          float wrap = dot(N, normalize(vSunV))*0.5+0.5;
+          vec3 sv = normalize(vSunV);
+          float wrap = dot(N, sv)*0.5+0.5;
           vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb*0.3183;
           vec3 base = mix(uColor, uColor1, smoothstep(0.0, 0.55, vAge));
-          vec3 lit = base*(uSunColor*0.3183*(0.25+0.75*wrap*wrap)*(0.75+0.5*n) + amb*1.2);
+          float sunK = (0.25+0.75*wrap*wrap)*(0.75+0.5*n);
+          if (uPhase.y > 0.0){   // clear water drops scatter sunlight forward and are never dark: looking towards the sun
+                                 // through spray it glows; from the sun's side it is a soft white (no impostor terminator)
+            float g = uPhase.x, cv = dot(vView, sv), hg = (1.0-g*g)/pow(max(1.0+g*g-2.0*g*cv, 1e-4), 1.5);
+            sunK = mix(sunK, 0.45+hg*0.9, uPhase.y);
+          }
+          vec3 lit = base*(uSunColor*0.3183*sunK + amb*1.2);
           vec3 col = mix(base, lit, uLit);
           col += uEmis*exp(-vAge/uEmisLife)*(0.5+n);
           gl_FragColor = vec4(col*a, a);
@@ -260,28 +292,29 @@ export class Trail {
   }
   // t: film time; origin: render origin (world). emitter(tb, out) -> world position; vel(tb, out) optional initial velocity
   update(t, origin, emitter, vel) {
-    const o = this.o, N = this.N, P = this.aPos.array, D = this.aDat.array, cam = this.pipe.camera;
+    const o = this.o, N = this.N, P = this.aPos.array, D = this.aDat.array, VV = this.aVel.array, cam = this.pipe.camera;
     const k0 = Math.floor(t * o.rate); let n = 0;
     const items = this._tmp; items.length = 0;
-    const v = new THREE.Vector3(), cp = cam.position;
+    const v = new THREE.Vector3(), cp = cam.position, lr = Math.log(Math.max(o.size1, 1e-6) / Math.max(o.size0, 1e-6));
     for (let i = 0; i < N; i++) {
       const k = k0 - i, tb = k / o.rate, age = t - tb;
       if (age < 0 || age > o.life || tb < o.start || tb > o.stop) continue;
       const a01 = age / o.life, s1 = hash(k), s2 = hash(k + 0.37), s3 = hash(k + 0.71);
-      emitter(tb, this._p);
-      // initial kick decays with drag; plus slow buoyant drift and a wobble
-      const e = (1 - Math.exp(-o.drag * age)) / o.drag;
+      emitter(tb, this._p, k);
+      // initial kick decays with drag; plus slow buoyant drift and a wobble (ballistic: drift is the terminal velocity)
+      const ex = Math.exp(-o.drag * age), e = (1 - ex) / o.drag;
       let vx = (s1 - 0.5) * o.spreadV, vy = (s2 - 0.5) * o.spreadV, vz = (s3 - 0.5) * o.spreadV;
-      if (vel) { vel(tb, v); vx += v.x; vy += v.y; vz += v.z; }
+      if (vel) { vel(tb, v, k); vx += v.x; vy += v.y; vz += v.z; }
+      if (o.ballistic) { vx -= o.drift[0]; vy -= o.drift[1]; vz -= o.drift[2]; }
       const x = this._p.x + vx * e + o.drift[0] * age + (s2 - 0.5) * o.jitter, y = this._p.y + vy * e + o.drift[1] * age + (s3 - 0.5) * o.jitter, z = this._p.z + vz * e + o.drift[2] * age + (s1 - 0.5) * o.jitter;
       const rx = x - origin.x, ry = y - origin.y, rz = z - origin.z;
-      const size = o.size0 + (o.size1 - o.size0) * Math.pow(a01, o.grow) * (0.75 + 0.5 * s3);
+      const size = o.sizeLog ? o.size0 * Math.exp(lr * Math.pow(hash(k + 0.53), 2.2)) : o.size0 + (o.size1 - o.size0) * Math.pow(a01, o.grow) * (0.75 + 0.5 * s3);
       const dx = rx - cp.x, dy = ry - cp.y, dz = rz - cp.z;
-      items.push([dx * dx + dy * dy + dz * dz, rx, ry, rz, size, a01, s1, s2 * 6.283 + age * (s3 - 0.5) * 0.6]);
+      items.push([dx * dx + dy * dy + dz * dz, rx, ry, rz, size, a01, s1, s2 * 6.283 + age * (s3 - 0.5) * 0.6, vx * ex + o.drift[0], vy * ex + o.drift[1], vz * ex + o.drift[2]]);
     }
     if (!o.additive) items.sort((a, b) => b[0] - a[0]);
-    for (const it of items) { P[n * 3] = it[1]; P[n * 3 + 1] = it[2]; P[n * 3 + 2] = it[3]; D[n * 4] = it[4]; D[n * 4 + 1] = it[5]; D[n * 4 + 2] = it[6]; D[n * 4 + 3] = it[7]; n++; }
-    this.mesh.geometry.instanceCount = n; this.aPos.needsUpdate = true; this.aDat.needsUpdate = true;
+    for (const it of items) { P[n * 3] = it[1]; P[n * 3 + 1] = it[2]; P[n * 3 + 2] = it[3]; D[n * 4] = it[4]; D[n * 4 + 1] = it[5]; D[n * 4 + 2] = it[6]; D[n * 4 + 3] = it[7]; VV[n * 3] = it[8]; VV[n * 3 + 1] = it[9]; VV[n * 3 + 2] = it[10]; n++; }
+    this.mesh.geometry.instanceCount = n; this.aPos.needsUpdate = true; this.aDat.needsUpdate = true; this.aVel.needsUpdate = true;
     this.mesh.visible = n > 0;
   }
   hide() { this.mesh.visible = false; this.mesh.geometry.instanceCount = 0; }
