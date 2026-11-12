@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { Pipeline } from './pipeline.js';
 import { renderSoundtrack, wavBytes } from './audio.js';
+import { HeroLayer, heroState, envEquirectBase64 } from './hero.js';
 
 export const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
 export const lerp = (a, b, t) => a + (b - a) * t;
@@ -95,6 +96,8 @@ export class Film {
     this.setStatus('Building scene');
     await new Promise(r => setTimeout(r, 30));
     this.world = await def.build(this);
+    // Cycles hero path (engine/hero.js): ?nohero=1 renders the plate, ?herolayer=<folder url> composites hero_shot.py frames
+    if (P.has('nohero') || P.has('herolayer')) this.hero = new HeroLayer(this, { select: P.get('nohero'), base: P.get('herolayer'), fps: P.get('herofps') });
     this.buildOverlays();
     if (!this.renderMode) this.buildPlayer();
     this.resize();
@@ -396,9 +399,19 @@ export function startFilm(def) {
   window.FILM = {
     ready: film.ready, duration: def.duration, fps: film.fps, film,
     // renderFrame(t) as always; renderFrame(t, { accum: N, ss: K }) accumulates / supersamples (offline quality);
-    // both throw if the WebGL context was lost
-    renderFrame: (t, o) => o && ((+o.accum || 1) > 1 || (+o.ss || 1) > 1) ? film.offlineAccum(t, o) : film.offlineFrame(t),
+    // with ?nohero / ?herolayer the Cycles hero layer composites instead (engine/hero.js). The two do not combine
+    // yet: the Cycles layer is one image per frame, and the accumulation's jittered sub-renders would misregister it.
+    // Both throw if the WebGL context was lost.
+    renderFrame: (t, o) => {
+      const acc = o && ((+o.accum || 1) > 1 || (+o.ss || 1) > 1);
+      if (film.hero) { if (acc) throw new Error('the Cycles hero layer (?herolayer / ?nohero) cannot be combined with --accum or --ss yet'); return film.hero.frame(t); }
+      return acc ? film.offlineAccum(t, o) : film.offlineFrame(t);
+    },
     audioChunks: () => film.audioChunks(),
+    // Cycles hero path: tools/export_shots.mjs and tools/composite.mjs
+    heroState: select => heroState(film, select),
+    heroEnv: w => envEquirectBase64(film.pipe, w),
+    heroMode: m => (film.hero ? film.hero.setMode(m) : 'off'),
     shots: def.shots.map(s => ({ id: s.id, name: s.name, t0: s.t0, t1: s.t1, note: s.note || '' })),
   };
   film.ready.catch(e => { console.error(e); const s = document.getElementById('status'); if (s) s.textContent = 'This film needs WebGL 2 to play. ' + (e && e.message ? e.message : ''); });

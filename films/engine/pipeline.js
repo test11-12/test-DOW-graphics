@@ -862,7 +862,8 @@ export class Pipeline {
     this.shadowFocus = new THREE.Vector3(); this.shadowRadius = 14;
 
     this.prevVP = new THREE.Matrix4();
-    this.dynamic = [];
+    this.dynamic = []; this.dynamicRoots = [];
+    this.hero = null;        // optional Cycles hero layer (engine/hero.js); null unless the page asks for it
     this.deferred = [];      // objects with shade(renderer, sceneTexture, target) -> true if they drew
     this.clouds = null;      // optional volumetric cloud layer: { render(pipe, opts) -> texture, base, top }
     this.frame = 0;
@@ -1005,6 +1006,7 @@ export class Pipeline {
   // mark an object tree as moving geometry (own motion vectors, casts the hero shadow)
   registerDynamic(root) {
     const self = this;
+    this.dynamicRoots.push(root);
     root.traverse(o => {
       if (!o.isMesh || o.layers.mask !== 1) return; // leave FX / refraction meshes on their own layers
       o.layers.set(LAYER.DYNAMIC);
@@ -1052,8 +1054,9 @@ export class Pipeline {
   // seed (accumulation sub-renders only): the noise seed of the scene passes' ray-march and sample dithering, so it
   // differs per sub-render and converges in the mean; accumEnd() gives the final pass the frame's own seed back
   render(time, frameIndex, post = {}, seed) {
-    const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene;
+    const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene, H = this.hero;
     if (this.prof) { this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }
+    if (H) H.begin();
     this.frame = frameIndex;
     S.uTime.value = time; S.uFrame.value = (seed ?? frameIndex) % 1024;
     S.uCamAlt.value = this.camAlt; S.uOrigin.value.copy(this.origin);
@@ -1095,16 +1098,19 @@ export class Pipeline {
     cam.layers.set(LAYER.STATIC); cam.layers.enable(LAYER.DYNAMIC);
     r.shadowMap.needsUpdate = true;
     r.setRenderTarget(this.rtScene); r.setClearColor(0x000000, 1); r.clear();
+    if (H) H.hide(true);     // hero layer: the plate has no heroes and no hero shadows
     r.render(sc, cam);
     if (this.prof) r.setRenderTarget(this.rtVel);
     this.mark('scene');
 
     // 2. motion vectors of moving geometry
+    if (H) H.hide(H.plateOnly);   // composited heroes keep their motion vectors
     sc.overrideMaterial = this.velMat;
     cam.layers.set(LAYER.DYNAMIC);
     r.setRenderTarget(this.rtVel); r.setClearColor(0x000000, 0); r.clear();
     r.render(sc, cam);
     sc.overrideMaterial = null;
+    if (H) H.hide(false);
     this.mark('velocity');
 
     // 3. deferred lighting of depth-only geometry (terrain): one evaluation per pixel
@@ -1122,6 +1128,8 @@ export class Pipeline {
       ua.tAO.value = this.rtAO.texture; ua.uAOk.value.set(ao.strength ?? 0.7, this.rtAO.width, this.rtAO.height);
     } else { ua.tAO.value = this.white; ua.uAOk.value.set(0, 1, 1); }
     this.mark('ao');
+    // 4b. Cycles hero layer: colour, shadow-catcher ratio and depth laid into the lit plate (engine/hero.js)
+    if (H) { sceneTex = H.composite(r, sceneTex, dT); this.mark('hero'); }
 
     // 5. volumetric clouds (own module), then sky + aerial perspective + composite
     if (this.clouds && post.clouds) {
@@ -1250,9 +1258,10 @@ export class Pipeline {
     else if (post.debug === 'ao') uf.tColor.value = this.rtAO.texture;
     else if (post.debug === 'vel') uf.tColor.value = this.rtVelFull.texture;
     else if (post.debug === 'tile') uf.tColor.value = this.rtTileN.texture;
-    if (this.accum) { if (!this.accum.skip) this.accumAdd(); this.mark('final'); return; }
+    if (this.accum) { if (!this.accum.skip) this.accumAdd(); this.mark('final'); if (H) H.end(); return; }
     this.pFinal.render(r, null);
     this.mark('final');
+    if (H) H.end();
   }
   // sun light + hero shadow frustum (from camAlt, shadowFocus, shadowRadius; jittered while accumulating)
   placeSun(post) {

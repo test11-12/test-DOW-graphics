@@ -29,10 +29,11 @@ export function gpuLaunchOptions(opt = {}) {
   return o;
 }
 
-// opt: the tool's parsed --options; cpuArgs: the switches the tool has always used on the CPU path
-export async function launchBrowser(opt, cpuArgs) {
-  if (!opt.gpu) return chromium.launch({ args: cpuArgs });
-  const o = gpuLaunchOptions(opt);
+// opt: the tool's parsed --options; cpuArgs: the switches the tool has always used on the CPU path; extraArgs: switches
+// a feature needs on both paths (for example --allow-file-access-from-files for the Cycles hero layers)
+export async function launchBrowser(opt, cpuArgs, extraArgs = []) {
+  if (!opt.gpu) return chromium.launch({ args: [...cpuArgs, ...extraArgs] });
+  const o = gpuLaunchOptions(opt); o.args.push(...extraArgs);
   try { return await chromium.launch(o); }
   catch (e) {
     console.error(`--gpu: could not start ${o.executablePath || o.channel} (${e.message.split('\n')[0]}).\n` +

@@ -41,6 +41,10 @@ export async function loadGLB(name, pipe, o = {}) {
     }
   });
   root.name = root.name || name;
+  // provenance for the Cycles hero path (engine/hero.js, tools/export_shots.mjs): the asset on the root, the glTF node
+  // index on every node. Object3D.clone copies userData, so meshes cloned out of the model keep it.
+  root.userData.asset = name;
+  root.traverse(obj => { const a = gltf.parser.associations.get(obj); if (a && a.nodes !== undefined) obj.userData.glbNode = [name, a.nodes]; });
   return { root, gltf };
 }
 
