@@ -22,7 +22,9 @@ const opt = Object.fromEntries(args.filter(a => a.startsWith('--')).map(a => { c
 if (!film) { console.error('usage: node tools/export_shots.mjs <film> [--from --to | --times=a,b] [--fps --w --h --nres --heroes --env --pad --out]'); process.exit(2); }
 const W = +(opt.w || 1920), H = +(opt.h || 1080), PW = 320, PH = Math.max(2, Math.round(PW * H / W));
 const out = path.resolve(root, opt.out || `heroes/${film}`); fs.mkdirSync(out, { recursive: true });
-const pad = +(opt.pad ?? 1), envW = +(opt.env || 1024), select = opt.heroes || '1';
+// the hero selection, canonical (engine/hero.js canonSelect); hero_shot.py hashes it into every layer it writes
+const canon = v => { const s = String(v || '1'); return s === '1' || s === 'all' ? s : [...new Set(s.split(',').filter(Boolean))].sort().join(','); };
+const pad = +(opt.pad ?? 1), envW = +(opt.env || 1024), select = canon(opt.heroes);
 
 // Radiance RGBE, flat scanlines, top row first. rgba: Float32Array, rows bottom to top.
 function writeHDR(file, w, h, rgba) {
@@ -73,7 +75,8 @@ for (const i of frames) {
   console.log(`  ${file}  t=${t.toFixed(3)}  shot ${st.shot}  heroes ${index[index.length - 1].heroes}  set ${st.nodes.length - index[index.length - 1].heroes}  ground ${st.ground.kind} ${st.ground.level ?? ''}${st.pad ? '  (pad)' : ''}`);
 }
 const prev = fs.existsSync(path.join(out, 'shots.json')) ? JSON.parse(fs.readFileSync(path.join(out, 'shots.json'), 'utf8')) : null;
-const merged = new Map((prev && prev.film === film && prev.fps === fps && prev.size[0] === W && prev.size[1] === H ? prev.frames : []).map(f => [f.frame, f]));
+if (prev && canon(prev.select) !== select) console.warn(`note: ${path.relative(process.cwd(), out)} held an export for --heroes=${canon(prev.select)}; its index now lists only this run's frames (--heroes=${select})`);
+const merged = new Map((prev && prev.film === film && prev.fps === fps && prev.size[0] === W && prev.size[1] === H && canon(prev.select) === select ? prev.frames : []).map(f => [f.frame, f]));
 for (const f of index) { const o = merged.get(f.frame); merged.set(f.frame, o && !o.pad ? { ...f, pad: false } : f); }
 fs.writeFileSync(path.join(out, 'shots.json'), JSON.stringify({ film, fps, size: [W, H], select, assets: [...new Set([...(prev?.assets || []), ...assets])].sort(), frames: [...merged.values()].sort((a, b) => a.frame - b.frame) }, null, 1));
 await browser.close();

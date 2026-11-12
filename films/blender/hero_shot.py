@@ -3,14 +3,18 @@
 #   node tools/blender.mjs hero_shot --export heroes/fury [--out heroes/fury/cycles] [--frames 510 | 509-511,520]
 #        [--samples 256] [--noise 0.01] [--res 100] [--device auto|OPTIX|CUDA|HIP|ONEAPI|CPU] [--sky env|nishita]
 #        [--set-radius 25] [--catch-height 60] [--no-catcher] [--ground-albedo r,g,b] [--mblur] [--dof]
-#        [--bounces 8] [--no-exr] [--blend]
+#        [--bounces 8] [--min-samples 0] [--no-exr] [--blend]
 # Per frame, in --out:
 #   hero_<frame>.exr  multilayer, linear, premultiplied: Combined RGBA, Depth (planar view Z, m), Shadow Catcher (RGB
 #                     ratio to multiply the background by: < 1 in the heroes' shadows, > 1 where they bounce light)
 #   hero_<frame>.bin  what the engine loads (engine/hero.js HeroLayer.load): the crop holding the heroes and their
 #                     shadows; colour + alpha as half floats, shadow ratio + view Z (filled out to the soft edges) as floats
 #   hero_<frame>.png  preview: the heroes alone through the engine's tone curve and the shot's exposure (straight alpha)
-#   timing.json       seconds per frame, device, samples, size
+#   timing.json       seconds per frame (wall and CPU), device, samples, size
+#   layer.json        film, fps, size and the hero selection (export_shots.mjs --heroes) the layers were rendered for;
+#                     tools/composite.mjs and render.mjs --hero read it, and every .bin carries a hash of the selection
+# A hero node that cannot be instanced (its .glb missing under films/assets, or its glTF node not found in the Blender
+# import) stops the run: the engine hides every hero mesh in the plate, so a skipped one would vanish from the film.
 # Scene: every visible glTF node the film drew from a .glb (the engine tags them, see engine/assets.js) is instanced
 # from the same .glb at its exported world matrix; heroes render, set pieces within --set-radius of a hero (ramp props)
 # and a plane at the ground or sea level are shadow catchers. Sun lamp: 0.53 deg disc, the engine's colour and
@@ -35,11 +39,34 @@ ap.add_argument('--sky', default='env', choices=['env', 'nishita']); ap.add_argu
 ap.add_argument('--catch-height', type=float, default=60); ap.add_argument('--no-catcher', action='store_true')
 ap.add_argument('--ground-albedo'); ap.add_argument('--mblur', action='store_true'); ap.add_argument('--dof', action='store_true')
 ap.add_argument('--bounces', type=int, default=8); ap.add_argument('--no-exr', action='store_true'); ap.add_argument('--blend', action='store_true')
-ap.add_argument('--no-lights', action='store_true')
+ap.add_argument('--no-lights', action='store_true'); ap.add_argument('--min-samples', type=int, default=0)
 A = ap.parse_args(d.args())
 EXP = os.path.abspath(A.export); OUT = os.path.abspath(A.out or os.path.join(EXP, 'cycles')); os.makedirs(OUT, exist_ok=True)
 INDEX = json.load(open(os.path.join(EXP, 'shots.json')))
 FR = {f['frame']: f for f in INDEX['frames']}
+
+def canon_select(s):
+    """The hero selection in canonical form (the same as engine/hero.js canonSelect): '1', 'all' or a sorted list."""
+    s = str(s or '1')
+    return s if s in ('1', 'all') else ','.join(sorted(set(x for x in s.split(',') if x)))
+def select_hash(s):
+    """FNV-1a of the canonical selection, 31 bits (engine/hero.js selectHash): the .bin header's flags field."""
+    h = 0x811c9dc5
+    for b in canon_select(s).encode('utf-8'): h = ((h ^ b) * 0x01000193) & 0xffffffff
+    return h & 0x7fffffff
+SELECT = canon_select(INDEX.get('select'))
+
+def read_exr(path):
+    """All channels of an EXR's first part as float32 (rows top to bottom) and the channel names. Opened and closed
+    explicitly, not through OIIO's shared image cache, which keeps the file open (Windows then cannot delete or
+    rewrite it) and can hand back stale pixels for a file rewritten under the same name."""
+    inp = oiio.ImageInput.open(path)
+    if inp is None: raise RuntimeError(f'cannot read {path}: {oiio.geterror()}')
+    try:
+        spec = inp.spec()
+        px = np.asarray(inp.read_image(0, 0, 0, spec.nchannels, oiio.FLOAT), np.float32).reshape(spec.height, spec.width, spec.nchannels)
+        return px, list(spec.channelnames)
+    finally: inp.close()
 
 def parse_frames(s):
     if not s: return [f['frame'] for f in INDEX['frames'] if not f['pad']]
@@ -81,8 +108,10 @@ d.log('device', DEVICE, DEVNAMES)
 W0, H0 = INDEX['size']
 sc.render.resolution_x, sc.render.resolution_y, sc.render.resolution_percentage = W0, H0, int(A.res)
 RW, RH = round(W0 * A.res / 100), round(H0 * A.res / 100)
+json.dump({'film': INDEX['film'], 'fps': INDEX['fps'], 'size': [RW, RH], 'select': SELECT, 'export': EXP},
+          open(os.path.join(OUT, 'layer.json'), 'w'), indent=1)
 cy = sc.cycles
-cy.samples = A.samples; cy.use_adaptive_sampling = True; cy.adaptive_threshold = A.noise; cy.adaptive_min_samples = 0
+cy.samples = A.samples; cy.use_adaptive_sampling = True; cy.adaptive_threshold = A.noise; cy.adaptive_min_samples = A.min_samples   # 0: Cycles' own
 cy.use_denoising = True; cy.denoiser = 'OPENIMAGEDENOISE'; cy.denoising_input_passes = 'RGB_ALBEDO_NORMAL'; cy.denoising_prefilter = 'ACCURATE'
 if hasattr(cy, 'denoising_quality'): cy.denoising_quality = 'HIGH'
 if hasattr(cy, 'denoising_use_gpu'): cy.denoising_use_gpu = DEVICE != 'CPU'
@@ -170,8 +199,8 @@ def render_world_probe():
         else: pc.data.cycles.panorama_type = 'EQUIRECTANGULAR'
         pc.rotation_euler = (math.pi / 2, 0, -math.pi / 2)   # Blender's equirect camera looks along its -z; this puts u = 0.5 at +x
     ps.render.filepath = os.path.join(OUT, '_probe.exr'); bpy.ops.render.render(write_still=True, scene=ps.name)
-    ib = oiio.ImageBuf(ps.render.filepath); spc = ib.spec()
-    return ib.get_pixels(oiio.FLOAT).reshape(spc.height, spc.width, spc.nchannels)[::-1, :, :3]
+    px, _ = read_exr(ps.render.filepath)   # rewritten once per shot: read it fresh each time
+    return px[::-1, :, :3]
 
 # ------------------------------------------------------------------ glTF library: one import per asset
 def glb_json(path):
@@ -216,7 +245,11 @@ INST = {}
 def instance(n, catch):
     o = INST.get(n['id'])
     src = library(n['asset']).get(n['node'])
-    if src is None: return None
+    if src is None:
+        if catch: return None   # a set piece only catches shadows: without it the ground plane still does
+        why = ('the asset is missing under ' + d.ASSETS) if not os.path.exists(os.path.join(d.ASSETS, n['asset'])) else 'its glTF node was not matched in the Blender import'
+        raise RuntimeError(f"hero node {n['asset']}#{n['node']} ({n['name']}) cannot be instanced: {why}. The engine hides "
+                           "every hero mesh in the plate, so it would vanish from the composite.")
     if o is None:
         o = bpy.data.objects.new(('H:' if not catch else 'S:') + n['name'], src.data)
         sc.collection.objects.link(o); o.rotation_mode = 'QUATERNION'; INST[n['id']] = o
@@ -224,16 +257,20 @@ def instance(n, catch):
     return o
 
 def set_emissive(o, n):
-    """The engine's emissive state (colour x intensity, e.g. a motor lighting up) on this instance's own materials."""
+    """The engine's emissive state (colour x intensity, e.g. a motor lighting up) on this instance's own materials.
+    Instances persist across frames: a slot whose material is not emissive in this frame goes back to the mesh's own
+    material, so a motor that switches off (or a frame rendered out of order) keeps no stale glow."""
     em = {e[0]: e for e in n.get('emissive', [])}
-    if not em: return
     strip = lambda s: s.rsplit('.', 1)[0] if len(s) > 4 and s[-4] == '.' and s[-3:].isdigit() else s
     for i, slot in enumerate(o.material_slots):
         base = o.data.materials[i] if i < len(o.data.materials) else None
-        if base is None or strip(base.name) not in em: continue
+        if base is None: continue
+        if strip(base.name) not in em:
+            if slot.link == 'OBJECT': slot.link = 'DATA'
+            continue
         _, col, k = em[strip(base.name)]
-        if slot.link != 'OBJECT' or slot.material is None or slot.material == base:
-            slot.link = 'OBJECT'; slot.material = base.copy()
+        if slot.link != 'OBJECT': slot.link = 'OBJECT'
+        if slot.material is None or slot.material == base: slot.material = base.copy()   # reuses this instance's copy
         b = next((x for x in slot.material.node_tree.nodes if x.type == 'BSDF_PRINCIPLED'), None) if slot.material.use_nodes else None
         if b is None: continue
         m = max(col)
@@ -260,8 +297,12 @@ def lamps(st, O, hp):
         used.append(o)
     return used
 
+REFQ = {}   # --mblur: each object's rotation at the frame being rendered; neighbour keys are made sign-compatible with it
 def key_all(objs, frame):
     for o in objs:
+        r = REFQ.get(o.name)
+        if r is not None:   # q and -q are the same rotation, but interpolating across a sign flip spins the object
+            q = o.rotation_quaternion.copy(); q.make_compatible(r); o.rotation_quaternion = q
         o.keyframe_insert('location', frame=frame); o.keyframe_insert('rotation_quaternion', frame=frame); o.keyframe_insert('scale', frame=frame)
 
 def pose(st, O, frame, key):
@@ -295,12 +336,15 @@ def setup_frame(i):
     for o in list(INST.values()) + LAMPS: o.animation_data_clear(); o.hide_render = True
     cam.animation_data_clear()
     if cam.data.animation_data: cam.data.animation_data_clear()
-    shown, hero_pts = pose(st, O, i, A.mblur)
     if A.mblur:
+        # neighbours first, frame i last: what is not keyed (sun, lamp power and colour, emission) is left at frame i
         sc.render.motion_blur_shutter = st['post'].get('shutter', 0.5) or 0.5
+        shown, _ = pose(st, O, i, False)
+        REFQ.clear(); REFQ.update({o.name: o.rotation_quaternion.copy() for o in shown + [cam]})
         for j in (i - 1, i + 1):
             nb = state(j)
             pose(nb if nb and nb['shot'] == st['shot'] else st, O, j, True)
+    shown, hero_pts = pose(st, O, i, A.mblur)
     for o in shown: o.hide_render = False
     dof = st['post'].get('dof')
     cam.data.dof.use_dof = bool(A.dof and dof and dof.get('focus'))
@@ -312,6 +356,12 @@ def setup_frame(i):
         low = min([p.z for p in hero_pts], default=None)
         on = lvl is not None and low is not None and (low - (lvl - O[1])) < A.catch_height
         catcher.hide_render = not on
+        # A shadow catcher the camera sees holds out everything behind it. On the sea a flat plane at y = 0 would cut
+        # every hull flat at 0, and in a wave trough (the engine's water below 0) the strip of hull between the trough
+        # and 0 would be missing from both the layer and the plate: a gap at the waterline. So on the sea the plane
+        # only lights the hull from below (bounce, reflections) and the engine's depth test clips the whole Cycles
+        # hull at its own moving water surface; the hull's shadow on the water is given up.
+        catcher.visible_camera = g['kind'] != 'sea'
         if on:
             cx = sum(p.x for p in hero_pts) / len(hero_pts); cyy = sum(p.y for p in hero_pts) / len(hero_pts)
             size = max(2000.0, 8 * math.hypot(cx, cyy))
@@ -321,7 +371,9 @@ def setup_frame(i):
             GROUND_BSDF.inputs['Base Color'].default_value = (*alb[:3], 1)
             GROUND_BSDF.inputs['Roughness'].default_value = 0.85 if g['kind'] != 'sea' else 0.12
     sc.frame_set(i)
-    return st, len([o for o in shown if o.type == 'MESH' and not o.is_shadow_catcher])
+    # planar view depth of the nearest hero origin: hero_depth()'s last-resort fallback
+    vm = cam.matrix_world.inverted(); hz = min([-(vm @ p).z for p in hero_pts], default=1e9)
+    return st, len([o for o in shown if o.type == 'MESH' and not o.is_shadow_catcher]), max(hz, cam.data.clip_start)
 
 # ------------------------------------------------------------------ outputs
 def agx_display(rgb, post):
@@ -336,43 +388,64 @@ def agx_display(rgb, post):
     o = lum[..., None] + post.get('sat', 1.12) * (o - lum[..., None])
     return np.clip(o @ MI, 0, 1)
 
-def pack(exr, st):
-    ib = oiio.ImageBuf(exr); spec = ib.spec(); names = list(spec.channelnames)
-    px = ib.get_pixels(oiio.FLOAT).reshape(spec.height, spec.width, spec.nchannels)[::-1]      # rows bottom to top
+def min3(a):
+    """3 x 3 minimum filter (edges padded with 'no hero')."""
+    P = np.pad(a, 1, constant_values=1e9); o = a.copy()
+    for dy in (0, 1, 2):
+        for dx in (0, 1, 2): o = np.minimum(o, P[dy:dy + a.shape[0], dx:dx + a.shape[1]])
+    return o
+
+def hero_depth(Al, Z, hero_z):
+    """View depth for every pixel the heroes cover at all (alpha > 1/1024); 1e9 elsewhere. Cycles' depth comes from
+    the first sample, so a covered pixel can lack one: a soft or thin edge (fin, antenna, strut, a distant hero) whose
+    first sample missed, or a mostly-covered pixel whose first sample did. Such pixels take the nearest solid hero depth
+    within 3 px (7 x 7), then within 19 px, and last the median hero depth (the nearest hero origin's planar depth if
+    no pixel is solid). Without a depth the engine's test would drop them wherever the plate behind is not sky."""
+    valid = (Al > 0.5) & (Z < 1e9)
+    Zv = np.where(valid, Z, 1e9).astype(np.float32)
+    cov = Al > 1 / 1024
+    Zn = Zv
+    for _ in range(3): Zn = min3(Zn)
+    Zg = Zn
+    for _ in range(16):   # only pixels still without a depth reach further; the others keep their 3 px answer
+        if not (cov & ~valid & (Zn >= 1e9)).any(): break
+        Zg = min3(Zg); Zn = np.where(Zn < 1e9, Zn, Zg)
+    fallback = float(np.median(Z[valid])) if valid.any() else float(hero_z)
+    Zh = np.where(valid, Z, np.where(cov, np.where(Zn < 1e9, Zn, fallback), 1e9)).astype(np.float32)
+    return Zh, int((cov & ~valid).sum()), int((cov & ~valid & (Zn >= 1e9)).sum())
+
+def pack(exr, st, hero_z):
+    px, names = read_exr(exr); px = px[::-1]      # rows bottom to top
     ch = lambda suf: px[..., names.index(next(n for n in names if n.endswith(suf)))]
     Cc = np.stack([ch('Combined.R'), ch('Combined.G'), ch('Combined.B')], -1); Al = ch('Combined.A'); Z = ch('Depth.Z')
     try: S = np.stack([ch('Shadow Catcher.R'), ch('Shadow Catcher.G'), ch('Shadow Catcher.B')], -1)
     except StopIteration: S = np.ones_like(Cc)
     S = np.where(np.isfinite(S), np.clip(S, 0, 8), 1).astype(np.float32)
-    # hero depth: the sample-0 depth where the hero covers the pixel, the nearest hero depth around it on soft edges
-    Zh = np.where((Al > 0.5) & (Z < 1e9), Z, 1e9).astype(np.float32)
-    P = np.pad(Zh, 1, constant_values=1e9); Zn = Zh.copy()
-    for dy in (0, 1, 2):
-        for dx in (0, 1, 2): Zn = np.minimum(Zn, P[dy:dy + Zh.shape[0], dx:dx + Zh.shape[1]])
-    Zh = np.where(Al > 0.5, Zh, np.where(Al > 1 / 1024, Zn, 1e9))
+    Zh, n_edge, n_fallback = hero_depth(Al, Z, hero_z)
+    if n_fallback: d.log(f'  depth: {n_fallback} of {n_edge} edge pixel(s) had no solid hero pixel within 19 px and took the fallback depth')
     m = (Al > 1 / 1024) | (np.abs(S - 1).max(-1) > 1 / 1024)
     h, w = Al.shape
     ys, xs = np.nonzero(m)
     if len(ys): x0, x1, y0, y1 = max(0, xs.min() - 1), min(w, xs.max() + 2), max(0, ys.min() - 1), min(h, ys.max() + 2)
     else: x0 = x1 = y0 = y1 = 0
-    cw, chh = x1 - x0, y1 - y0
+    x0, x1, y0, y1 = int(x0), int(x1), int(y0), int(y1); cw, chh = x1 - x0, y1 - y0
     col = np.concatenate([Cc, Al[..., None]], -1)[y0:y1, x0:x1].astype(np.float16)
     aux = np.concatenate([S, Zh[..., None]], -1)[y0:y1, x0:x1].astype(np.float32)
     binf = exr[:-4] + '.bin'
     with open(binf, 'wb') as f:
-        f.write(struct.pack('<4s7i', b'HRO1', w, h, x0, y0, cw, chh, 0)); f.write(col.tobytes()); f.write(aux.tobytes())
+        f.write(struct.pack('<4s7i', b'HRO1', w, h, x0, y0, cw, chh, select_hash(SELECT))); f.write(col.tobytes()); f.write(aux.tobytes())
     # preview
     straight = np.where(Al[..., None] > 1e-4, Cc / np.maximum(Al[..., None], 1e-4), 0)
     rgba = np.concatenate([agx_display(straight, st['post']), np.clip(Al, 0, 1)[..., None]], -1)[::-1]
     ps = oiio.ImageSpec(w, h, 4, oiio.UINT8); ps.attribute('oiio:UnassociatedAlpha', 1)    # straight alpha: no un-premultiply on write
     out = oiio.ImageBuf(ps); out.set_pixels(oiio.ROI(), np.ascontiguousarray((rgba * 255 + 0.5).astype(np.uint8)))
     out.write(exr[:-4] + '.png')
-    return binf, (x0, y0, cw, chh)
+    return binf, (x0, y0, cw, chh), n_edge
 
 def write_empty(i):
-    with open(os.path.join(OUT, f'hero_{i:06d}.bin'), 'wb') as f: f.write(struct.pack('<4s7i', b'HRO1', RW, RH, 0, 0, 0, 0, 0))
+    with open(os.path.join(OUT, f'hero_{i:06d}.bin'), 'wb') as f: f.write(struct.pack('<4s7i', b'HRO1', RW, RH, 0, 0, 0, 0, select_hash(SELECT)))
 
-timing = {'device': DEVICE, 'devices': DEVNAMES, 'samples': A.samples, 'noise': A.noise, 'size': [RW, RH], 'frames': {}}
+timing = {'device': DEVICE, 'devices': DEVNAMES, 'threads': os.cpu_count(), 'samples': A.samples, 'noise': A.noise, 'size': [RW, RH], 'frames': {}}
 tf = os.path.join(OUT, 'timing.json')
 if os.path.exists(tf):
     try: timing['frames'] = json.load(open(tf)).get('frames', {})
@@ -380,14 +453,20 @@ if os.path.exists(tf):
 for i in FRAMES:
     if state(i) is None: d.log(f'frame {i}: not exported, skipped'); continue
     t0 = time.time()
-    st, nh = setup_frame(i)
-    if nh == 0: write_empty(i); d.log(f'frame {i}: no hero in view, empty layer'); continue
+    st, nh, hero_z = setup_frame(i)
+    if nh == 0:
+        exported = [n['name'] for n in st['nodes'] if n['role'] == 'hero']
+        if exported: raise RuntimeError(f'frame {i}: {len(exported)} hero node(s) exported ({", ".join(exported[:5])}) but none instanced')
+        write_empty(i); d.log(f'frame {i}: no hero exported in this frame, empty layer'); continue
     exr = os.path.join(OUT, f'hero_{i:06d}.exr'); sc.render.filepath = exr
-    t1 = time.time(); bpy.ops.render.render(write_still=True); t2 = time.time()
-    binf, crop = pack(exr, st)
+    t1 = time.time(); c1 = time.process_time(); bpy.ops.render.render(write_still=True); t2 = time.time(); c2 = time.process_time()
+    binf, crop, n_edge = pack(exr, st, hero_z)
     if A.no_exr: os.remove(exr)
     if A.blend and i == FRAMES[0]: bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT, 'hero_shot.blend'), copy=True)
-    timing['frames'][str(i)] = {'setup': round(t1 - t0, 2), 'render': round(t2 - t1, 2), 'pack': round(time.time() - t2, 2)}
-    d.log(f'frame {i} (t={st["t"]:.3f}, {st["shot"]}): {nh} hero node(s), setup {t1 - t0:.1f} s, render {t2 - t1:.1f} s on {DEVICE}, crop {crop}')
-    json.dump(timing, open(tf, 'w'), indent=1)
+    # render_cpu: CPU seconds the render used on all threads (on a shared CPU, wall time / render_cpu x threads shows the
+    # share it got); edge_px: covered pixels whose depth hero_depth() filled in
+    timing['frames'][str(i)] = {'setup': round(t1 - t0, 2), 'render': round(t2 - t1, 2), 'render_cpu': round(c2 - c1, 1), 'pack': round(time.time() - t2, 2), 'crop': list(crop), 'edge_px': n_edge}
+    d.log(f'frame {i} (t={st["t"]:.3f}, {st["shot"]}): {nh} hero node(s), setup {t1 - t0:.1f} s, render {t2 - t1:.1f} s ({c2 - c1:.0f} CPU s) on {DEVICE}, crop {crop}')
+    with open(tf + '.tmp', 'w') as f: json.dump(timing, f, indent=1)
+    os.replace(tf + '.tmp', tf)   # a run stopped mid-write keeps the earlier frames' record
 d.log('done:', OUT)

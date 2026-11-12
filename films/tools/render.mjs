@@ -3,7 +3,8 @@
 //                                 [--quality=95 --crf=17 --out=out/<film>.mp4 --force --frames-only --encode-only]
 // Frames are cached in films/frames/<film>/<w>x<h>@<fps>/ so a re-run only renders what is missing.
 // --hero=<folder> composites the Cycles heroes from blender/hero_shot.py (engine/hero.js; frames cached under
-// <w>x<h>@<fps>-hero/; --heroes=1|all|a.glb,b.glb picks which engine meshes they replace).
+// <w>x<h>@<fps>-hero/). The hero selection comes from the layers' layer.json (--heroes=a.glb,b.glb must match it,
+// 'all' is refused) and --fps must be the export's.
 import { createRequire } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -14,10 +15,36 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2), film = args.find(a => !a.startsWith('--'));
 const opt = Object.fromEntries(args.filter(a => a.startsWith('--')).map(a => { const [k, v] = a.slice(2).split('='); return [k, v ?? '1']; }));
 const W = +(opt.w || 1920), H = +(opt.h || 1080), FPS = +(opt.fps || 30), workers = +(opt.workers || 2), Q = +(opt.quality || 95);
-const hero = opt.hero ? { nohero: opt.heroes || '1', herolayer: pathToFileURL(path.resolve(process.cwd(), opt.hero)).href + '/', herofps: FPS } : {};
+// What the layers were rendered for: blender/hero_shot.py's layer.json beside them, else the export's shots.json above.
+// The hero selection must be the export's (else the engine hides meshes Cycles did not render, or draws ones it did);
+// 'all' is refused because Cycles never renders code-built meshes, which it would hide.
+const canon = v => { const s = String(v || '1'); return s === '1' || s === 'all' ? s : [...new Set(s.split(',').filter(Boolean))].sort().join(','); };
+const die = m => { console.error(m); process.exit(2); };
+function layerInfo(dir) {
+  for (const f of [path.join(dir, 'layer.json'), path.join(dir, '..', 'shots.json')]) {
+    if (!fs.existsSync(f)) continue;
+    const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+    return { file: f, film: j.film, fps: +j.fps, size: j.size, select: canon(j.select) };
+  }
+  return null;
+}
+function heroSelect(heroDir, film, wanted) {
+  const info = layerInfo(heroDir), select = canon(wanted || info?.select);
+  if (select === 'all') die('--heroes=all would hide the code-built moving meshes too, which Cycles never renders (they have no .glb): they would vanish. Use it for a plate only (?nohero=all).');
+  if (info && info.film && info.film !== film) die(`${info.file} is an export of ${info.film}, not ${film}`);
+  if (info && select !== info.select) die(`--heroes=${select} differs from the selection the layers were rendered for (--heroes=${info.select}, ${info.file}). Leave --heroes out, or export and render again with it.`);
+  if (!info) console.warn(`note: no layer.json or ../shots.json beside ${heroDir}; the selection is not checked here (each layer's header still is)`);
+  return { info, select };
+}
+let hero = {};
+if (opt.hero) {
+  const heroDir = path.resolve(process.cwd(), opt.hero), { info, select } = heroSelect(heroDir, film, opt.heroes);
+  if (info && info.fps !== FPS) die(`the layers in ${heroDir} are numbered at ${info.fps} fps (${info.file}): render with --fps=${info.fps}, or export and render the heroes at ${FPS}`);
+  hero = { nohero: select, herolayer: pathToFileURL(heroDir).href + '/', herofps: FPS };
+}
 const dir = path.join(root, 'frames', film, `${W}x${H}@${FPS}${opt.hero ? '-hero' : ''}`); fs.mkdirSync(dir, { recursive: true });
 const out = path.resolve(root, opt.out || `out/${film}${opt.hero ? '-hero' : ''}.mp4`); fs.mkdirSync(path.dirname(out), { recursive: true });
-const url = 'file://' + path.join(root, 'dist', `${film}.offline.html`) + '?' + new URLSearchParams({ render: '1', w: W, h: H, ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}), ...hero });
+const url = pathToFileURL(path.join(root, 'dist', `${film}.offline.html`)).href + '?' + new URLSearchParams({ render: '1', w: W, h: H, ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}), ...hero });
 const fname = i => path.join(dir, `f_${String(i).padStart(6, '0')}.jpg`);
 
 async function open() {

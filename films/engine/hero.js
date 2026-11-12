@@ -3,7 +3,9 @@
 // constructs a HeroLayer and the pipeline's hooks are skipped (pipe.hero stays null), so today's frames are unchanged.
 //
 //   ?nohero=1            the plate: GLB-built heroes (dynamic meshes that came from a .glb) are not drawn and cast no
-//                        shadow. =all also drops code-built dynamic meshes; =a.glb,b.glb only those assets' meshes.
+//                        shadow. =all also drops code-built dynamic meshes (a plate only: Cycles cannot render them,
+//                        so it is refused with a layer); =a.glb,b.glb only those assets' meshes. The selection must be
+//                        the one the layers were exported and rendered for (their header carries its hash).
 //   ?herolayer=<url>/    the composite: as the plate, plus hero_<frame>.bin from that folder (written by hero_shot.py)
 //                        laid into the HDR scene buffer before sky, aerial perspective, clouds, effects, refraction,
 //                        depth of field, motion blur, bloom and grade. file:// needs Chromium's
@@ -29,8 +31,19 @@ const effVisible = o => { for (let p = o; p; p = p.parent) if (!p.visible) retur
 
 // The meshes the hero layer replaces. select: '1' (GLB meshes among the registered dynamic ones), 'all', or a
 // comma list of asset paths ('fury/fury.glb,fury/amraam.glb').
+export function canonSelect(select) {
+  const s = String(select || '1');
+  return s === '1' || s === 'all' ? s : [...new Set(s.split(',').filter(Boolean))].sort().join(',');
+}
+// FNV-1a of the canonical selection, 31 bits: hero_shot.py writes it into every layer's header (select_hash), and a
+// layer rendered for another selection is refused (its heroes would be drawn twice, or go missing)
+export function selectHash(select) {
+  let h = 0x811c9dc5;
+  for (const b of new TextEncoder().encode(canonSelect(select))) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  return h & 0x7fffffff;
+}
 export function heroMeshes(pipe, select = '1') {
-  const s = String(select || '1'), list = s === '1' || s === 'all' ? null : new Set(s.split(',').filter(Boolean));
+  const s = canonSelect(select), list = s === '1' || s === 'all' ? null : new Set(s.split(','));
   return pipe.dynamic.filter(m => {
     if (s === 'all') return true;
     const n = glbNodeOf(m); if (!n) return false;
@@ -106,9 +119,11 @@ export class HeroLayer {
   // film: the Film; o: { select (see heroMeshes), base (folder URL of hero_<frame>.bin, or null for the plate only),
   //   fps (the frame rate the layers are numbered at: export_shots.mjs --fps; default the film's) }
   constructor(film, o = {}) {
-    this.film = film; this.pipe = film.pipe; this.select = o.select || '1'; this.fps = +o.fps || film.fps;
+    this.film = film; this.pipe = film.pipe; this.select = canonSelect(o.select); this.fps = +o.fps || film.fps;
     this.base = o.base ? (o.base.endsWith('/') ? o.base : o.base + '/') : null;
-    this.meshes = heroMeshes(this.pipe, this.select);
+    // 'all' also hides the code-built moving meshes, which Cycles never renders (no .glb): a plate-only selection
+    if (this.base && this.select === 'all') throw new Error('hero layer: ?nohero=all hides code-built meshes that Cycles does not render; use it for a plate only');
+    this.meshes = heroMeshes(this.pipe, this.select); this.meshSet = new Set(this.meshes);
     this.mode = this.base ? 'composite' : 'plate';
     this.layer = null; this._hidden = null;
     this.pComp = new Pass(COMP_FRAG, { tScene: { value: null }, tDepth: { value: null }, tHeroC: { value: null }, tHeroA: { value: null }, uRect: { value: new THREE.Vector4(0, 0, 1, 1) }, uWhich: { value: 0 }, uLogFar: this.pipe.shared.uLogFar });
@@ -131,7 +146,8 @@ export class HeroLayer {
     if (this.layer && this.layer.frame === frame) return this.layer;
     const buf = await fetchBytes(`${this.base}hero_${f6(frame)}.bin`), dv = new DataView(buf);
     if (dv.getUint32(0, true) !== 0x314f5248) throw new Error(`hero layer frame ${frame}: not a hero_shot.py layer`);
-    const [W, H, x0, y0, w, h] = [4, 8, 12, 16, 20, 24].map(k => dv.getInt32(k, true));
+    const [W, H, x0, y0, w, h, flags] = [4, 8, 12, 16, 20, 24, 28].map(k => dv.getInt32(k, true));
+    if (flags && flags !== selectHash(this.select)) throw new Error(`hero layer frame ${frame}: rendered for another hero selection than this page's nohero=${this.select} (see layer.json next to the layers; export_shots.mjs --heroes and the composite must match)`);
     const L = this.layer || {};
     L.frame = frame; L.W = W; L.H = H; L.empty = !(w > 0 && h > 0);
     if (!L.empty) {
@@ -149,7 +165,10 @@ export class HeroLayer {
   }
 
   // ---- pipeline hooks (engine/pipeline.js calls these only while pipe.hero is set)
-  begin() { const d = this.film.def; if (d.heroless) d.heroless(this.film); }   // the film turns off its own fake hero shadows
+  // the film turns off its own painted hero shadows, for the objects this layer replaces: def.heroless(film, layer)
+  begin() { const d = this.film.def; if (d.heroless) d.heroless(this.film, this); }
+  // does this layer replace (hide) any mesh under root?
+  replaces(root) { let r = false; if (root) root.traverse(o => { if (!r && this.meshSet.has(o)) r = true; }); return r; }
   hide(on) {
     if (on && !this._hidden) { this._hidden = this.meshes.map(m => m.visible); for (const m of this.meshes) m.visible = false; }
     else if (!on && this._hidden) { this.meshes.forEach((m, i) => { m.visible = this._hidden[i]; }); this._hidden = null; }
