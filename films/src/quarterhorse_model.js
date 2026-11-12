@@ -25,8 +25,9 @@ export async function buildQuarterhorse(pipe) {
   for (const m of [holder.material, liner.material]) { m.emissive.setRGB(1, 1, 1); m.emissiveIntensity = 0; }
   // nothing inside the fuselage needs to throw a shadow
   glow.traverse(o => { if (o.isMesh) o.castShadow = false; });
-  // The skins' occlusion map also carries the aircraft's own shadow under the belly (the sky probe has no shadow in
-  // it): right on the ground, wrong in the air, where the underside should pick up the cloud deck or the desert.
+  // The skins' occlusion map also carries a little extra cover on surfaces facing the ground (the airframe hides part of
+  // the sky from the pavement under it; the film's probe shade carries the rest): right on the ground, less so in the
+  // air, where the underside should pick up the cloud deck or the desert.
   const skins = ['airframe_skin', 'airframe_wing'].map(n => findMesh(model, n).material);
   const setOcclusion = k => { for (const m of skins) m.aoMapIntensity = k; };
   root.userData = {

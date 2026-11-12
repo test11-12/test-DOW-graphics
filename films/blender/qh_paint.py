@@ -249,6 +249,44 @@ class FusFrame:
             A[i] = np.interp(PH, phi[i][o], a_top[i][o])
         self.S, self.PH, self.A, self.hg = S, PH, A, hg.astype(np.float32)
         self.zc = zc.astype(np.float32)
+        # The panel layout and the markings were measured as around-angles on an elliptical section (matched to the 4K
+        # side photograph). The upper section is now boxier, so a layout angle is mapped to the angle on the new section
+        # that lies at the same height: lines and lettering keep their side-view positions on the steeper flank.
+        _, hw, ht, _, nt, _ = [np.asarray(a, float) for a in fus_params(S)]
+        G = np.radians(np.linspace(0, 90, 361))
+
+        def zeta(phi, n, hw_, ht_):     # height above the centre of the section point on the ray at phi from the top
+            return np.cos(phi) * ((np.sin(phi) / hw_) ** n + (np.cos(phi) / ht_) ** n) ** (-1 / n)
+        Gd = np.degrees(G)
+        self.MAP = np.zeros((len(S), len(G)), np.float32)       # old angle -> new angle
+        self.INV = np.zeros((len(S), len(G)), np.float32)       # new angle -> old angle
+        for i in range(len(S)):
+            zo = zeta(G, 2.0, hw[i], ht[i]); zn = zeta(G, nt[i], hw[i], ht[i])
+            self.MAP[i] = np.interp(zo, zn[::-1], Gd[::-1])
+            self.INV[i] = np.interp(Gd, self.MAP[i], Gd)
+        self.G = Gd.astype(np.float32)
+
+    def _map(self, s, deg, inverse=False):
+        """Bilinear lookup in MAP (or INV) at stations s, angles deg (degrees); the lower half (>= 90) is unchanged."""
+        S, G, M = self.S, self.G, (self.INV if inverse else self.MAP)
+        s = np.asarray(s, np.float32)
+        d = np.asarray(deg, np.float32) * np.ones_like(s)
+        fi = np.clip((s - S[0]) / (S[1] - S[0]), 0, len(S) - 1.001)
+        i = fi.astype(np.int64); di = (fi - i).astype(np.float32)
+        j = np.clip(d / (G[1] - G[0]), 0, len(G) - 1.001); jj = j.astype(np.int64); dj = (j - jj).astype(np.float32)
+        out = (M[i, jj] * (1 - di) * (1 - dj) + M[i + 1, jj] * di * (1 - dj) + M[i, jj + 1] * (1 - di) * dj + M[i + 1, jj + 1] * di * dj)
+        return np.where(d < 90, out, d).astype(np.float32)
+
+    def new_deg(self, s, deg_old):
+        """Around-angle on the current section that lies at the height `deg_old` had on the elliptical one."""
+        return self._map(s, deg_old)
+
+    def old_deg(self, s, deg_new):
+        return self._map(s, deg_new, inverse=True)
+
+    def arc_old(self, s, deg_old):
+        """Arc from the top at station s for a layout angle given on the elliptical section (z-matched)."""
+        return self.lookup(s, np.radians(self.new_deg(s, deg_old)))
 
     def lookup(self, s, phi):
         S, PH, A = self.S, self.PH, self.A
@@ -268,7 +306,8 @@ class FusFrame:
         return s, phi, a, hg, side
 
     def arc_at(self, s, phi_deg):
-        return self.lookup(s, np.full_like(s, math.radians(phi_deg)))
+        """Arc from the top for a layout angle in the elliptical (photo-matched) space."""
+        return self.arc_old(s, np.full_like(s, phi_deg, dtype=np.float32))
 
 
 # ------------------------------------------------------------------ decals (vector artwork, drawn in metres)
@@ -393,8 +432,8 @@ def seal(W):
     c = Ws / 2
     field = (13, 15, 22)
     ga.ellipse([0, 0, Ws - 1, Ws - 1], fill=255)
-    g.ellipse([0, 0, Ws - 1, Ws - 1], fill=(214, 215, 214))                      # pale rim
-    r1 = Ws * 0.468
+    g.ellipse([0, 0, Ws - 1, Ws - 1], fill=(236, 236, 233))                      # bold near-white rim, 0.025 m on 0.545 m
+    r1 = Ws * 0.454
     g.ellipse([c - r1, c - r1, c + r1, c + r1], fill=field)
     rng = np.random.default_rng(7)
     for arc0, arc1 in ((-2.62, -0.52), (0.62, 2.52)):                              # lettering band: fine light marks
@@ -431,11 +470,12 @@ def seal(W):
     return rgb, np.asarray(al, np.float32) / 255.0
 
 
-def text_mask(text, h_m, weight=700, track=0.02, squeeze=1.0, width_m=None, family=LETTERING):
-    """Text with cap height h_m (metres), rendered at DECAL_PX_PER_M. With width_m, the letter spacing is set so the
-    run spans exactly width_m (letters keep their own proportions). Returns (mask array, width_m, top_offset_m): the
-    image top may sit above the cap line when a glyph rises above it; top_offset_m is the cap line's offset from the
-    image top (0 for caps-only text)."""
+def text_mask(text, h_m, weight=700, track=0.02, squeeze=1.0, width_m=None, family=LETTERING, min_track=0.03):
+    """Text with cap height h_m (metres), rendered at DECAL_PX_PER_M. With width_m the run spans exactly width_m: the
+    letter spacing grows when there is room; when the letters at their own width would need negative spacing (glyphs
+    colliding), they are condensed instead (`squeeze`, horizontal scale) and keep a spacing of min_track x the cap
+    height. Returns (mask array, width_m, top_offset_m): the image top may sit above the cap line when a glyph rises
+    above it; top_offset_m is the cap line's offset from the image top (0 for caps-only text)."""
     big = 600
     f = ImageFont.truetype(font(weight, family), big)
     hb = Image.new('L', (big * 2, big * 2), 0); ImageDraw.Draw(hb).text((big // 2, big // 2), 'H', font=f, fill=255)
@@ -444,18 +484,32 @@ def text_mask(text, h_m, weight=700, track=0.02, squeeze=1.0, width_m=None, fami
     adv = [f.getlength(ch) for ch in text]
     ink0 = f.getbbox(text[0])[0]; ink1 = adv[-1] - f.getbbox(text[-1])[2]
     natural = sum(adv) - ink0 - ink1
-    extra = ((width_m * DECAL_PX_PER_M / k) - natural) / max(len(text) - 1, 1) if width_m else track * big
-    Wb = int(natural + extra * (len(text) - 1) + 4); Hb = int(big * 1.4)
+    gaps = max(len(text) - 1, 1)
+    if width_m:
+        target = width_m * DECAL_PX_PER_M / k
+        extra = (target - natural) / gaps
+        floor = min_track * cap_px
+        if extra < floor:                                   # condense the letters rather than overlap them
+            squeeze = (target - floor * gaps) / natural
+            extra = floor
+    else:
+        extra = track * big
+    assert extra >= 0 and 0.6 < squeeze <= 1.0, (text, extra, squeeze)
+    # lay out at full glyph width with the spacing pre-divided by the squeeze, then scale the run horizontally
+    ex = extra / squeeze
+    Wb = int(natural + ex * (len(text) - 1) + 4); Hb = int(big * 1.4)
     im = Image.new('L', (Wb, Hb), 0); g = ImageDraw.Draw(im)
     x = -ink0 + 2
     for ch, a in zip(text, adv):
         g.text((x, 0), ch, font=f, fill=255)
-        x += a + extra
+        x += a + ex
     top = cap_top
     ib = im.getbbox(); y0 = min(ib[1], top); y1 = ib[3]
     im = im.crop((0, y0, Wb, y1))
-    W = max(1, int(round(im.width * k))); H = max(1, int(round(im.height * k)))
+    W = max(1, int(round(im.width * k * squeeze))); H = max(1, int(round(im.height * k)))
     im = im.resize((W, H), Image.LANCZOS)
+    if squeeze < 0.999 or width_m:
+        log(f'text {text!r}: cap {h_m:.3f} m, squeeze {squeeze:.3f}, spacing {extra / cap_px:.3f} cap')
     return np.asarray(im, np.float32) / 255.0, W / DECAL_PX_PER_M, (top - y0) * k / DECAL_PX_PER_M
 
 
@@ -524,6 +578,18 @@ def pad_index(valid, iters):
     return idx
 
 
+def box_blur(a, r):
+    """Separable (2r+1)^2 box filter with clamped edges (cumulative sums), any trailing channels."""
+    a = a.astype(np.float32)
+    for ax in (0, 1):
+        n = a.shape[ax]
+        pw = [(0, 0)] * a.ndim; pw[ax] = (r + 1, r)
+        c = np.cumsum(np.pad(a, pw, mode='edge'), axis=ax, dtype=np.float32)
+        a = (np.take(c, np.arange(2 * r + 1, 2 * r + 1 + n), axis=ax) - np.take(c, np.arange(0, n), axis=ax)) / (2 * r + 1)
+        del c
+    return a
+
+
 def pad(a, idx):
     H, W = idx.shape
     flat = a.reshape(H * W, -1)
@@ -552,7 +618,9 @@ def fill_from_valid(a, ok, iters=8):
 FRAMES = [0.06, 0.97, 1.95, 2.93, 4.20, 5.45, 6.50, 7.68, 8.85, 9.95, 10.55, 11.25, 12.05, 12.75, 13.37]
 MAIN_FRAMES = {2.93, 7.68, 12.75, 13.37, 0.06}
 INNER = [0.52, 1.46, 2.44, 3.57, 4.83, 5.98, 7.09, 8.27, 9.40, 10.25, 10.90, 11.65, 12.40, 13.06]
-LONGI = [0.0, 31.0, 58.0, 92.0, 111.0, 130.0, 154.0, 180.0]     # joint around-angles (deg from the top)
+# joint around-angles (deg from the top, elliptical layout space): the 24-deg joint is the crisp shoulder line the overhead
+# photographs show (it maps onto the boxier section's shoulder, about 0.82 of the half-width out)
+LONGI = [0.0, 24.0, 58.0, 92.0, 111.0, 130.0, 154.0, 180.0]
 STRING = [15.0, 44.0, 72.0, 98.0, 121.0, 142.0, 167.0]          # stringer rivet rows between them
 WATERLINE = 92.0         # the joint below which the lower-fuselage alloy starts
 
@@ -588,31 +656,34 @@ class Skin:
         for sc in (self.mottle, self.mottle_c, self.cloud, self.smear, self.brush, self.scratch):
             a = sc.a; sc.a = (a - a.mean()) / (a.std() + 1e-6)     # zero-mean, unit-variance detail
 
-    def metal(self, L, u, v, panel, ao, along_dir, across_dir, base_tone=0.90, lower=None, cross_frac=0.06, tone_var=0.028):
-        """Clean satin brushed aluminium. Sheets differ by a percent or two in tone and by their brushing direction
-        and sheen (which is what tells panels apart on the real aircraft), never by blotches; the photoscans add only
-        faint mill-finish variation to the roughness. `lower` (0..1 per texel) is the darker, warmer lower-fuselage
-        alloy."""
+    def metal(self, L, u, v, panel, ao, along_dir, across_dir, base_tone=0.90, lower=None, cross_frac=0.06, tone_var=0.028,
+              rough0=0.48, rough_var=0.03, mottle=0.003, cloud=0.0):
+        """Bare satin aluminium. Sheets differ in tone, in their brushing direction and above all in their polish: a
+        polished sheet mirrors the sky and the cloud, a dull one scatters and reads pale, which is the patchwork the
+        overhead photographs show. The photoscans add mill-finish mottling (`mottle`, tone) and a soft cloudy sheen
+        inside each sheet (`cloud`, roughness). `lower` (0..1 per texel) is the darker, warmer lower-fuselage alloy."""
         r1, r2, r3, r4, r5, r6 = (hash01(panel, k) for k in range(6))
-        tone = base_tone * (1 + (r1 - 0.5) * tone_var)                    # per-sheet brightness, +-1.4 %
+        tone = base_tone * (1 + (r1 - 0.5) * tone_var)                    # per-sheet brightness
         warm = (r2 - 0.5) * 0.006                                         # barely perceptible hue drift
-        rough = 0.48 + 0.03 * (r3 - 0.5)                                  # satin mill finish
+        rough = rough0 + rough_var * (r3 - 0.5)                           # per-sheet polish
         cross = (r5 > 1 - cross_frac)                                     # the odd sheet is brushed across
         ang = (r4 - 0.5) * 0.16 + np.where(cross, math.pi / 2, 0.0)       # brushing direction per sheet
         offu, offv = r5 * 37.0, r6 * 29.0
         mot = self.mottle.sample(u, v, None, offu, offv)
         br = self.brush.sample(u, v, ang, offu * 0.3, offv * 0.5)
         scr = self.scratch.sample(u, v, r1 * 6.28, offu * 0.2, offv * 0.9)
-        lum = tone * (1 + 0.003 * np.clip(mot, -2, 2))
+        lum = tone * (1 + mottle * np.clip(mot, -2, 2))
         col = np.stack([lum * (1 + warm), lum * (1 + warm * 0.3), lum * (1 - warm * 0.8)], 1) * np.array([1.0, 0.996, 0.988], np.float32)
         rr = rough * (1 + 0.006 * np.clip(mot, -2, 2)) + 0.012 * np.clip(br, -2, 2) + 0.005 * np.clip(scr, 0, 2)
+        if cloud:
+            rr = rr + cloud * np.clip(self.cloud.sample(u, v, None, offu * 0.7, offv * 0.4), -2, 2)
         if lower is not None:
-            # the lower-fuselage alloy as photographed: a darker, warmer grey (F0 like titanium's), one even tone with
-            # barely any sheet-to-sheet change, a slightly softer sheen
+            # the lower-fuselage alloy as photographed: a darker rose-grey (red highest, green lowest, never brassy),
+            # one even tone with barely any sheet-to-sheet change, a slightly softer sheen
             lo = lower[:, None]
-            low = np.array([0.505, 0.468, 0.438], np.float32) * (1 + (r1 - 0.5) * 0.008)[:, None] * (1 + 0.002 * np.clip(mot, -2, 2))[:, None]
+            low = LOWER_ALLOY * (1 + (r1 - 0.5) * 0.008)[:, None] * (1 + 0.002 * np.clip(mot, -2, 2))[:, None]
             col = col * (1 - lo) + low * lo
-            rr = rr * (1 - lower) + (0.52 + 0.004 * np.clip(mot, -2, 2) + 0.006 * np.clip(br, -2, 2)) * lower
+            rr = rr * (1 - lower) + (LOWER_ROUGH + 0.004 * np.clip(mot, -2, 2) + 0.006 * np.clip(br, -2, 2)) * lower
         L.base[:] = col
         L.rough[:] = np.clip(rr, 0.12, 0.7)
         L.metal[:] = 1.0
@@ -648,10 +719,30 @@ class Skin:
         L.rough += 0.05 * head + 0.08 * ring
         L.astr *= (1 - 0.8 * head)
         L.h += (-0.00004 * ring + 0.000015 * head * (rnd - 0.3))
+        # the row as a whole: the dimpled, primed band along the fasteners, wide enough (about 9 mm) to survive the
+        # texture's mip chain, so a fastener row still reads as a faint line where the single heads are sub-pixel
+        band = np.exp(-(across / 0.0045) ** 2) * strength
+        L.base *= (1 - 0.07 * band)[:, None]
+        L.rough += 0.05 * band
 
 
 SKIN_TEXEL = 0.0019
 BLACK = np.array([0.006, 0.006, 0.0065], np.float32)   # markings as black metal: F0 under 1 %, no diffuse, so full sun does not grey them
+# upper skin, wings and fin: per-sheet tone +-2.5 %, polish 0.39..0.51, mill mottle +-1.6 %, and a cloudy sheen inside each
+# sheet: the photographs' variation is mostly mottling and streaks within the sheets, with subtler steps between them
+UPPER_SHEETS = dict(tone_var=0.05, rough0=0.45, rough_var=0.12, mottle=0.016, cloud=0.03)
+# the lower-fuselage alloy (linear F0): rose-grey as photographed (c_mid 71,64,65 / c_nose 85,74,74), darker than the
+# upper skin; red highest, green lowest
+LOWER_ALLOY = np.array([0.48, 0.447, 0.455], np.float32)
+# a satin finish that mirrors its surroundings (c_mid): at a dawn sun a rougher lobe drags the orange sun across the
+# whole sun-facing belly and reads as brass
+LOWER_ROUGH = 0.36
+LETTER_WEIGHT = 800      # ExtraBold: stems about a fifth of the cap height, as photographed
+# N21QH and EXPERIMENTAL are a narrower, heavier cut than the wordmark (the H stem is about a quarter of the cap height):
+# Barlow Condensed ExtraBold (SIL OFL), only lightly condensed to the measured widths
+CONDENSED = 'barlow-condensed'
+# the wordmark: wider, rounder letters set tight (the 4K photograph), Barlow ExtraBold (SIL OFL)
+WORDMARK = 'barlow'
 
 
 def paint_fuselage(S, OUTS, skin, ff, decals):
@@ -659,7 +750,8 @@ def paint_fuselage(S, OUTS, skin, ff, decals):
     n = len(idx)
     log('fuselage texels', n)
     s, phi, a, hg, side = ff.coords(P)
-    deg = np.degrees(phi)
+    # the layout works in the photo-matched elliptical angle space (FusFrame.new_deg / old_deg)
+    deg = ff.old_deg(s, np.degrees(phi))
     L = Layers(n)
     # sheets: between joints (frames x longitudinal joints); some frame joints are absent (long sheets)
     fi = np.clip(np.searchsorted(np.array(FRAMES, np.float32), s) - 1, 0, len(FRAMES) - 1)
@@ -673,14 +765,15 @@ def paint_fuselage(S, OUTS, skin, ff, decals):
     across = np.cross(N, along)
     # lower fuselage: the darker, warmer alloy below the waterline joint (a crisp sheet edge)
     lower = sstep(-0.003, 0.003, a - ff.lookup(s, np.full_like(s, math.radians(WATERLINE))))
-    skin.metal(L, s, a, panel, ao, along, across, 0.90, lower=lower, cross_frac=0.0, tone_var=0.022)
+    # upper sheets: the overhead photographs show a patchwork - polished sheets mirroring the sky beside duller pale ones
+    skin.metal(L, s, a, panel, ao, along, across, 0.90, lower=lower, cross_frac=0.0, **UPPER_SHEETS)
     # oil canning: each bay between rivet lines pillows slightly
     rows_s = sorted(FRAMES + INNER)
     s0, s1, js = bracket(rows_s, s)
     bu = np.clip((s - s0) / (s1 - s0), 0, 1)
     rows_p = sorted(LONGI + STRING)
     p0, p1, jp = bracket(rows_p, deg)
-    a0 = ff.lookup(s, np.radians(p0)); a1 = ff.lookup(s, np.radians(p1))
+    a0 = ff.arc_old(s, p0); a1 = ff.arc_old(s, p1)
     bv = np.clip((a - a0) / np.maximum(a1 - a0, 1e-3), 0, 1)
     bay = js.astype(np.int64) * 64 + jp * 2 + (side > 0)
     amp = 0.00016 + 0.00030 * hash01(bay, 3) ** 2
@@ -694,7 +787,7 @@ def paint_fuselage(S, OUTS, skin, ff, decals):
     skin.seam(L, dsf, strength=present.astype(np.float32))
     kp, dpd = nearest(LONGI, deg)
     jcol = np.array(LONGI, np.float32)[kp]
-    dl = a - ff.lookup(s, np.radians(jcol))
+    dl = a - ff.arc_old(s, jcol)
     top_seam = np.where((jcol < 1) & (s > 9.2), 0.0, 1.0)     # no dorsal seam under the boom
     skin.seam(L, dl, strength=top_seam)
     # fastener rows: double rows either side of frame joints, single rows at inner frames and stringers
@@ -706,7 +799,7 @@ def paint_fuselage(S, OUTS, skin, ff, decals):
     ki, dsi = nearest(INNER, s)
     skin.rivets(L, a, dsi, 0.030, pr * 0.95, 31, strength=0.8)
     kst, _ = nearest(STRING, deg)
-    dst = a - ff.lookup(s, np.radians(np.array(STRING, np.float32)[kst]))
+    dst = a - ff.arc_old(s, np.array(STRING, np.float32)[kst])
     skin.rivets(L, s, dst, 0.036, pr * 0.9, 41, strength=0.55 * (s > 2.9))
     # access panels with screw rows (rounded rectangles in (s, arc))
     rng = np.random.default_rng(2101)
@@ -719,7 +812,7 @@ def paint_fuselage(S, OUTS, skin, ff, decals):
             if not m.any():
                 continue
             ss_, aa_ = s[m], a[m]
-            aa0 = ff.lookup(ss_, np.full_like(ss_, math.radians(pa_))); aa1 = ff.lookup(ss_, np.full_like(ss_, math.radians(pb_)))
+            aa0 = ff.arc_at(ss_, pa_); aa1 = ff.arc_at(ss_, pb_)
             r = 0.025
             ex = np.maximum(np.maximum(sa_ + r - ss_, ss_ - (sb_ - r)), 0)
             ey = np.maximum(np.maximum(aa0 + r - aa_, aa_ - (aa1 - r)), 0)
@@ -763,12 +856,13 @@ def fus_decals(ff):
     EXPERIMENTAL, four flush ports per side, the dorsal antenna patch."""
     out = []
     black = BLACK
-    # wordmark, measured on the 4K side view: 1.86 m long, cap height 0.175 m as projected (0.20 m along the skin at
-    # the 50 deg line), upright, widely tracked; the horse mark (traced) 0.70 x 0.20 m as projected starts 0.078 m
-    # ahead of the last letter
-    TH = 0.202
-    tm, tw, ttop = text_mask('QUARTERHORSE', TH, 700, width_m=1.86)
-    HW, HH = 0.71, 0.232
+    # wordmark, measured on the 4K side view: 1.86 m long, cap height 0.175 m as projected, upright, widely tracked; the
+    # horse mark (traced) 0.70 x 0.20 m as projected starts 0.078 m ahead of the last letter. On the boxier section the
+    # band (the 50-deg line of the photo-matched layout) lies on the near-vertical flank, 7 deg off vertical: 0.177 m of
+    # skin projects to the measured 0.175 m (it was 0.202 m on the elliptical section)
+    TH = 0.177
+    tm, tw, ttop = text_mask('QUARTERHORSE', TH, LETTER_WEIGHT, width_m=1.86, family=WORDMARK)
+    HW, HH = 0.71, 0.203
     hm = np.asarray(horse_mark(int(HW * DECAL_PX_PER_M), int(HH * DECAL_PX_PER_M)), np.float32) / 255.0
     T = Decal(None, tm, tw, tm.shape[0] / DECAL_PX_PER_M)
     Hs = Decal(None, hm, HW, HH)
@@ -794,7 +888,7 @@ def fus_decals(ff):
         xt = np.where(sd < 0, s_txt_aft - ss, ss - s_txt_fwd)
         _, at = T.sample(xt, y)
         xh = np.where(sd < 0, s_h_aft - ss, ss - s_h_fwd)
-        yh = aa - ac + HH / 2 - 0.016
+        yh = aa - ac + HH / 2 - 0.014
         _, ah_s = Hs.sample(xh, yh)
         _, ah_p = Hp.sample(xh, yh)
         ah = np.where(sd < 0, ah_s, ah_p)
@@ -824,7 +918,9 @@ def fus_decals(ff):
         L.astr[m] *= (1 - al)
     out.append(badge)
 
-    em, ew, etop = text_mask('EXPERIMENTAL', 0.088, 700, width_m=0.627)
+    # 0.627 m long at a 0.088 m cap height: narrower than the face sets it, so the letters are condensed (never
+    # overlapped, which fused the I and M into a blot)
+    em, ew, etop = text_mask('EXPERIMENTAL', 0.088, LETTER_WEIGHT, width_m=0.627, family=CONDENSED)
     ED = Decal(None, em, ew, em.shape[0] / DECAL_PX_PER_M)
 
     def experimental(L, s, a, side, deg):
@@ -833,7 +929,7 @@ def fus_decals(ff):
             return
         ss, aa, sd = s[m], a[m], side[m]
         ac = ff.arc_at(ss, 68.0)
-        s_aft = 1.205; s_fwd = s_aft - ew
+        s_aft = 1.31; s_fwd = s_aft - ew          # matched-camera overlay (was 0.11 m forward of the photo)
         x = np.where(sd < 0, s_aft - ss, ss - s_fwd)
         _, al = ED.sample(x, aa - ac + 0.027 + etop)
         paint_coat(L, m, al)
@@ -855,19 +951,22 @@ def fus_decals(ff):
             lines = np.maximum(np.exp(-((r - 0.085) / lw) ** 2), np.exp(-((r - 0.057) / lw) ** 2))
             hexm = sstep(hexr + 0.002, hexr - 0.002, r)
             hexl = np.exp(-((r - hexr) / lw) ** 2)
-            # the photographs show these as pale, near-white rings round a pale hex insert: bead-blasted and coated,
-            # so mostly diffuse rather than mirror metal
-            over_m(L, m, band, srgb_to_lin(np.array([0.80, 0.80, 0.78], np.float32)), 0.55, metal=0.15)
-            over_m(L, m, hexm, srgb_to_lin(np.array([0.70, 0.70, 0.69], np.float32)), 0.45, metal=0.3)
-            over_m(L, m, np.maximum(lines, hexl) * 0.8, np.array([0.12, 0.12, 0.125], np.float32), 0.5, metal=0.3)
-            L.h[m] += -0.0002 * np.maximum(lines, hexl)
+            # the photographs show these as the brightest small features on the nose: a near-white ring round a
+            # near-white hex insert (matte paint), a thin dark outline outside, a faint line round the hex
+            white = srgb_to_lin(np.array([0.85, 0.85, 0.83], np.float32))
+            outer = np.exp(-((r - 0.0855) / lw) ** 2)
+            over_m(L, m, np.maximum(band, hexm), white, 0.62, metal=0.0)
+            over_m(L, m, outer * 0.85, np.array([0.06, 0.06, 0.063], np.float32), 0.55, metal=0.0)
+            over_m(L, m, hexl * 0.3, np.array([0.10, 0.10, 0.105], np.float32), 0.6, metal=0.0)
+            L.h[m] += -0.0002 * np.maximum(outer, 0.3 * hexl)
             L.astr[m] *= (1 - np.maximum(band, hexm))
     out.append(ports)
 
     def vents(L, s, a, side, deg):
         # small flush features seen on the photos: an aft-facing slot, drains, a round flush antenna
+        # the two dark dots seen from above sit on the shoulder line (24 deg in layout space)
         for (sc, pc, kind) in ((1.30, 112.0, 'slot'), (2.34, 103.0, 'drain'), (2.39, 106.0, 'drain'), (3.42, 125.0, 'round'), (6.0, 129.0, 'drain'), (4.25, 128.0, 'slot'),
-                               (3.50, 44.0, 'dot'), (4.43, 44.0, 'dot')):
+                               (3.50, 24.0, 'dot'), (4.43, 24.0, 'dot')):
             m = (np.abs(s - sc) < 0.1) & (np.abs(deg - pc) < 10)
             if not m.any():
                 continue
@@ -898,8 +997,9 @@ def fus_decals(ff):
         if not m.any():
             return
         ss, aa = s[m], a[m]
-        q = sstep(0.003, 0.0, np.maximum(np.abs(ss - 1.69) - 0.15, 0) + np.maximum(aa - 0.095, 0))
-        over_m(L, m, q, hexlin('#1d3a8c'), 0.45, metal=0.0)
+        # a deep navy square, crisp-edged, matte (the overhead photographs)
+        q = sstep(0.0012, 0.0, np.maximum(np.abs(ss - 1.69) - 0.15, 0) + np.maximum(aa - 0.095, 0))
+        over_m(L, m, q, hexlin('#10204f'), 0.6, metal=0.0)
         L.h[m] += 0.0002 * q
         L.astr[m] *= (1 - q)
     out.append(dorsal_patch)
@@ -941,7 +1041,9 @@ def paint_wing_set(S, OUTS, skin):
         along -= N * (along * N).sum(1, keepdims=True); along /= np.linalg.norm(along, axis=1, keepdims=True) + 1e-9
         across = np.cross(N, along)
         u, v = s, y + up * 7.0
-        skin.metal(L, u, v, panel, ao, along, across, 0.90, lower=(~up).astype(np.float32), cross_frac=0.0)
+        skin.metal(L, u, v, panel, ao, along, across, 0.90, lower=(~up).astype(np.float32), cross_frac=0.0, **UPPER_SHEETS)
+        # elevons: their own sheets, a shade duller than the wing ahead of them (the overhead photographs)
+        L.rough += 0.04 * elev * up
         # bay pillowing between rib and spar rows
         r0, r1, _ = bracket(WING_RIBS, y)
         x0, x1, _ = bracket(WING_SPARS + [0.86], x)
@@ -990,7 +1092,7 @@ def paint_wing_set(S, OUTS, skin):
         along = np.zeros((n, 3), np.float32); along[:, 0] = -1.0
         along -= N * (along * N).sum(1, keepdims=True); along /= np.linalg.norm(along, axis=1, keepdims=True) + 1e-9
         across = np.cross(N, along)
-        skin.metal(L, s, y + (sd > 0) * 9.0, panel, ao, along, across, 0.90, cross_frac=0.0)
+        skin.metal(L, s, y + (sd > 0) * 9.0, panel, ao, along, across, 0.90, cross_frac=0.0, **UPPER_SHEETS)
         k, dsf = nearest(fr, s)
         skin.seam(L, dsf)
         for off, stg in ((0.014, 0.0), (-0.014, 0.0125)):
@@ -998,6 +1100,11 @@ def paint_wing_set(S, OUTS, skin):
         wide = (wid > 0.10).astype(np.float32)
         skin.rivets(L, s, t * wid - 0.016, 0.026, 0.0023, 133, strength=wide)
         skin.rivets(L, s, (1 - t) * wid - 0.016, 0.026, 0.0023, 134, strength=wide)
+        # small pale stencil strips across the strake shelf aft of mid-span (c_mid): plain marks, no lettering
+        for sc_, tc_, ln_ in ((10.55, 0.34, 0.15), (10.62, 0.70, 0.09)):
+            q = sstep(0.0015, 0.0, np.maximum(np.abs(s - sc_) - 0.012, 0) + np.maximum(np.abs(t * wid - tc_ * wid) - ln_ / 2, 0))
+            over(L, q * 0.9, col=srgb_to_lin(np.array([0.84, 0.84, 0.82], np.float32)), rough=0.6, metal=0.0)
+            L.astr *= (1 - q)
         heat = sstep(11.8, 13.2, s)
         L.base *= (1 + 0.6 * heat[:, None] * (np.array([1.0, 0.97, 0.905], np.float32) - 1))
         write(OUTS, idx, L)
@@ -1014,27 +1121,30 @@ def paint_wing_set(S, OUTS, skin):
         x = (s - le) / c
         rud = pid == 14
         L = Layers(n)
-        ribs = [1.42, 1.76, 2.10, 2.44, 2.79]
-        spars = [0.06, 0.30, 0.56]
+        # irregular rib joints (c_tail), and the spar lines: a narrow leading-edge strip, a long spar line parallel to the
+        # leading edge, and a rear spar at a chord fraction ahead of the hinge
+        ribs = [1.47, 1.88, 2.36, 2.72]
+        spl = np.stack([le + 0.075, le + 0.43, le + 0.60 * c], 1)
         ri = np.searchsorted(np.array(ribs, np.float32), z)
-        si = np.searchsorted(np.array(spars, np.float32), x)
+        si = (s[:, None] > spl).sum(1)
         panel = ((ri * 8 + si) * 2 + (sd > 0)) * 2 + rud + 7000
         along = np.zeros((n, 3), np.float32); along[:, 0] = -1.0
         along -= N * (along * N).sum(1, keepdims=True); along /= np.linalg.norm(along, axis=1, keepdims=True) + 1e-9
         across = np.cross(N, along)
         u, v = s, z + (sd > 0) * 9.0
-        skin.metal(L, u, v, panel, ao, along, across, 0.90, cross_frac=0.16, tone_var=0.05)
+        skin.metal(L, u, v, panel, ao, along, across, 0.90, cross_frac=0.16, **UPPER_SHEETS)
         r0, r1, _ = bracket([FIN_Z0] + ribs + [FIN_Z1], z)
         bu = np.clip((z - r0) / (r1 - r0), 0, 1)
-        x0, x1, _ = bracket(spars + [1.0], x)
-        bv = np.clip((x - x0) / np.maximum(x1 - x0, 1e-3), 0, 1)
+        lo_ = np.where(si == 0, le, spl[np.arange(n), np.clip(si - 1, 0, 2)])
+        hi_ = np.where(si >= 3, te, spl[np.arange(n), np.clip(si, 0, 2)])
+        bv = np.clip((s - lo_) / np.maximum(hi_ - lo_, 1e-3), 0, 1)
         L.h += (0.00010 + 0.00018 * hash01(panel, 2) ** 2) * np.sin(math.pi * bu) * np.sin(math.pi * bv)
         k, dz = nearest(ribs, z)
         skin.seam(L, dz)
         for off, stg in ((0.013, 0.0), (-0.013, 0.012)):
             skin.rivets(L, s, dz - off, 0.025, 0.0023, 81 + (off > 0), stagger=stg)
-        ks, dxs = nearest(spars, x)
-        ds = dxs * c
+        dsp = s[:, None] - spl
+        ds = dsp[np.arange(n), np.argmin(np.abs(dsp), 1)]
         skin.seam(L, ds, strength=(~rud).astype(np.float32))
         skin.rivets(L, z, ds - 0.012, 0.025, 0.0023, 91, strength=(~rud).astype(np.float32))
         skin.rivets(L, z, ds + 0.012, 0.025, 0.0023, 92, strength=(~rud).astype(np.float32), stagger=0.012)
@@ -1100,7 +1210,7 @@ def paint_wing_set(S, OUTS, skin):
         along -= N * (along * N).sum(1, keepdims=True); along /= np.linalg.norm(along, axis=1, keepdims=True) + 1e-9
         across = np.cross(N, along)
         u, v = s, np.where(sideface, z, y) + (sd > 0) * 5.0
-        skin.metal(L, u, v, panel, ao, along, across, 0.90)
+        skin.metal(L, u, v, panel, ao, along, across, 0.90, **UPPER_SHEETS)
         k, dsf = nearest(frames, s)
         skin.seam(L, dsf)
         skin.rivets(L, v, dsf - 0.014, 0.025, 0.0023, 101)
@@ -1109,7 +1219,7 @@ def paint_wing_set(S, OUTS, skin):
         skin.seam(L, dzb, strength=sideface.astype(np.float32) * (s > 10.5))
         skin.rivets(L, s, dzb - 0.012, 0.026, 0.0022, 103, strength=sideface.astype(np.float32) * (s > 10.5))
         # N21QH: both sides, reads left to right from outside
-        rm, rw, rtop = text_mask('N21QH', 0.205, 700, width_m=0.62)
+        rm, rw, rtop = text_mask('N21QH', 0.205, LETTER_WEIGHT, width_m=0.62, family=CONDENSED)
         R = Decal(None, rm, rw, rm.shape[0] / DECAL_PX_PER_M)
         s_c, z_c = 11.75, 1.015
         m = sideface & (np.abs(s - s_c) < rw / 2 + 0.05) & (np.abs(z - z_c) < 0.15)
@@ -1126,7 +1236,8 @@ def paint_wing_set(S, OUTS, skin):
         L.base *= (1 + 0.6 * sstep(13.2, 14.6, s)[:, None] * (np.array([1.0, 0.97, 0.905], np.float32) - 1))
         write(OUTS, idx, L)
     # --- nose fairing (black), air-data boom (steel), blade antennas (dark composite)
-    for pidv, col, rough, metal in ((16, hexlin('#0c0d0e'), 0.28, 0.0), (17, np.array([0.66, 0.67, 0.68], np.float32), 0.30, 1.0), (18, hexlin('#2a2b2d'), 0.5, 0.0)):
+    # the nose fairing is a flat-finish dark composite (a gloss black read as a lacquered egg)
+    for pidv, col, rough, metal in ((16, hexlin('#0c0d0e'), 0.52, 0.0), (17, np.array([0.66, 0.67, 0.68], np.float32), 0.30, 1.0), (18, hexlin('#2a2b2d'), 0.5, 0.0)):
         idx, P, N, pid, ao = S.gather([pidv])
         if not len(idx):
             continue
@@ -1188,8 +1299,9 @@ def paint_hot(S, OUTS):
     soot = np.where(inward, 0.5 + 0.4 * nz2, 0.15 + 0.3 * sstep(13.6, 13.78, s))
     soot = np.where(np.isin(pid, [36, 37]), 0.75 + 0.2 * nz, soot)
     over(L, soot, col=np.array([0.028, 0.027, 0.025], np.float32), rough=0.72, metal=0.2)
-    # rubbed, slightly brighter edges on the mechanism (links, clevises, rib tops)
-    over(L, np.clip(edge * 2.5, 0, 1) * np.isin(pid, [33, 34]) * 0.45, col=np.array([0.26, 0.255, 0.25], np.float32), rough=0.32, metal=1.0)
+    # rubbed, slightly brighter edges on the mechanism (links, clevises, rib tops); the hardware stays satin (its 6 mm
+    # bevels are sub-pixel in every shot, and a polished one strings glints down the nozzle throat)
+    over(L, np.clip(edge * 2.5, 0, 1) * np.isin(pid, [33, 34]) * 0.45, col=np.array([0.26, 0.255, 0.25], np.float32), rough=0.5, metal=1.0)
     # inlet: the lip roll is plain skin metal; inside, the duct falls quickly to a dark matte grey (a dark intake
     # face, as photographed); compressor face dark titanium
     inl = pid == 2
@@ -1206,16 +1318,18 @@ def paint_hot(S, OUTS):
     fan = pid == 3
     L.base[fan] = srgb_to_lin(np.array([0.34, 0.34, 0.35], np.float32)) * (0.8 + 0.4 * nz[fan])[:, None]
     L.rough[fan] = 0.35; L.metal[fan] = 1.0
+    L.rough[np.isin(pid, [33, 34])] = np.maximum(L.rough[np.isin(pid, [33, 34])], 0.5)
     g = np.clip(1 - ao, 0, 1)
     L.base *= (1 - 0.5 * g)[:, None]
     L.h += 0.0003 * (nz2 - 0.5) + 0.0001 * (fbm(s * 9, th * 6, 0.2, 2, seed=63) - 0.5)
-    # emission pattern for the afterburner glow (flame holder brightest, liner corrugations, hot streaks)
+    # emission pattern for the afterburner glow: the flame holder's rings and spokes brightest, the liner an even glow
+    # (its corrugations only a faint ripple: a strongly striped liner reads as a toaster element through the exit)
     em = np.zeros((n, 3), np.float32)
     fh = pid == 37
     ln = pid == 36
-    em[fh] = np.array([1.0, 0.45, 0.16], np.float32) * (0.55 + 0.45 * nz[fh])[:, None]
+    em[fh] = np.array([1.0, 0.45, 0.16], np.float32) * (0.75 + 0.25 * nz[fh])[:, None]
     corr = 0.5 + 0.5 * np.cos(th * 40)
-    em[ln] = np.array([1.0, 0.5, 0.2], np.float32) * ((0.35 + 0.65 * corr[ln]) * (0.5 + 0.5 * nz2[ln]) * (0.5 + 0.5 * sstep(13.3, 11.7, s[ln])))[:, None]
+    em[ln] = np.array([1.0, 0.5, 0.2], np.float32) * ((0.88 + 0.12 * corr[ln]) * (0.75 + 0.25 * nz2[ln]) * (0.6 + 0.4 * sstep(13.3, 11.7, s[ln])))[:, None]
     L.emis = em
     write(OUTS, idx, L)
 
@@ -1299,35 +1413,43 @@ def paint_gear(S, OUTS, skin):
         across = np.cross(Nd, along)
         sd = s[dout]; zd = P[dout, 2]
         panel = (np.abs(P[dout, 1]) > 0.6).astype(np.int64) * 4 + (P[dout, 1] > 0) + 12000
-        # the doors are flat sheet that faces the low sun square-on: a duller, greyer finish than the skin (as in the
-        # photos), a hinge strip, and bold screw rows keep a surface in them instead of a clipped white card
-        # a smoother sheet than the skin: it mirrors the ground and sky with the waviness of thin skin, so it never
-        # reads as a flat white card in low sun (the photographed doors are bright below, darker above)
-        skin.metal(sub, sd, zd, panel, ao[dout], along, across, 0.28, tone_var=0.05)
-        sub.rough[:] = 0.36 + 0.10 * fbm(sd, zd, 0.35, 3, seed=78)
+        # The doors face the low sun almost square-on. A smooth flat panel inside the sun's lobe lights up evenly as a
+        # card, so: a satin sheet (rougher than the skin), duller toward the hinge and a touch smoother toward the free
+        # edge, on a bowed panel whose lower edge curls in (geometry) - the glint becomes a band with falloff, and the
+        # curl mirrors the pavement as the bright lower edge the photographs show. Fastener rows round the edges and
+        # one row above the curl, as photographed (no quilted grid); soft oil-canning between them.
+        skin.metal(sub, sd, zd, panel, ao[dout], along, across, 0.22, tone_var=0.05)
         sub.astr *= 0.5
-        sub.h += 0.0005 * np.sin(sd * 2 * math.pi / 0.42) * np.sin(zd * 2 * math.pi / 0.36) + 0.0003 * (fbm(sd, zd, 0.5, 3, seed=77) - 0.5)
+        sub.h += 0.0007 * (fbm(sd, zd, 0.28, 3, seed=77) - 0.5)
         for key, (s0d, s1d, z0d, z1d) in (('n', DOORS['nose'][:4]), ('m', DOORS['main'][:4])):
             m = (sd > s0d - 0.02) & (sd < s1d + 0.02)
             if not m.any():
                 continue
+            frac = np.clip((z0d - zd) / (z0d - z1d), 0, 1)                    # 0 at the hinge .. 1 at the free edge
+            sub.rough[m] = (0.56 - 0.06 * frac + 0.06 * (fbm(sd, zd, 0.35, 3, seed=78) - 0.5))[m]
+            # the panel is formed with a bow across its height (more than the geometry's): a 15 mm rise in the normal
+            # map sweeps the facing through ~10 deg, so the sun's glint becomes a band across the door, not a card
+            sub.h[m] += (0.015 * np.sin(math.pi * frac))[m]
+            sub.base[m] *= (0.90 + 0.12 * frac[m])[:, None]
             ex = np.minimum(sd - s0d, s1d - sd); ez = np.minimum(zd - z1d, z0d - zd)
             dmin = np.minimum(ex, ez)
             alongd = np.where(ex < ez, zd, sd)
             head, ring, rnd = rivet_row(alongd, dmin - 0.022, 0.045, 0.0055, 120)
             disc = np.maximum(head, ring)
-            for stz in np.linspace(z1d, z0d, 5)[1:-1]:                      # stringer rows
-                h2, r2, _ = rivet_row(sd, zd - stz, 0.045, 0.0055, 121)
-                disc = np.maximum(disc, np.maximum(h2, r2))
-            for sts in np.linspace(s0d, s1d, 5)[1:-1]:                      # rib rows
-                h2, r2, _ = rivet_row(zd, sd - sts, 0.045, 0.0055, 122)
-                disc = np.maximum(disc, np.maximum(h2, r2))
-            hinge = line_profile(zd - (z0d - 0.05), 0.004)                 # the hinge strip's lower edge
+            zr = z1d + 0.10 * np.sign(z0d - z1d)                               # the row above the curl
+            h2, r2, _ = rivet_row(sd, zd - zr, 0.045, 0.0055, 121)
+            disc = np.maximum(disc, np.maximum(h2, r2) * (ex > 0.03))
+            band = np.exp(-((dmin - 0.022) / 0.0045) ** 2) + np.exp(-((zd - zr) / 0.0045) ** 2) * (ex > 0.03)
+            # one pillow per bay (above and below the row), pressed in or out at random
+            bayv = np.where(np.abs(zd - z1d) > 0.10, np.clip((np.abs(zd - z1d) - 0.10) / (np.abs(z0d - z1d) - 0.10), 0, 1), np.abs(zd - z1d) / 0.10)
+            bayu = np.clip(ex / np.maximum((s1d - s0d) * 0.5, 1e-3), 0, 1)
+            pil = np.sin(math.pi * np.clip(bayv, 0, 1)) * np.sin(math.pi * 0.5 * bayu)
+            hinge = line_profile(zd - (z0d - 0.05 * np.sign(z0d - z1d)), 0.004)   # the hinge strip's lower edge
             edge_d = sstep(0.014, 0.0, dmin)
-            dk = np.clip(0.35 * disc + 0.5 * hinge + 0.3 * edge_d, 0, 0.7)
+            dk = np.clip(0.35 * disc + 0.07 * band + 0.5 * hinge + 0.3 * edge_d, 0, 0.7)
             sub.base[m] *= (1 - dk[m])[:, None]
-            sub.rough[m] += 0.1 * disc[m]
-            sub.h[m] += -0.0004 * disc[m] - 0.0006 * hinge[m]
+            sub.rough[m] += 0.1 * disc[m] + 0.05 * band[m]
+            sub.h[m] += -0.0004 * disc[m] - 0.0006 * hinge[m] + (0.0009 * pil * np.where(hash01(np.abs(zd - z1d) > 0.10, len(key)) > 0.5, 1.0, -1.0))[m]
         L.base[dout], L.rough[dout], L.metal[dout], L.h[dout] = sub.base, sub.rough, sub.metal, sub.h
         L.adir[dout], L.astr[dout] = sub.adir, sub.astr
     inner = pid == 60
@@ -1437,12 +1559,29 @@ def finish(S, OUTS):
     metal = pad(OUTS['metal'], pidx)
     aov = np.clip(0.35 + 0.65 * S.ao, 0, 1)
     if key in ('skin', 'wing'):
-        aov = aov * (1 - 0.68 * sstep(0.10, -0.60, S.nrm[..., 2]))
+        # a little extra cover on surfaces facing the ground (the airframe hides part of the sky from the pavement under
+        # it). The image-based light is all this darkens - never the sun - so a heavy term here (it was 0.68) leaves a
+        # sun-facing belly lit by the low sun's specular tail alone, which reads as brass; the probe's envGround.shade
+        # now carries the rest of the ground's cover
+        aov = aov * (1 - 0.22 * sstep(0.10, -0.60, S.nrm[..., 2]))
     if 'aomul' in OUTS:
         aov = aov * OUTS['aomul']
     ao = pad(aov, pidx)
     nn = pad(n_ts, pidx)
     nn[~np.isfinite(nn).all(2) | (np.linalg.norm(nn, axis=2) < 0.5)] = (0, 0, 1)
+    # specular anti-aliasing (Toksvig): the GPU's mip chain averages the normal map flat, and the relief it averaged away
+    # (seams, fastener rings, sealant lines) must survive as roughness, or each sub-pixel bevel catches the sun as a lone
+    # glint that crawls as the airframe moves. Variance of the normals over a 5x5 footprint (about mip 2, the scale of
+    # most shots) widens the lobe: alpha'^2 = alpha^2 + 2 var; wherever there is such relief the lobe is no sharper than
+    # roughness 0.35.
+    nbar = box_blur(nn, 2)
+    ln = np.linalg.norm(nbar, axis=2)
+    var = np.clip((1 - ln) / np.maximum(ln, 1e-3), 0, 0.5)
+    del nbar, ln
+    rough = (np.clip(rough, 0.03, 1) ** 4 + 2.0 * var) ** 0.25
+    rough = np.where(var > 4e-4, np.maximum(rough, 0.35), rough)
+    log(key, 'spec-AA: texels widened', round(float((var > 4e-4).mean()), 3))
+    del var
     an = pad(np.stack([ax, ay, OUTS['astr']], 2), pidx)
     os.makedirs(OUT, exist_ok=True)
 
@@ -1453,7 +1592,9 @@ def finish(S, OUTS):
     save('orm', np.stack([ao, np.clip(rough, 0.03, 1), np.clip(metal, 0, 1)], 2))
     save('normal', nn * 0.5 + 0.5)
     if key in ('skin', 'wing', 'gear'):
-        save('aniso', np.stack([an[..., 0] * 0.5 + 0.5, an[..., 1] * 0.5 + 0.5, np.clip(an[..., 2], 0, 1)], 2))
+        # half resolution: per-sheet brushing direction and strength are smooth, and the GLB stays under 12 MB
+        a8 = np.clip(np.round(np.stack([an[..., 0] * 0.5 + 0.5, an[..., 1] * 0.5 + 0.5, np.clip(an[..., 2], 0, 1)], 2) * 255), 0, 255).astype(np.uint8)[::-1]
+        Image.fromarray(a8).resize((a8.shape[1] // 2, a8.shape[0] // 2), Image.BOX).save(os.path.join(OUT, f'{key}_aniso.png'), compress_level=1)
     if 'emis' in OUTS:
         em = pad(OUTS['emis'], pidx)
         im = Image.fromarray(np.clip(np.round(lin_to_srgb(em) * 255), 0, 255).astype(np.uint8)[::-1]).resize((1024, 1024), Image.LANCZOS)

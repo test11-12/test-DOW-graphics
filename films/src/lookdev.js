@@ -6,6 +6,9 @@
 //   ?pitch=<deg>  pitch the model (nose up positive) before standing it on the ground
 //   ?roll=<deg>  camera roll (also applies to a --cam free camera)
 //   ?emis=<k>  scale every emissive intensity (0 = afterburner surfaces cold)
+//   reflection probe and lens, as a film sets them in post (all opt-in): ?envover=<base m>,<cover>[,<gain>]  ?envdesat=<0..1>
+//   ?envground=<albedo hex rrggbb>[,<camera height m>[,<shade 0..1>]]  ?ca=<chromatic aberration>  ?sat=<grade saturation>
+//   ?wb=<r>,<g>,<b>  (white balance)
 // Time t (0..12 s) orbits the camera once around the asset.
 import * as THREE from 'three';
 import { startFilm, v3 } from '../engine/film.js';
@@ -38,5 +41,18 @@ const orbit = t => { const R = num('dist', W.size * 1.35), a = t / 12 * Math.PI 
 const shots = [{ id: 'l1', name: 'Turntable', t0: 0, t1: 12, terrain: null,
   pose: (lt, t, f) => { f.place(W.holder, v3(0, 0, 0)); f.place(W.ground, v3(0, 0, 0)); },
   camera: (lt, t) => ({ pos: orbit(t), look: v3(0, W.height * 0.45, 0), fov: num('fov', 30), roll: num('roll', 0), focus: v3(0, W.height * 0.4, 0), focusRadius: W.size * 0.8 }),
-  post: () => ({ exposure: num('exp', 0.24), contrast: 1.22, sat: 1.04, bloom: 0.06, grain: 0.02, vignette: 0.25, shutter: 0, clouds: W.clouds ? { cover: 0.4, scale: 0.7, density: 0.013, steps: 40 } : null }) }];
+  post: () => ({ exposure: num('exp', 0.24), contrast: 1.22, sat: num('sat', 1.04), bloom: 0.06, grain: 0.02, vignette: 0.25, shutter: 0, clouds: W.clouds ? { cover: 0.4, scale: 0.7, density: 0.013, steps: 40 } : null, ...probe() }) }];
+// optional reflection-probe and lens keys (see the header); absent keys leave the engine defaults
+function probe() {
+  const o = {}, list = k => P.get(k).split(',').map(Number);
+  if (P.has('envover')) { const [base, cover, gain] = list('envover'); o.envOver = { base, cover, gain: gain ?? 1 }; }
+  if (P.has('envdesat')) o.envDesat = num('envdesat', 0);
+  if (P.has('envground')) {
+    const [hex, h, shade] = P.get('envground').split(','), c = new THREE.Color(parseInt(hex, 16)).convertSRGBToLinear();
+    o.envGround = { albedo: [c.r, c.g, c.b], h: h ? +h : 2, shade: shade ? +shade : 0 };
+  }
+  if (P.has('ca')) o.ca = num('ca', 0.0012);
+  if (P.has('wb')) o.wb = list('wb');
+  return o;
+}
 startFilm({ id: 'lookdev', title: 'Look development', duration: 12, fps: 30, poster: 2, narration: NARRATION, build, shots, cues: [] });

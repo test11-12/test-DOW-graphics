@@ -109,11 +109,15 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
   side photograph and overlaying its edges on the photo); every part gets metric UVs, data maps (position, normal,
   part id, occlusion) are baked per texture set, and `qh_paint.py` (numpy only, also runs as `python3 -I
   blender/qh_paint.py`) paints the skin as a function of the surface: clean satin aluminium whose sheets differ by a
-  percent or two in tone and by brushing direction (KHR_materials_anisotropy), crisp joints, flush fastener rows,
+  few percent in tone, in brushing direction (KHR_materials_anisotropy) and above all in polish (the patchwork of
+  sky-mirroring and dull pale sheets the overhead photographs show), crisp joints, flush fastener rows,
   access panels, the darker lower-fuselage alloy, a faint heat tint aft, and the markings. Weathering is kept
   minimal on purpose: the real aircraft is clean. The fin's wing mark and the horse head are traced from the 4K
-  photograph (`blender/qh_marks/`, made by `qh_marks/trace.py`); the lettering is Barlow Semi Condensed Bold (OFL,
-  fetched from the npm registry like the other cached sources), sized and placed with the matched-camera overlay. The GLB carries the nodes `gear` (landing gear, open doors, wells)
+  photograph (`blender/qh_marks/`, made by `qh_marks/trace.py`); the lettering is Barlow Semi Condensed ExtraBold (QUARTERHORSE) and
+  Barlow Condensed ExtraBold (EXPERIMENTAL, N21QH) (OFL, fetched from the npm registry like the other cached sources),
+  sized and placed with the matched-camera overlay; a run forced into a measured width is condensed, never overlapped.
+  Normal-map relief is folded into roughness (Toksvig) so sub-pixel seams do not glint, and thin trailing edges, end
+  caps and hinge faces carry split normals. The GLB carries the nodes `gear` (landing gear, open doors, wells)
   and `ab_glow` (afterburner surfaces whose emissive the film drives); only the two anisotropic skins keep stored
   tangents, which keeps the file near 10 MB.
 - `src/lookdev.js` is a turntable for checking any packed asset under the films' sky and grade:
@@ -124,7 +128,12 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
 - What bare metal reflects is the environment probe (`engine/pipeline.js`): the sky, the ground or a cloud deck below
   the camera, and, when a shot's post sets `envOver: { base, cover, gain }`, the underside of a broken cloud layer
   overhead; `envDesat` (0..1) takes some saturation out of the clear sky there. Without them a polished skin in shade
-  mirrors a clear single-scattering sky and turns saturated blue under a cloudy sky.
+  mirrors a clear single-scattering sky and turns saturated blue under a cloudy sky. On the ground,
+  `envGround: { albedo: [r,g,b], h, shade }` makes the lower half the pavement a camera height `h` below, lit as the
+  terrain shader lights it (sun + sky hemisphere), its steep rays darkened by `shade` for the airframe's own cover;
+  otherwise a belly mirrors the sky model's albedo-tinted ground through kilometres of air and turns brassy at dawn.
+  All three are opt-in (default off: films 2 and 3 are unchanged); lookdev takes them as `envover`, `envdesat`,
+  `envground`, plus `ca`, `sat` and `wb`.
 
 Photoscanned materials and models come from [Poly Haven](https://polyhaven.com) and
 [ambientCG](https://ambientcg.com), both CC0.

@@ -154,6 +154,24 @@ def sharp_edges(ob, deg=40):
     ob.data.set_sharp_from_angle(angle=math.radians(deg))
 
 
+def sharp_except(ob, deg, keep_smooth):
+    """Split the normals along every edge sharper than `deg` (trailing edges, hinge faces, end caps) except where
+    keep_smooth(edge midpoint) is true (rounded leading edges). Smooth-shading across a 1-2 mm trailing edge tilts the
+    vertex normals there ~45 deg aft, and the triangle diagonals turn that into a sawtooth that glints in the sun as a
+    string of pearls."""
+    ob.data.shade_smooth()
+    bm = bmesh.new(); bm.from_mesh(ob.data)
+    bm.normal_update()
+    lim = math.cos(math.radians(deg))
+    for e in bm.edges:
+        if len(e.link_faces) != 2:
+            continue
+        f0, f1 = e.link_faces
+        if f0.normal.dot(f1.normal) < lim and not keep_smooth((e.verts[0].co + e.verts[1].co) * 0.5):
+            e.smooth = False
+    bm.to_mesh(ob.data); bm.free(); ob.data.update()
+
+
 def local_lathe(name, prof, seg=64, coll=None, rfun=None, facing='radial_out'):
     """Surface of revolution about the local X axis. prof: [(x, r), ...]. UV: (profile arc, r_mean * theta).
     facing: 'radial_out' | 'radial_in' | '+x' | '-x' | None (keep the closed-solid orientation from recalc)."""
@@ -394,6 +412,7 @@ def build_wing(coll, side=1):
     ob = mesh_object('wing_' + ('L' if side > 0 else 'R'), V, F, coll, True, uv_loops=np.array(uv))
     clean(ob, 1e-5)
     recalc_normals(ob)
+    sharp_except(ob, 50, lambda p: (X0 - p.x) - float(wing_le(min(abs(p.y), TIP_Y))) < 0.03)
     return ob
 
 
@@ -429,6 +448,7 @@ def build_elevons(coll, side=1):
                 uv.append((X0 - V[vi][0], abs(V[vi][1]) + (6.0 if lower else 0.0) + (12.0 if len(f) > 4 else 0.0)))
         ob = mesh_object(f'elevon_{"L" if side > 0 else "R"}{n}', V, F, coll, True, uv_loops=np.array(uv))
         recalc_normals(ob)
+        sharp_edges(ob, 50)          # flat end caps and a crisp trailing edge, not an inflated rounded box
         sh0 = float(wing_te(y0) - elevon_chord(y0)); sh1 = float(wing_te(y1) - elevon_chord(y1))
         p0 = Vector((X0 - sh0, side * y0, float(wing_camber_z(np.array([sh0]), y0)[0])))
         p1 = Vector((X0 - sh1, side * y1, float(wing_camber_z(np.array([sh1]), y1)[0])))
@@ -493,6 +513,7 @@ def build_fin(coll):
             uv.append((X0 - V[vi][0], V[vi][2] + (4.0 if stbd else 0.0)))
     ob = mesh_object('fin', V, F, coll, True, uv_loops=np.array(uv))
     recalc_normals(ob)
+    sharp_except(ob, 50, lambda p: (X0 - p.x) - float(fin_lerp(FIN_LE, min(max(p.z, FIN_Z0), FIN_Z1))) < 0.03)
     return ob
 
 
@@ -518,23 +539,48 @@ def build_rudder(coll):
             uv.append((X0 - V[vi][0], V[vi][2] + (4.0 if stbd else 0.0) + (10.0 if len(f) > 4 else 0.0)))
     ob = mesh_object('rudder', V, F, coll, True, uv_loops=np.array(uv))
     recalc_normals(ob)
+    sharp_edges(ob, 50)
     return ob
 
 
 # ------------------------------------------------------------------ drag-chute boom: box beam under the fin
-def boom_section(hw, zt, zb, M):
-    """Rounded-top box with chamfered lower corners; loop from the bottom centre round the starboard side."""
+def boom_polyline(hw, zt, zb):
+    """Rounded-top box with chamfered lower corners: closed polyline from the bottom centre round the starboard side."""
     ch = min(0.055, (zt - zb) * 0.2, hw * 0.5)
     r = min(0.024, hw * 0.4)
     pts = [(0.0, zb), (-(hw - ch), zb), (-hw, zb + ch), (-hw, zt - r)]
     pts += [(-hw + r - r * math.cos(k / 6 * math.pi / 2), zt - r + r * math.sin(k / 6 * math.pi / 2)) for k in range(1, 6)]
     pts += [(-(hw - r), zt), (0.0, zt)]
     half = np.array(pts)
-    full = np.concatenate([half, (half[::-1] * [-1, 1])[1:-1]], 0)
+    return np.concatenate([half, (half[::-1] * [-1, 1])[1:-1]], 0)
+
+
+def boom_counts(M):
+    """Points per polyline segment (the same for every ring), from the constant aft section: every corner of the
+    chamfer stays a vertex, so the corners can carry split normals instead of a smooth-shaded sawtooth."""
+    full = boom_polyline(0.105, FIN_Z0, BOOM_ZB)
     fc = np.concatenate([full, full[:1]])
-    arc = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(fc, axis=0), axis=1))])
-    t = np.arange(M) / M * arc[-1]
-    return np.stack([np.interp(t, arc, fc[:, 0]), np.interp(t, arc, fc[:, 1])], 1), arc[-1]
+    ln = np.linalg.norm(np.diff(fc, axis=0), axis=1)
+    c = np.maximum(1, np.floor(ln / ln.sum() * M)).astype(int)
+    while c.sum() < M:
+        c[np.argmax(ln / c)] += 1
+    while c.sum() > M:
+        k = np.argmax(np.where(c > 1, c / ln, -1)); c[k] -= 1
+    return c
+
+
+def boom_section(hw, zt, zb, M):
+    """M points round the section (corners kept as vertices) and their arc positions (M + 1, closing the loop)."""
+    full = boom_polyline(hw, zt, zb)
+    fc = np.concatenate([full, full[:1]])
+    pts = []
+    for i, n in enumerate(boom_counts(M)):
+        for k in range(n):
+            pts.append(fc[i] + (fc[i + 1] - fc[i]) * k / n)
+    pts = np.array(pts)
+    pc = np.concatenate([pts, pts[:1]])
+    arc = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pc, axis=0), axis=1))])
+    return pts, arc
 
 
 def build_boom(coll):
@@ -543,16 +589,16 @@ def build_boom(coll):
     hw = np.interp(S, [9.25, 9.7, 10.3, 10.8, 15.3], [0.03, 0.065, 0.098, 0.105, 0.105])
     zt = np.interp(S, [9.25, 9.7, 10.3, 10.9, 15.3], [1.02, 1.11, 1.178, FIN_Z0, FIN_Z0])
     zb = np.interp(S, [9.25, 11.5, 12.3, 15.3], [0.80, 0.70, BOOM_ZB, BOOM_ZB])
-    rings, girths = [], []
+    rings, arcs = [], []
     for i, s in enumerate(S):
-        sec, g = boom_section(hw[i], zt[i], zb[i], M)
-        rings.append(np.stack([np.full(M, X0 - s), sec[:, 0], sec[:, 1]], 1)); girths.append(g)
-    sec, g = boom_section(0.105, FIN_Z0, BOOM_ZB, M)
+        sec, a = boom_section(hw[i], zt[i], zb[i], M)
+        rings.append(np.stack([np.full(M, X0 - s), sec[:, 0], sec[:, 1]], 1)); arcs.append(a)
+    sec, a = boom_section(0.105, FIN_Z0, BOOM_ZB, M)
     send = BOOM_END_BOT + (BOOM_END_TOP - BOOM_END_BOT) * (sec[:, 1] - BOOM_ZB) / (FIN_Z0 - BOOM_ZB)
-    rings.append(np.stack([X0 - send, sec[:, 0], sec[:, 1]], 1)); girths.append(g)
+    rings.append(np.stack([X0 - send, sec[:, 0], sec[:, 1]], 1)); arcs.append(a)
     sec2, _ = boom_section(0.093, FIN_Z0 - 0.012, BOOM_ZB + 0.012, M)
     send2 = BOOM_END_BOT + 0.008 + (BOOM_END_TOP - BOOM_END_BOT) * (sec2[:, 1] - BOOM_ZB) / (FIN_Z0 - BOOM_ZB)
-    rings.append(np.stack([X0 - send2, sec2[:, 0], sec2[:, 1]], 1)); girths.append(g)
+    rings.append(np.stack([X0 - send2, sec2[:, 0], sec2[:, 1]], 1)); arcs.append(a)
     V = np.concatenate(rings); nS = len(rings)
     F = grid_faces(nS, M, close_v=True)
     F.append(tuple(range((nS - 1) * M, nS * M)))
@@ -568,9 +614,10 @@ def build_boom(coll):
             i, j = divmod(vi, M)
             if wrap and j == 0:
                 j = M
-            uv.append((X0 - V[vi][0], j / M * girths[min(i, nS - 1)]))
+            uv.append((X0 - V[vi][0], arcs[min(i, nS - 1)][j]))
     ob = mesh_object('boom', V, F, coll, True, uv_loops=np.array(uv))
     recalc_normals(ob)
+    sharp_edges(ob, 32)          # chamfer corners and the end face; the 15-deg steps of the rounded top stay smooth
     return ob
 
 
@@ -587,7 +634,9 @@ def build_dorsal_fairing(coll):
     for i, s in enumerate(S):
         a = np.linspace(0, math.pi, M)
         y = -w[i] * np.cos(a)
-        z = top[i] - 0.03 + (h[i] + 0.03) * np.sin(a) ** 0.75
+        # a flatter crown than a dome (as photographed), and a shallow V-notch at the front where the boom enters
+        z = top[i] - 0.03 + (h[i] + 0.03) * np.sin(a) ** 0.45
+        z -= 0.034 * np.clip((0.99 - s) / 0.17, 0, 1) * np.clip(1 - np.abs(y) / (0.75 * w[i] + 1e-6), 0, 1)
         rows.append(np.stack([np.full(M, X0 - s), y, z], 1))
     V = np.concatenate(rows)
     F = grid_faces(len(S), M)
@@ -678,7 +727,7 @@ def build_nozzle(coll, glow_coll):
     n = len(prof)
     for k in range(NF):
         a0 = (k + 0.5) / NF * 2 * math.pi
-        half = math.pi / NF * 0.80
+        half = math.pi / NF * 0.90
         nth = 7
         th = a0 + np.linspace(-half, half, nth)
         Vi = np.concatenate([np.stack([np.full(nth, X0 - s), r * np.cos(th), NOZ_Z + r * np.sin(th)], 1) for s, r in prof])
@@ -705,12 +754,26 @@ def build_nozzle(coll, glow_coll):
         dq = (q1 - q0).normalized()
         parts.append(tag(tube(f'link{k}', q0, q1, 0.0085, seg=12, coll=coll, bevel=0.002), 34))
         parts.append(tag(tube(f'linkeye{k}', q1 - dq * 0.014, q1 + dq * 0.012, 0.016, seg=12, coll=coll, bevel=0.003), 34))
+        # inter-flap seal: a closed plate on the gas side of the flaps, overlapping both flap edges, so the divergent
+        # section reads as a closed can from every side (an open single-sided strip let the sky show between the flaps)
         b0 = a0 + math.pi / NF
-        hs = math.pi / NF * 0.34
-        th2 = b0 + np.linspace(-hs, hs, 4)
-        Vs = np.concatenate([np.stack([np.full(4, X0 - s), (r + 0.0035) * np.cos(th2), NOZ_Z + (r + 0.0035) * np.sin(th2)], 1) for s, r in prof[1:]])
-        sealob = mesh_object(f'seal{k}', Vs, grid_faces(n - 1, 4), coll, True)
-        orient_radial(sealob, 0.0, NOZ_Z, outward=True)
+        hs = math.pi / NF * 0.30
+        ns_ = 5
+        th2 = b0 + np.linspace(-hs, hs, ns_)
+        sp = prof[1:]; m_ = len(sp)
+        Si = np.concatenate([np.stack([np.full(ns_, X0 - s), (r - 0.0045) * np.cos(th2), NOZ_Z + (r - 0.0045) * np.sin(th2)], 1) for s, r in sp])
+        So = np.concatenate([np.stack([np.full(ns_, X0 - s), (r - 0.0008) * np.cos(th2), NOZ_Z + (r - 0.0008) * np.sin(th2)], 1) for s, r in sp])
+        nvs = m_ * ns_
+        Fs = grid_faces(m_, ns_) + [tuple(np.array(f[::-1]) + nvs) for f in grid_faces(m_, ns_)]
+        for i in range(m_ - 1):
+            Fs.append((i * ns_, nvs + i * ns_, nvs + (i + 1) * ns_, (i + 1) * ns_))
+            Fs.append(((i + 1) * ns_ + ns_ - 1, nvs + (i + 1) * ns_ + ns_ - 1, nvs + i * ns_ + ns_ - 1, i * ns_ + ns_ - 1))
+        for j in range(ns_ - 1):
+            a_, b_ = (m_ - 1) * ns_ + j, (m_ - 1) * ns_ + j + 1
+            Fs.append((a_, b_, nvs + b_, nvs + a_))
+            Fs.append((j + 1, j, nvs + j, nvs + j + 1))
+        sealob = mesh_object(f'seal{k}', np.concatenate([Si, So]), Fs, coll, True)
+        recalc_normals(sealob); sharp_edges(sealob, 50)
         parts.append(tag(sealob, 35))
     parts.append(tag(lathe('sync_ring', [(13.79, 0.528), (13.775, 0.537), (13.79, 0.547), (13.815, 0.547), (13.83, 0.537), (13.815, 0.528), (13.79, 0.528)], seg=96, coll=coll, facing=None), 34))
     nozzle = join(parts, 'nozzle')
@@ -876,21 +939,40 @@ def build_gear(coll):
         for dy in (-0.05, 0.05):
             out.append(tube(f'main_drag{sy}{dy}', db0 + Vector((0, dy, 0)), Vector((X(mw['s'] - 0.75), yo + dy * 1.6, -0.16)), 0.024, seg=14, coll=coll, bevel=0.004))
         out.append(tube(f'main_side{sy}', topM + (botM - topM) * 0.28, Vector((ox + 0.05, sy * 0.62, -0.30)), 0.026, seg=14, coll=coll, bevel=0.004))
+        # the door link the side photograph shows: a white tube from the lower leg up, forward and outboard to the door
+        dl0 = topM + (botM - topM) * 0.66 + Vector((0.03, sy * 0.04, 0))
+        dl1 = Vector((X(mw['s'] - 0.52), sy * (DOORS['main'][4] - 0.05), DOORS['main'][3] + 0.10))
+        out.append(tube(f'main_doorlink{sy}', dl0, dl1, 0.021, seg=14, coll=coll, bevel=0.004))
+        for kk, pp in (('a', dl0), ('b', dl1)):
+            out.append(tube(f'main_doorlink_pin{kk}{sy}', pp + Vector((0, -0.03, 0)), pp + Vector((0, 0.03, 0)), 0.013, seg=10, coll=coll, bevel=0.002))
         out.append(box(f'main_lock{sy}', topM + (botM - topM) * 0.3 + Vector((0.02, -sy * 0.07, 0)), (0.09, 0.05, 0.08), coll, bevel=0.01))
         out.append(tube(f'main_line{sy}', topM + Vector((-0.06, sy * 0.06, 0)), botM + Vector((-0.06, sy * 0.05, 0.05)), 0.006, seg=8, coll=coll))
         out.append(tube(f'main_line2{sy}', topM + Vector((-0.07, -sy * 0.03, 0)), botM + Vector((-0.07, -sy * 0.05, 0.08)), 0.005, seg=8, coll=coll))
     return out
 
 
-def curved_door(name, s0, s1, z0, z1, y, sy, coll, bulge=0.025, thick=0.022, ns=14, nz=10):
-    """Door panel in the X-Z plane at lateral y, outer face toward sy, slightly curved, with a thickness."""
-    ss = np.linspace(s0, s1, ns); zs = np.linspace(z0, z1, nz)
+def curved_door(name, s0, s1, z0, z1, y, sy, coll, bulge=0.025, thick=0.022, ns=14, nz=10, curl=0.03, curl_h=0.07):
+    """Door panel in the X-Z plane at lateral y, outer face toward sy: bowed outward like the skin it closes, its lower
+    edge curled inward by `curl` over the bottom `curl_h` (the bright band the photographs show: the curl mirrors the
+    pavement), with a thickness. z0 is the hinge (top), z1 the free edge (bottom)."""
+    ss = np.linspace(s0, s1, ns)
+    zf = z1 + curl_h * (1 if z0 > z1 else -1)          # where the curl starts
+    zs = np.concatenate([np.linspace(z0, zf, nz), zf + (z1 - zf) * np.sin(np.linspace(0, math.pi / 2, 7)[1:])])
+    nz = len(zs)
+    span = abs(z0 - z1)
+
+    def off(z):
+        t = min(abs(z - z0) / span, 1.0)
+        u = min(max((abs(z - z0) - abs(zf - z0)) / curl_h, 0.0), 1.0)
+        return bulge * math.sin(math.pi * t) - curl * (1 - math.sqrt(max(1 - u * u, 0.0)))
     Vo, Vi = [], []
     for s in ss:
         for k, z in enumerate(zs):
-            b = bulge * math.sin(math.pi * k / (nz - 1))
+            b = off(z)
             Vo.append((X0 - s, y + sy * b, z))
             Vi.append((X0 - s, y + sy * (b - thick), z))
+    # arc length down the panel (the curl would otherwise squeeze the texture into its last few millimetres)
+    arcz = np.concatenate([[0.0], np.cumsum([math.hypot(zs[k + 1] - zs[k], off(zs[k + 1]) - off(zs[k])) for k in range(nz - 1)])])
     nv = len(Vo)
     V = np.array(Vo + Vi)
     F = grid_faces(ns, nz) + [tuple(np.array(f[::-1]) + nv) for f in grid_faces(ns, nz)]
@@ -905,7 +987,7 @@ def curved_door(name, s0, s1, z0, z1, y, sy, coll, bulge=0.025, thick=0.022, ns=
         inner = all(vi >= nv for vi in f)
         for vi in f:
             p = V[vi]
-            uv.append(((X0 - p[0]), (-p[2]) + (3.0 if inner else 0.0)))
+            uv.append(((X0 - p[0]), arcz[(vi % nv) % nz] + (3.0 if inner else 0.0)))
     ob = mesh_object(name, V, F, coll, True, uv_loops=np.array(uv))
     recalc_normals(ob)
     tag(ob, 60)
