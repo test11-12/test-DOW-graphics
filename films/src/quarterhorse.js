@@ -127,7 +127,7 @@ const shots = [
   { id: 's01', name: 'First light', t0: 0, t1: 6.5, terrain: 'ground', note: 'Wide and low from the scrub beside the runway, pushing in: the jet against the sunrise, light shafts through the cloud.',
     pose: (lt, t, f) => poseGround(f, RWY_START_Z, GROUND_Y, 0, 0, 1.2),
     camera: (lt) => { const k = ease(lt / 6.5); return { pos: v3(-58.5 + k * 6, FIELD_ALT + 0.85 + k * 0.3, RWY_START_Z + 27 - k * 3), look: v3(-2, FIELD_ALT + 4.6 - k * 1.0, RWY_START_Z - 1), fov: 32, shake: { rot: 0.02, freq: 0.35, seed: 1 }, focus: v3(0, GROUND_Y, RWY_START_Z), focusRadius: 22 }; },
-    post: { ...GROUND_POST, exposure: GROUND_POST.exposure * 0.85, shutter: 0.5, vignette: 0.34, rays: 0.5, flare: { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 }, sunDisk: 0.5, bloom: 0.1, dof: { focus: 11, fstop: 9, max: 10 } } },
+    post: { ...GROUND_POST, exposure: GROUND_POST.exposure * 0.85, shutter: 0.25, vignette: 0.34, rays: 0.5, flare: { ghost: 0.05, halo: 0.03, streak: 0.14, thr: 8 }, sunDisk: 0.5, bloom: 0.1, dof: { focus: 5.5, fstop: 16, max: 10 } } },
   { id: 's02', name: 'Walkaround', t0: 6.5, t1: 12.5, terrain: 'ground', note: 'Slow lateral move along the bare-metal fuselage in raking morning light.',
     pose: (lt, t, f) => poseGround(f, RWY_START_Z, GROUND_Y, 0, 0, 1.2),
     camera: (lt) => { const k = ease(lt / 6.2); return { pos: v3(10.2 - k * 0.8, FIELD_ALT + 1.55 + k * 0.25, RWY_START_Z + 4.2 - k * 9.6), look: v3(0.6, GROUND_Y + 0.12, RWY_START_Z + 3.0 - k * 9.0), fov: 21, shake: { rot: 0.03, freq: 0.35, seed: 2 }, focus: v3(0, GROUND_Y, RWY_START_Z), focusRadius: 11 }; },
@@ -254,6 +254,7 @@ startFilm({
   frame(t, shot, lt, film, c) {
     W.terrain.update(shot.terrain); W.field.bush.visible = shot.terrain === 'ground' && !film.off.has('scrub');
     if (W.field.bush.visible) W.field.updateScrub(film.pipe.camera, film);   // per-cell instance counts: plants under about a pixel are skipped
+    { const low = film.pipe.origin.y - FIELD_ALT < 1.2 && shot.terrain === 'ground'; W.terrain.setLayerAniso(low ? 8 : 4, low ? 8 : 1); }   // a camera a metre off the ground sees the scans at a grazing angle: full anisotropic filtering there only
     if (film.off.size) { // dev profiling switches
       if (film.off.has('env')) film.pipe.scene.environment = null;
       if (film.off.has('ac')) W.ac.visible = false;

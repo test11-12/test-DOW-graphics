@@ -12,7 +12,7 @@
 #        assets/<film>/tex/scrub_sky.webp   (RGB: radiance under a uniform sky of radiance 1)
 #        assets/<film>/tex/scrub_shadow.webp (R: sun shadow 0..1, G: sky occlusion 0..1, one cell per plant)
 #        src/scrub_atlas_<film>.js          (layout and sizes, read by the film)
-import os, sys, math, json, time
+import os, sys, math, json, time, zlib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib'))
 import bpy
 import numpy as np
@@ -33,56 +33,82 @@ SOIL = (0.27, 0.2, 0.145)     # ground albedo under the plants (bounce light)
 PROBE = A.get('probe')                  # write one contact sheet of every plant (view 0 and 4) here and stop
 RNG = np.random.default_rng(20260526)
 
-# Per film: name -> (Poly Haven model, object or grass-clump recipe, scale, cell px, species).
-# Chihuahuan basin floor at Spaceport America (film 1): creosote 1 to 2 m, a low mesquite, snakeweed, and bunchgrass
-# that is straw-coloured and dormant in late May. Mojave at Edwards (film 2): creosote, grey saltbush / burrobush,
-# sparse dry grass. Stand-ins: Searsia lucida and wild rooibos scaled up (open, many slender stems, small leaves at
-# the tips) for creosote, Searsia burchellii for the denser shrub, small rooibos for the sub-shrubs, and tufts built
-# from the dry variant of Poly Haven's grass for the bunchgrass (a tuft: dozens of blades from one crown).
-CREOSOTE = {
-    'creo_a': ('searsia_lucida', 'searsia_lucida_b_LOD0', 0.92, 256, 'creosote'),
-    'creo_b': ('searsia_lucida', 'searsia_lucida_c_LOD0', 0.95, 256, 'creosote'),
-    'creo_c': ('searsia_lucida', 'searsia_lucida_d_LOD0', 0.95, 256, 'creosote'),
-    'creo_e': ('wild_rooibos_bush', 'wild_rooibos_bush_a', 2.3, 256, 'creosote'),
-    'creo_f': ('wild_rooibos_bush', 'wild_rooibos_bush_b', 2.5, 256, 'creosote'),
+# Per film: name -> plant recipe. Every plant is built from photoscanned CC0 parts (Poly Haven's Namaqualand / Karoo
+# collection and its dry grass), assembled into the growth form of the real species:
+#   ('obj', model, object, scale)                          one scanned plant, scaled
+#   ('cluster', model, objects, n, scale, lean, crown)     n copies of the scanned stems on one root crown (crown: m),
+#                                                          each leaning outwards by lean (deg, lo..hi): a multi-stemmed shrub
+#   ('bunch', blades, size, lean, dead)                    one bunchgrass: blades tufts of the scanned grass on one crown,
+#                                                          dead: share of old grey blades among the straw ones
+# and per plant: cell px, the film's slot ('creosote', 'mesquite', 'snakeweed', 'grass': the four species slots the film's
+# field knows), the look (leaf colour, below) and ring = (tufts, radius m): dry grass at the shrub's base.
+# Chihuahuan basin floor at Spaceport America (film 1): creosote under about 1.5 m, mesquite mounds, snakeweed half a
+# metre, and bunchgrass that is straw-coloured and dormant in late May. Mojave at Edwards (film 2): creosote, grey
+# saltbush mounds and burrobush, sparse dry grass. Creosote is many slender stems from the ground, vase-shaped and open
+# (the rooibos stems, clustered); saltbush and mesquite are dense rounded mounds (Searsia burchellii scaled down);
+# burrobush and snakeweed are low domes of fine stems (small rooibos, leaning outwards). Grass is single bunches only:
+# the field gathers them into clumps, so no two neighbours are the same baked pair.
+RB = 'wild_rooibos_bush'
+SB = 'searsia_burchellii'
+GRASS = {
+    'grass_a': (('bunch', 22, 0.80, 28, 0.15), 256),
+    'grass_b': (('bunch', 14, 0.62, 18, 0.35), 256),
+    'grass_c': (('bunch', 30, 0.95, 34, 0.25), 256),
+    'grass_d': (('bunch', 10, 0.55, 12, 0.50), 256),
+    'grass_e': (('bunch', 26, 0.72, 42, 0.05), 256),
+    'grass_f': (('bunch', 18, 1.05, 22, 0.30), 256),
+    'grass_g': (('bunch', 12, 0.68, 30, 0.65), 256),
+    'grass_h': (('bunch', 34, 0.60, 24, 0.20), 256),
+}
+def _p(recipe, cell, slot, look, ring=None):
+    return {'recipe': recipe, 'cell': cell, 'slot': slot, 'look': look, 'ring': ring}
+CREO = lambda look: {
+    'creo_a': _p(('cluster', RB, ('wild_rooibos_bush_a', 'wild_rooibos_bush_b'), 11, 2.1, (6, 26), 0.10), 256, 'creosote', look, (4, 0.45)),
+    'creo_b': _p(('cluster', RB, ('wild_rooibos_bush_a', 'wild_rooibos_bush_b', 'wild_rooibos_bush_c'), 10, 2.45, (8, 30), 0.12), 256, 'creosote', look, (3, 0.5)),
+    'creo_c': _p(('cluster', RB, ('wild_rooibos_bush_b', 'wild_rooibos_bush_c'), 13, 1.75, (10, 34), 0.08), 256, 'creosote', look),
+    'creo_d': _p(('cluster', RB, ('wild_rooibos_bush_a',), 8, 2.25, (12, 30), 0.14), 256, 'creosote', look, (5, 0.55)),
 }
 PRESETS = {
-    'quarterhorse': {**CREOSOTE,
-        'mesq_s': ('searsia_burchellii', 'searsia_burchellii_small_LOD0', 0.55, 256, 'mesquite'),
-        'snake_a': ('wild_rooibos_bush', 'wild_rooibos_bush_c', 1.0, 128, 'snakeweed'),
-        'snake_b': ('wild_rooibos_bush', 'wild_rooibos_bush_d', 1.15, 128, 'snakeweed'),
-        'snake_c': ('wild_rooibos_bush', 'wild_rooibos_bush_e', 1.4, 128, 'snakeweed'),
-        'grass_a': ('grass_medium_02', ('clump', 3, 0.42, 0.7), 1.0, 256, 'grass'),
-        'grass_b': ('grass_medium_02', ('clump', 2, 0.3, 0.8), 1.0, 256, 'grass'),
-        'grass_c': ('grass_medium_02', ('clump', 5, 0.55, 0.62), 1.0, 256, 'grass'),
-        'grass_d': ('grass_medium_02', ('clump', 1, 0.0, 0.85), 1.0, 256, 'grass'),
+    'quarterhorse': {**CREO('creosote'),
+        'mesq_a': _p(('obj', SB, 'searsia_burchellii_large_LOD0', 0.30), 256, 'mesquite', 'mesquite', (5, 0.75)),
+        'mesq_b': _p(('cluster', RB, ('wild_rooibos_bush_a', 'wild_rooibos_bush_b'), 15, 1.8, (18, 50), 0.14), 256, 'mesquite', 'mesquite', (4, 0.6)),
+        'snake_a': _p(('cluster', RB, ('wild_rooibos_bush_c', 'wild_rooibos_bush_d'), 11, 1.0, (18, 52), 0.06), 128, 'snakeweed', 'snakeweed'),
+        'snake_b': _p(('cluster', RB, ('wild_rooibos_bush_d', 'wild_rooibos_bush_e'), 14, 1.25, (20, 58), 0.05), 128, 'snakeweed', 'snakeweed'),
+        'snake_c': _p(('cluster', RB, ('wild_rooibos_bush_c', 'wild_rooibos_bush_e'), 9, 0.9, (14, 46), 0.05), 128, 'snakeweed', 'snakeweed'),
+        **{k: _p(r, c, 'grass', 'grass') for k, (r, c) in GRASS.items()},
     },
-    'fury': {**CREOSOTE,
-        'mesq_s': ('searsia_burchellii', 'searsia_burchellii_small_LOD0', 0.42, 256, 'mesquite'),
-        'snake_a': ('wild_rooibos_bush', 'wild_rooibos_bush_c', 1.2, 128, 'snakeweed'),
-        'snake_b': ('wild_rooibos_bush', 'wild_rooibos_bush_d', 1.4, 128, 'snakeweed'),
-        'snake_c': ('wild_rooibos_bush', 'wild_rooibos_bush_e', 1.6, 128, 'snakeweed'),
-        'grass_a': ('grass_medium_02', ('clump', 2, 0.35, 0.6), 1.0, 256, 'grass'),
-        'grass_b': ('grass_medium_02', ('clump', 1, 0.0, 0.65), 1.0, 256, 'grass'),
+    'fury': {**CREO('creosote'),
+        'salt_a': _p(('cluster', RB, ('wild_rooibos_bush_a', 'wild_rooibos_bush_b'), 16, 1.5, (20, 55), 0.12), 256, 'mesquite', 'saltbush', (4, 0.5)),
+        'salt_b': _p(('cluster', RB, ('wild_rooibos_bush_b', 'wild_rooibos_bush_c'), 18, 1.75, (25, 62), 0.15), 256, 'mesquite', 'saltbush', (5, 0.55)),
+        'salt_c': _p(('obj', SB, 'searsia_burchellii_large_LOD0', 0.27), 256, 'mesquite', 'saltbush', (6, 0.7)),
+        'burro_a': _p(('cluster', RB, ('wild_rooibos_bush_c', 'wild_rooibos_bush_d'), 12, 1.05, (20, 60), 0.06), 128, 'snakeweed', 'burrobush'),
+        'burro_b': _p(('cluster', RB, ('wild_rooibos_bush_d', 'wild_rooibos_bush_e'), 15, 1.3, (22, 62), 0.05), 128, 'snakeweed', 'burrobush'),
+        'burro_c': _p(('cluster', RB, ('wild_rooibos_bush_c', 'wild_rooibos_bush_e'), 10, 0.95, (16, 50), 0.05), 128, 'snakeweed', 'burrobush'),
+        **{k: _p(r, c, 'grass', 'grass') for k, (r, c) in GRASS.items()},
     },
 }
 PLANTS = PRESETS[A.get('preset', FILM)]
-# leaf colour by species and film: hue shift (towards yellow < 0), saturation, value, translucency tint (linear)
-LEAVES = {
+# Leaf and stem colour per look and film: the scan's own variation kept, desaturated to sat and graded so its mean (over
+# the plant's texture atlas) lands on target (linear albedo); trans: leaf translucency tint. Real canopy albedos: creosote
+# a dark resinous olive (about 0.08 to 0.1), saltbush and burrobush pale grey-green and grey (scaly leaves, about 0.3),
+# dormant bunchgrass straw (about 0.35), old blades grey.
+LOOKS = {
     'quarterhorse': {
-        'creosote': (-0.02, 0.62, 0.42, (0.5, 0.6, 0.16)),      # dark olive, resinous
-        'mesquite': (0.0, 0.7, 0.55, (0.45, 0.62, 0.14)),
-        'snakeweed': (-0.035, 0.75, 0.8, (0.6, 0.6, 0.2)),      # yellow-green
-        'grass': (0.0, 0.8, 1.0, (0.75, 0.62, 0.36)),           # straw (the scan's own dry variant)
+        'creosote': {'leaf': ((0.15, 0.16, 0.08), 0.7), 'bark': ((0.12, 0.10, 0.08), 0.5), 'trans': (0.5, 0.6, 0.16)},
+        'mesquite': {'leaf': ((0.14, 0.16, 0.075), 0.8), 'bark': ((0.12, 0.10, 0.08), 0.5), 'trans': (0.45, 0.62, 0.14)},
+        'snakeweed': {'leaf': ((0.16, 0.17, 0.07), 0.85), 'bark': ((0.15, 0.13, 0.08), 0.6), 'trans': (0.6, 0.6, 0.2)},
+        'grass': {'leaf': ((0.37, 0.305, 0.20), 0.7), 'trans': (0.75, 0.62, 0.36)},
+        'grass_dead': {'leaf': ((0.27, 0.25, 0.215), 0.3), 'trans': (0.6, 0.56, 0.48)},
     },
     'fury': {
-        'creosote': (-0.02, 0.6, 0.42, (0.5, 0.6, 0.16)),
-        'mesquite': (0.02, 0.25, 0.9, (0.5, 0.55, 0.4)),        # saltbush: pale grey-green
-        'snakeweed': (-0.01, 0.3, 0.75, (0.55, 0.55, 0.35)),    # burrobush: grey
-        'grass': (0.0, 0.7, 0.95, (0.75, 0.62, 0.36)),
+        'creosote': {'leaf': ((0.17, 0.175, 0.095), 0.65), 'bark': ((0.13, 0.11, 0.09), 0.5), 'trans': (0.5, 0.6, 0.18)},
+        'saltbush': {'leaf': ((0.31, 0.325, 0.275), 0.35), 'bark': ((0.24, 0.22, 0.19), 0.4), 'trans': (0.55, 0.6, 0.42)},
+        'burrobush': {'leaf': ((0.27, 0.27, 0.235), 0.3), 'bark': ((0.22, 0.2, 0.17), 0.4), 'trans': (0.5, 0.52, 0.4)},
+        'grass': {'leaf': ((0.42, 0.34, 0.21), 0.75), 'trans': (0.75, 0.62, 0.36)},
+        'grass_dead': {'leaf': ((0.29, 0.27, 0.23), 0.3), 'trans': (0.6, 0.56, 0.48)},
     },
 }
-LEAF = LEAVES[A.get('preset', FILM)]
+LOOK = LOOKS[A.get('preset', FILM)]
 OUT_TEX = d.out_path(FILM, 'tex', 'x').rsplit(os.sep, 1)[0]
 BAKE = d.bake_dir('scrub', FILM)
 SLOTS = ('sun', 'sky', 'alpha')
@@ -167,25 +193,54 @@ def cutout(mat, shader, alpha):
     nt.links.new(shader, out.inputs['Surface'])
 
 
-def leaf_material(mat, species, model):
-    """Recolour a leaf / blade material, give it translucency and its real cut-out."""
-    hue, sat, val, trans = LEAF[species]
+_tex_mean = {}
+
+
+def tex_mean(model, dry=False):
+    """Mean linear colour of a plant's diffuse atlas where its cut-out is solid (what the grade below is relative to)."""
+    key = (model, dry)
+    if key not in _tex_mean:
+        mk = 'dry_diff' if dry else 'Diffuse'
+        t = d.polyhaven_texture(model, '2k', maps=(mk,), fmt='jpg')
+        img = np.asarray(Image.open(t[mk]).convert('RGB').reduce(4), np.float32) / 255.0
+        lin = np.where(img <= 0.04045, img / 12.92, ((img + 0.055) / 1.055) ** 2.4)
+        ap = d.polyhaven_texture(model, '2k', maps=('Alpha',), fmt='png').get('Alpha')
+        w = (np.asarray(Image.open(ap).convert('L').reduce(4), np.float32) / 255.0 > 0.5) if ap else np.ones(lin.shape[:2], bool)
+        _tex_mean[key] = lin[w].mean(0) if w.any() else lin.reshape(-1, 3).mean(0)
+    return _tex_mean[key]
+
+
+def grade(nt, src, model, target, sat, dry=False):
+    """The scan's colour, desaturated to sat and scaled per channel so its mean lands on target. Returns the socket."""
+    m = tex_mean(model, dry)
+    y = float(m @ np.array([0.2126, 0.7152, 0.0722]))
+    md = y + sat * (m - y)
+    k = [min(t / max(c, 1e-3), 8.0) for t, c in zip(target, md)]
+    hsv = nt.nodes.new('ShaderNodeHueSaturation')
+    hsv.inputs['Hue'].default_value = 0.5; hsv.inputs['Saturation'].default_value = sat; hsv.inputs['Value'].default_value = 1.0
+    nt.links.new(src, hsv.inputs['Color'])
+    mul = nt.nodes.new('ShaderNodeMix'); mul.data_type = 'RGBA'; mul.blend_type = 'MULTIPLY'; mul.inputs[0].default_value = 1.0
+    nt.links.new(hsv.outputs['Color'], mul.inputs[6]); mul.inputs[7].default_value = (*k, 1.0)
+    return mul.outputs[2]
+
+
+def leaf_material(mat, look, model):
+    """Recolour a leaf / blade material to its look, give it translucency and its real cut-out."""
+    L = LOOK[look]; target, sat = L['leaf']; trans = L['trans']
     nt = mat.node_tree; nodes, links = nt.nodes, nt.links
     bs = next(n for n in nodes if n.type == 'BSDF_PRINCIPLED')
     alpha = alpha_map(mat, model)
     base = bs.inputs['Base Color']
-    if species == 'grass':   # dormant bunchgrass: the scan's dry variant
+    grass = look.startswith('grass')
+    if grass:   # dormant bunchgrass: the scan's dry variant
         dry = d.polyhaven_texture(model, '2k', maps=('dry_diff',), fmt='jpg').get('dry_diff')
         if dry and base.is_linked and base.links[0].from_node.type == 'TEX_IMAGE':
             base.links[0].from_node.image = d.image(dry)
     col = None
     if base.is_linked:
-        src = base.links[0].from_socket
-        hsv = nodes.new('ShaderNodeHueSaturation')
-        hsv.inputs['Hue'].default_value = 0.5 + hue; hsv.inputs['Saturation'].default_value = sat; hsv.inputs['Value'].default_value = val
-        links.new(src, hsv.inputs['Color']); links.new(hsv.outputs['Color'], base)
-        col = hsv.outputs['Color']
-    bs.inputs['Roughness'].default_value = 0.6
+        col = grade(nt, base.links[0].from_socket, model, target, sat, dry=grass)
+        links.new(col, base)
+    bs.inputs['Roughness'].default_value = 0.62
     for l in list(bs.inputs['Roughness'].links):
         links.remove(l)
     tr = nodes.new('ShaderNodeBsdfTranslucent')
@@ -195,79 +250,126 @@ def leaf_material(mat, species, model):
         links.new(mul.outputs[2], tr.inputs['Color'])
     else:
         tr.inputs['Color'].default_value = (*trans, 1.0)
-    mix = nodes.new('ShaderNodeMixShader'); mix.inputs['Fac'].default_value = 0.38 if species != 'grass' else 0.3
+    mix = nodes.new('ShaderNodeMixShader'); mix.inputs['Fac'].default_value = 0.3 if grass else 0.36
     links.new(bs.outputs['BSDF'], mix.inputs[1]); links.new(tr.outputs['BSDF'], mix.inputs[2])
     cutout(mat, mix.outputs['Shader'], alpha)
 
 
-def bark_material(mat, species, model):
+def bark_material(mat, look, model):
+    L = LOOK[look]
     nt = mat.node_tree
     bs = next(n for n in nt.nodes if n.type == 'BSDF_PRINCIPLED')
     alpha = alpha_map(mat, model)
-    if bs.inputs['Base Color'].is_linked:
-        src = bs.inputs['Base Color'].links[0].from_socket
-        hsv = nt.nodes.new('ShaderNodeHueSaturation')
-        hsv.inputs['Saturation'].default_value = 0.7; hsv.inputs['Value'].default_value = 0.9
-        nt.links.new(src, hsv.inputs['Color']); nt.links.new(hsv.outputs['Color'], bs.inputs['Base Color'])
+    if bs.inputs['Base Color'].is_linked and 'bark' in L:
+        target, sat = L['bark']
+        col = grade(nt, bs.inputs['Base Color'].links[0].from_socket, model, target, sat)
+        nt.links.new(col, bs.inputs['Base Color'])
     cutout(mat, bs.outputs['BSDF'], alpha)
 
 
 _imported = {}
-_plants = {}
 _mats = {}
 
 
-def get_plant(model, objname, species):
-    """The scanned plant (or a grass clump built from the scan's tufts), with materials processed for its species."""
+def library(model):
     if model not in _imported:
         objs = d.import_gltf(d.polyhaven_model(model, '2k'))
         for o in objs:
             o.hide_render = True
         _imported[model] = {o.name: o for o in objs if o.type == 'MESH'}
-    lib = _imported[model]
-    key = (model, objname, species)
-    if key in _plants:
-        return _plants[key]
-    if isinstance(objname, tuple):
-        ob = grass_clump(lib, *objname[1:])
-    else:
-        ob = lib[objname].copy(); ob.data = lib[objname].data.copy(); bpy.context.scene.collection.objects.link(ob)
-    for i, m in enumerate(ob.data.materials):
-        mk = (m.name, species)
-        if mk not in _mats:
-            c = m.copy()
-            (leaf_material if (c.name.split('.')[0].endswith('_leaves') or species == 'grass') else bark_material)(c, species, model)
-            _mats[mk] = c
-        ob.data.materials[i] = _mats[mk]
-    ob.hide_render = True
-    _plants[key] = ob
-    return ob
+    return _imported[model]
 
 
-def grass_clump(lib, bunches, spread, size):
-    """Bunchgrass: each bunch is a few dozen of the scan's small tufts set on one crown, leaning outwards; a clump
-    is one to five bunches within `spread` metres (drawn as one impostor, so a slot can hold a patch of grass)."""
-    names = sorted(lib)
+def processed(m, look, model):
+    """The material m recoloured for a look (one copy per original material and look)."""
+    base = m.name.split('.')[0]
+    key = (base, look)
+    if key not in _mats:
+        c = m.copy()
+        (leaf_material if (base.endswith('_leaves') or look.startswith('grass')) else bark_material)(c, look, model)
+        _mats[key] = c
+    return _mats[key]
+
+
+def part(model, objname, look, mw, rng=None):
+    """A copy of one scanned object with its look's materials, at world matrix mw (its base at the mesh origin)."""
+    src = library(model)[objname]
+    o = src.copy(); o.data = src.data.copy(); bpy.context.scene.collection.objects.link(o)
+    for i, m in enumerate(o.data.materials):
+        o.data.materials[i] = processed(m, look, model)
+    o.matrix_world = mw
+    o.hide_render = False
+    return o
+
+
+def grass_bunch(rng, blades, size, lean_max, dead):
+    """One bunchgrass: `blades` of the scan's larger tufts on one crown, leaning outwards, a share of them old grey
+    blades. Single bunches only: clumps are made in the film's field, each bunch with its own size and mirroring."""
+    names = sorted(library('grass_medium_02'))
     parts = []
-    for b in range(bunches):
-        ang = RNG.uniform(0, 2 * math.pi); rad = spread * math.sqrt(RNG.uniform(0.05, 1.0)) if bunches > 1 else 0.0
-        cx, cy = math.cos(ang) * rad, math.sin(ang) * rad
-        bs = size * RNG.uniform(0.7, 1.15)
-        for k in range(int(RNG.integers(16, 26))):
-            src = lib[names[int(RNG.integers(1, len(names)))]]          # the larger tufts
-            o = src.copy(); o.data = src.data.copy(); bpy.context.scene.collection.objects.link(o)
-            a = RNG.uniform(0, 2 * math.pi); r = 0.085 * bs * math.sqrt(RNG.uniform(0, 1))
-            lean = math.radians(RNG.uniform(4, 30)) * (0.3 + 0.7 * r / (0.085 * bs))
-            sc = bs * RNG.uniform(0.95, 1.7)
-            rot = Matrix.Rotation(a, 4, 'Z') @ Matrix.Rotation(lean, 4, 'Y') @ Matrix.Rotation(RNG.uniform(0, 2 * math.pi), 4, 'Z')
-            o.matrix_world = Matrix.Translation((cx + math.cos(a) * r, cy + math.sin(a) * r, 0)) @ rot @ Matrix.Diagonal((sc, sc, sc * RNG.uniform(0.9, 1.35), 1))
-            o.hide_render = False
-            parts.append(o)
+    for k in range(blades):
+        src = names[int(rng.integers(1, len(names)))]          # the larger tufts
+        a = rng.uniform(0, 2 * math.pi); r = 0.085 * size * math.sqrt(rng.uniform(0, 1))
+        lean = math.radians(rng.uniform(3, lean_max)) * (0.3 + 0.7 * r / (0.085 * size))
+        sc = size * rng.uniform(0.85, 1.6)
+        rot = Matrix.Rotation(a, 4, 'Z') @ Matrix.Rotation(lean, 4, 'Y') @ Matrix.Rotation(rng.uniform(0, 2 * math.pi), 4, 'Z')
+        mw = Matrix.Translation((math.cos(a) * r, math.sin(a) * r, 0)) @ rot @ Matrix.Diagonal((sc, sc, sc * rng.uniform(0.9, 1.35), 1))
+        parts.append(part('grass_medium_02', src, 'grass_dead' if rng.uniform() < dead else 'grass', mw))
+    return parts
+
+
+def shrub_cluster(rng, model, objs, n, scale, lean, crown, look):
+    """A multi-stemmed shrub: n scanned stems on one root crown, the outer ones leaning further out."""
+    parts = []
+    for k in range(n):
+        a = rng.uniform(0, 2 * math.pi) if k else 0.0
+        r = crown * math.sqrt(rng.uniform(0.05, 1.0)) if k else 0.0
+        lean_k = math.radians(rng.uniform(*lean)) * (0.35 + 0.65 * (r / crown if crown > 0 else 1.0)) if k else math.radians(lean[0]) * 0.3
+        sc = scale * rng.uniform(0.72, 1.12)
+        rot = Matrix.Rotation(a, 4, 'Z') @ Matrix.Rotation(lean_k, 4, 'Y') @ Matrix.Rotation(rng.uniform(0, 2 * math.pi), 4, 'Z')
+        mw = Matrix.Translation((math.cos(a) * r, math.sin(a) * r, 0)) @ rot @ Matrix.Diagonal((sc, sc, sc * rng.uniform(0.9, 1.1), 1))
+        parts.append(part(model, objs[int(rng.integers(len(objs)))], look, mw))
+    return parts
+
+
+def crown_of(o):
+    """Root crown (x, y) of an object in world space: the centre of its lowest vertices."""
+    vs = np.array([(o.matrix_world @ v.co)[:] for v in o.data.vertices])
+    z0 = vs[:, 2].min()
+    low = vs[vs[:, 2] < z0 + 0.08 * (vs[:, 2].max() - z0)]
+    return low[:, 0].mean(), low[:, 1].mean(), z0
+
+
+def build_plant(name, spec):
+    """Assemble one plant (joined into a single object at the origin) from its recipe."""
+    rng = np.random.default_rng(zlib.crc32(name.encode()) + 20260526)
+    rc = spec['recipe']
+    if rc[0] == 'bunch':
+        parts = grass_bunch(rng, *rc[1:])
+    elif rc[0] == 'cluster':
+        parts = shrub_cluster(rng, *rc[1:], spec['look'])
+    else:
+        _, model, objname, scale = rc
+        o = part(model, objname, spec['look'], Matrix.Diagonal((scale, scale, scale, 1)))
+        bpy.context.view_layer.update()
+        cx, cy, z0 = crown_of(o)
+        o.matrix_world = Matrix.Translation((-cx, -cy, -z0)) @ o.matrix_world
+        parts = [o]
+    if spec.get('ring'):   # dry grass at the shrub's base, where its litter and shade hold moisture
+        cnt, rad = spec['ring']
+        names = sorted(library('grass_medium_02'))
+        for k in range(cnt):
+            a = (k + rng.uniform(0.15, 0.85)) / cnt * 2 * math.pi; r = rad * rng.uniform(0.7, 1.1)
+            sc = rng.uniform(0.55, 0.95)
+            rot = Matrix.Rotation(a, 4, 'Z') @ Matrix.Rotation(math.radians(rng.uniform(5, 25)), 4, 'Y') @ Matrix.Rotation(rng.uniform(0, 6.3), 4, 'Z')
+            mw = Matrix.Translation((math.cos(a) * r, math.sin(a) * r, 0)) @ rot @ Matrix.Diagonal((sc, sc, sc, 1))
+            parts.append(part('grass_medium_02', names[int(rng.integers(1, len(names)))], 'grass_dead' if rng.uniform() < 0.3 else 'grass', mw))
     bpy.context.view_layer.update()
     d.select(parts, parts[0])
     bpy.ops.object.join()
-    ob = bpy.context.active_object
+    ob = bpy.context.active_object; ob.name = name
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    ob.hide_render = True
     return ob
 
 
@@ -330,9 +432,9 @@ meta = []
 t0 = time.time()
 sd = sun_dir(); anti = Vector((-sd.x, -sd.y, 0)).normalized()
 for name in plants:
-    model, objname, scale, cell, species = PLANTS[name]
-    ob = get_plant(model, objname, species)
-    r, hgt = place(ob, scale)
+    spec = PLANTS[name]; cell, species = spec['cell'], spec['slot']
+    ob = build_plant(name, spec)
+    r, hgt = place(ob, 1.0)
     cached = REUSE and ONLY is not None and name not in ONLY
     S = max(2.0 * r, hgt / 0.93) * 1.06          # cell side (m); ground line 4 % above the bottom edge
     base = 0.04 * S
@@ -432,12 +534,16 @@ q8 = lambda x: (np.clip(x, 0, 1) * 255 + 0.5).astype(np.uint8)
 Image.fromarray(np.dstack([q8(lin_to_srgb(sun_a[..., :3])), q8(sun_a[..., 3])]), 'RGBA').save(
     os.path.join(OUT_TEX, 'scrub_sun.webp'), 'WEBP', quality=90, alpha_quality=100, method=6)
 Image.fromarray(q8(lin_to_srgb(sky_a)), 'RGB').save(os.path.join(OUT_TEX, 'scrub_sky.webp'), 'WEBP', quality=88, method=6)
-dec = np.zeros((128, 512 * len(meta), 3), np.float32)
+# shadow decals: 512 x 128 each, eight to a row (the texture stays within 4096 px on every GPU)
+DCOL = min(8, len(meta)); DROWS = (len(meta) + DCOL - 1) // DCOL
+dec = np.zeros((128 * DROWS, 512 * DCOL, 3), np.float32)
 for i, m in enumerate(meta):
     _, shadow, occl = views[m['name']]
-    dec[:, i * 512:(i + 1) * 512, 0] = shadow[::-1]; dec[:, i * 512:(i + 1) * 512, 1] = occl[::-1]
+    x0, y0 = (i % DCOL) * 512, (i // DCOL) * 128
+    dec[y0:y0 + 128, x0:x0 + 512, 0] = shadow[::-1]; dec[y0:y0 + 128, x0:x0 + 512, 1] = occl[::-1]
+    m['decalAt'] = [x0, y0]                     # pixel origin (top-left) of its decal
 Image.fromarray(q8(dec), 'RGB').save(os.path.join(OUT_TEX, 'scrub_shadow.webp'), 'WEBP', quality=90, method=6)
-atlas = {'film': FILM, 'sun': [SUN_AZ, SUN_EL], 'elev': ELEV, 'views': VIEWS, 'size': [W, H], 'decalSize': [512 * len(meta), 128],
+atlas = {'film': FILM, 'sun': [SUN_AZ, SUN_EL], 'elev': ELEV, 'views': VIEWS, 'size': [W, H], 'decalSize': [512 * DCOL, 128 * DROWS],
          'files': {k: f'{FILM}/tex/scrub_{k}.webp' for k in ('sun', 'sky', 'shadow')}, 'plants': meta}
 js = os.path.join(d.FILMS, 'src', f'scrub_atlas_{FILM}.js')
 with open(js, 'w') as f:

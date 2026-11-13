@@ -20,7 +20,11 @@ import { loadTexture } from './assets.js';
 // from the lens stays crisp. relief = metres per unit of the height channel: close to the lens the height field is
 // marched towards the sun, so every stone and ridge casts its own shadow under a low sun (Surf.sh).
 // Recipe-wide: layerSize (array resolution, default 1024), layerAniso (albedo + height array, default 2), layerAnisoB
-// (normal + roughness + occlusion array, default 1).
+// (normal + roughness + occlusion array, default 1); terrain.setLayerAniso(a, b) changes both per shot (a camera
+// a metre off the ground wants 8 or more on both, a telephoto far less).
+// Detail, normals and micro-shadows are gated on the pixel's geometric-mean footprint (tFpG), not its stretched
+// along-view length: at a grazing angle the ground keeps its across-view detail and the anisotropic filter handles
+// the long axis.
 const HEXS = 3.4641016151377544;   // 2*sqrt(3): hex cells are about 0.58 texture tiles across
 const LAYERS_GLSL = names => /* glsl */`
 #define TERRAIN_LAYERS 1
@@ -33,13 +37,14 @@ uniform ivec2 uLayerI[${names.length}];  // integer lattice anchor, so the per-c
 uniform vec4 uLayerMA[${names.length}], uLayerMB[${names.length}];   // each layer's mean (albedo + height, normal + roughness + occlusion)
 uniform vec4 uLayerD[${names.length}];    // x: detail scale (0: none), y: strength, z: texels per tile, w: relief (m per height unit)
 // Lighting inputs a recipe sets through surfApply(); tRough < 0 keeps the default terrain lighting.
-float tRough = -1.0, tAO = 1.0, tF0 = 0.03, tFp = 1.0, tW = 0.0, tSh = 1.0;   // tW: weight of the layered lighting (fade it out where the recipe hands over to its own far-field look); tSh: sun visibility over the micro-relief
+float tRough = -1.0, tAO = 1.0, tF0 = 0.03, tFp = 1.0, tFpG = 1.0, tW = 0.0, tSh = 1.0, tSpec = 1.0;   // tW: weight of the layered lighting (fade it out where the recipe hands over to its own far-field look); tSh: sun visibility over the micro-relief; tFpG: geometric-mean footprint (m); tSpec: specular occlusion (recessed joints, cracks)
 // A sampled surface. d: slope perturbation in world (x, z), added to the normal as N += vec3(d.x, 0.0, d.y);
-// sh: sun visibility over the scan's own relief (1 lit, 0 in the shadow of a stone).
-struct Surf { vec3 alb; float h; vec2 d; float rough; float ao; float sh; };
+// sh: sun visibility over the scan's own relief (1 lit, 0 in the shadow of a stone); sp: specular occlusion (0 in a
+// recessed joint or crack, which the sheen of the surface around it does not reach).
+struct Surf { vec3 alb; float h; vec2 d; float rough; float ao; float sh; float sp; };
 uvec2 lPcg(uvec2 v){ v = v*1664525u+1013904223u; v.x += v.y*1664525u; v.y += v.x*1664525u; v ^= v>>16u; v.x += v.y*1664525u; v.y += v.x*1664525u; v ^= v>>16u; return v; }
 vec4 lRand(ivec2 c){ uvec2 h = lPcg(uvec2(c)); return vec4(float(h.x&65535u), float(h.x>>16u), float(h.y&65535u), float(h.y>>16u))/65535.0; }
-Surf surfMix(Surf a, Surf b, float t){ Surf s; s.alb = mix(a.alb, b.alb, t); s.h = mix(a.h, b.h, t); s.d = mix(a.d, b.d, t); s.rough = mix(a.rough, b.rough, t); s.ao = mix(a.ao, b.ao, t); s.sh = mix(a.sh, b.sh, t); return s; }
+Surf surfMix(Surf a, Surf b, float t){ Surf s; s.alb = mix(a.alb, b.alb, t); s.h = mix(a.h, b.h, t); s.d = mix(a.d, b.d, t); s.rough = mix(a.rough, b.rough, t); s.ao = mix(a.ao, b.ao, t); s.sh = mix(a.sh, b.sh, t); s.sp = mix(a.sp, b.sp, t); return s; }
 // b takes over from a as t goes 0 -> 1, first where b stands proud of a (height-aware blend; soft: transition width)
 Surf surfBlendH(Surf a, Surf b, float t, float soft){
   float ha = a.h+1.0-2.0*t, hb = b.h-1.0+2.0*t, m = max(ha, hb)-max(soft, 1e-3);
@@ -49,13 +54,13 @@ Surf surfBlendH(Surf a, Surf b, float t, float soft){
 // the layer's average (measured from its last mip at load): what it converges to far away
 Surf layerMean(int k){
   vec4 a = uLayerMA[k], b = uLayerMB[k];
-  Surf s; s.alb = a.rgb; s.h = a.a; s.d = vec2(0.0); s.rough = max(b.b, 0.93); s.ao = 1.0; s.sh = 1.0; return s;
+  Surf s; s.alb = a.rgb; s.h = a.a; s.d = vec2(0.0); s.rough = max(b.b, 0.93); s.ao = 1.0; s.sh = 1.0; s.sp = 1.0; return s;
 }
 // Sun visibility over layer k's own height field: from texture position c (tiles, layer), march towards the sun
 // (dir: texture tiles per metre of ground in the sun's direction) and find where the relief stands above the sun
 // ray. lod: mip of the march taps. Only within a few centimetres per pixel; elsewhere 1.
 float lSunVis(int k, vec2 c, vec2 dir, float lod){
-  float rel = uLayerD[k].w, far = smoothstep(0.012, 0.032, tFp);
+  float rel = uLayerD[k].w, far = smoothstep(0.012, 0.032, tFpG);
   if (rel <= 0.0 || far >= 1.0 || uSunDir.y <= 0.0) return 1.0;
   float tanEl = uSunDir.y/max(length(uSunDir.xz), 1e-3);
   if (tanEl > 1.2) return 1.0;                                   // high sun: the stones' shadows hide under them
@@ -74,14 +79,15 @@ vec3 layerMeanAlbedo(int k){ return uLayerMA[k].rgb; }
 // layer's mean normal is taken out first: a scan's slight overall tilt, turned a different way in every hex cell,
 // would otherwise show as a patchwork under a grazing sun.
 vec2 lSlope(vec2 nt, mat2 R, int k){ vec2 n = (nt-uLayerMB[k].xy)*2.0; float nz = sqrt(max(1.0-dot(n, n), 0.25)); n = n*R; return vec2(n.x, -n.y)/nz; }
-// metres -> roughness rises as the micro-relief falls below a pixel (keeps far ground from turning glossy)
-float lRoughAt(float r, float tilesPerPx){ return mix(r, max(r, 0.93), smoothstep(0.004, 0.06, tilesPerPx)); }
+// roughness rises as the micro-relief falls below a pixel: the slopes the normal map can no longer show widen the
+// highlight instead (a Toksvig-style correction; keeps far ground from turning glossy or satin)
+float lRoughAt(float r, float tilesPerPx){ float v = smoothstep(0.004, 0.06, tilesPerPx); return mix(r, max(sqrt(r*r+0.35), 0.9), v); }
 // occlusion relative to the layer's mean: local cavity contrast only (a recipe sets the overall tone by its grade)
 float lAO(float ao, int k){ return clamp(ao/max(uLayerMB[k].a, 0.3), 0.0, 1.0); }
 // grain for a magnified scan: the same layer, uLayerD[k].x times finer, as albedo contrast and extra relief
 void lDetail(int k, vec2 st, vec2 dx, vec2 dy, mat2 R, inout Surf s){
   vec4 D = uLayerD[k];
-  float m = D.y*(1.0-smoothstep(0.45, 1.3, max(length(dx), length(dy))*D.z));   // texels per pixel: under one means magnified
+  float m = D.y*(1.0-smoothstep(0.45, 1.3, sqrt(length(dx)*length(dy))*D.z));   // texels per pixel (geometric mean): under one means magnified
   if (D.x <= 0.0 || m <= 0.0) return;
   vec3 c = vec3(st*D.x+vec2(0.37, 0.71), float(k));
   vec4 a = textureGrad(tLayerA, c, dx*D.x, dy*D.x), b = textureGrad(tLayerB, c, dx*D.x, dy*D.x);
@@ -99,10 +105,10 @@ Surf layerSampleST(int k, vec2 st, vec2 dx, vec2 dy, float ang){
   float cs = cos(ang), sn = sin(ang); mat2 R = mat2(cs, sn, -sn, cs);
   vec3 c = vec3(st, float(k));
   vec4 a = textureGrad(tLayerA, c, dx, dy), b = textureGrad(tLayerB, c, dx, dy);
-  Surf s; s.alb = a.rgb; s.h = a.a; s.d = lSlope(b.xy, R, k); s.rough = lRoughAt(b.b, tFp*uLayerK[k].x); s.ao = lAO(b.a, k);
+  Surf s; s.alb = a.rgb; s.h = a.a; s.d = lSlope(b.xy, R, k); s.rough = lRoughAt(b.b, tFpG*uLayerK[k].x); s.ao = lAO(b.a, k); s.sp = 1.0;
   // the caller's mapping is st = scale * R * world (x, -z); its scale from the footprint it passed
   float sc = length(dx)/max(length(lFootX()), 1e-6);
-  s.sh = lSunVis(k, st, R*lSunTex()*sc, max(log2(max(length(dx), 1e-6)*uLayerD[k].z), 0.0));
+  s.sh = lSunVis(k, st, R*lSunTex()*sc, max(log2(max(sqrt(length(dx)*length(dy)), 1e-6)*uLayerD[k].z), 0.0));
   lDetail(k, st, dx, dy, R, s);
   return s;
 }
@@ -111,7 +117,7 @@ Surf layerSampleST(int k, vec2 st, vec2 dx, vec2 dy, float ang){
 // layer mean, which costs one cached tap.
 Surf layerSample(int k){
   vec4 K = uLayerK[k], P = uLayerP[k];
-  float tpp = tFp*K.x;                                   // texture tiles per pixel
+  float tpp = tFpG*K.x;                                  // texture tiles per pixel (geometric mean of the footprint)
   float far = smoothstep(0.035, 0.12, tpp);
   if (far >= 1.0) return layerMean(k);
   bool nrm = tpp < 0.05;                                 // normals, roughness and occlusion average out first
@@ -141,10 +147,10 @@ Surf layerSample(int k){
   s.alb = A[0].rgb*W.x+A[1].rgb*W.y+A[2].rgb*W.z; s.h = A[0].a*W.x+A[1].a*W.y+A[2].a*W.z;
   s.d = nrm ? (lSlope(B[0].xy, R[0], k)*W.x+lSlope(B[1].xy, R[1], k)*W.y+lSlope(B[2].xy, R[2], k)*W.z)*(1.0-smoothstep(0.025, 0.05, tpp)) : vec2(0.0);
   s.rough = lRoughAt(B[0].b*W.x+B[1].b*W.y+B[2].b*W.z, tpp); s.ao = lAO(B[0].a*W.x+B[1].a*W.y+B[2].a*W.z, k);
-  s.sh = 1.0;
-  if (tFp < 0.032){ // micro-shadows, marched in the cell that leads here
+  s.sh = 1.0; s.sp = 1.0;
+  if (tFpG < 0.032){ // micro-shadows, marched in the cell that leads here
     int m = W.x >= W.y && W.x >= W.z ? 0 : (W.y >= W.z ? 1 : 2);
-    s.sh = lSunVis(k, ST[m], R[m]*lSunTex()*K.x, max(log2(length(dX)*uLayerD[k].z), 0.0));
+    s.sh = lSunVis(k, ST[m], R[m]*lSunTex()*K.x, max(log2(sqrt(length(dX)*length(dY))*uLayerD[k].z), 0.0));
   }
   if (far > 0.0) s = surfMix(s, layerMean(k), far);
   else lDetail(k, uL+P.zw, dX, dY, mat2(1.0), s);
@@ -152,7 +158,7 @@ Surf layerSample(int k){
 }
 // write a surface into shadeTerrain's outputs; k scales the normal detail. Switches the pixel to the layered lighting.
 void surfApply(Surf s, float k, inout vec3 alb, inout vec3 N){
-  alb = s.alb; N = normalize(N+vec3(s.d.x, 0.0, s.d.y)*k); tRough = s.rough; tAO = s.ao; tSh = s.sh; tW = 1.0;
+  alb = s.alb; N = normalize(N+vec3(s.d.x, 0.0, s.d.y)*k); tRough = s.rough; tAO = s.ao; tSh = s.sh; tSpec = s.sp; tW = 1.0;
 }
 `;
 const PACK_FRAG = /* glsl */`
@@ -313,12 +319,20 @@ float heroShadow(vec3 P){
   if (uShadowK.x < 0.5) return 1.0;
   vec4 s4 = uShadowMat*vec4(P, 1.0); vec3 s = s4.xyz/s4.w;
   if (s.x <= 0.0 || s.x >= 1.0 || s.y <= 0.0 || s.y >= 1.0 || s.z >= 1.0 || s.z <= 0.0) return 1.0;
-  float acc = 0.0;
-  for (int j=-1;j<=1;j++) for (int i=-1;i<=1;i++){
-    float dz = dot(texture2D(tShadow, s.xy+vec2(float(i),float(j))*uShadowK.y*uShadowK.z), vec4(5.9371964e-8, 1.5199223e-5, 3.8910506e-3, 0.99609375));
-    acc += step(s.z-0.0012, dz);
+  // bilinear PCF: every tap compares the four texels round it and blends the results by its position between them,
+  // so the edge is a smooth ramp instead of a staircase of shadow-map texels; a 2 x 2 of such taps, a texel apart and
+  // spread by the softness, gives a tent-filtered penumbra
+  vec2 ts = vec2(uShadowK.y), sp = ts*uShadowK.z*0.75;
+  const vec4 UNPACK = vec4(5.9371964e-8, 1.5199223e-5, 3.8910506e-3, 0.99609375);
+  float acc = 0.0, zr = s.z-0.0012;
+  for (int j=0;j<2;j++) for (int i=0;i<2;i++){
+    vec2 c = (s.xy+(vec2(float(i), float(j))-0.5)*sp*2.0)/ts-0.5, b = floor(c), f = c-b;
+    vec2 t0 = (b+0.5)*ts;
+    float a00 = step(zr, dot(texture2D(tShadow, t0), UNPACK)), a10 = step(zr, dot(texture2D(tShadow, t0+vec2(ts.x, 0.0)), UNPACK));
+    float a01 = step(zr, dot(texture2D(tShadow, t0+vec2(0.0, ts.y)), UNPACK)), a11 = step(zr, dot(texture2D(tShadow, t0+ts), UNPACK));
+    acc += mix(mix(a00, a10, f.x), mix(a01, a11, f.x), f.y);
   }
-  return acc/9.0;
+  return acc*0.25;
 }
 // detail-texture coordinates for scale slot i, anchored with a double-precision phase so they stay stable
 // right under the camera
@@ -383,7 +397,7 @@ void main(){
   else { m0 = mix(textureLod(tM0Far, uf, lf), textureLod(tM0Near, un, ln), bn); m1 = mix(textureLod(tM1Far, uf, lf), textureLod(tM1Near, un, ln), bn); }
   vec3 alb; float spec = 0.0;
 #ifdef TERRAIN_LAYERS
-  tFp = fp; vec3 tN0 = N;
+  tFp = fp; tFpG = across*sqrt(min(stretch, 5.0)); vec3 tN0 = N;
 #endif
   shadeTerrain(w*0.001, h0, N, lap, m0, m1, fp, dist, alb, spec);
   N = normalize(N);
@@ -394,6 +408,11 @@ void main(){
   float on = nl*(0.84+0.30*s/max(tt,0.05));
   float sh = m0.a*terrainSunShadow(w, h0)*heroShadow(vRel+vec3(0.0, 0.04, 0.0));
   vec3 amb = texture2D(tAmbient, vec2(0.5)).rgb;
+#ifdef TERRAIN_AMB_SAT
+  // sky light on the ground: under broken cloud and with the sunlit desert around, it is far less blue than the clear
+  // sky's own irradiance (recipe.ambSat < 1 takes some of its saturation out, keeping its brightness)
+  amb = mix(vec3(dot(amb, vec3(0.2126, 0.7152, 0.0722))), amb, TERRAIN_AMB_SAT);
+#endif
   float ao = clamp(1.0+lap*30.0, 0.55, 1.0);
   vec3 col = alb*0.3183*(uSunGround*max(on,0.0)*sh + amb*ao*(0.55+0.45*N.y));
   { // dry-ground sheen towards the sun at grazing angles
@@ -411,12 +430,6 @@ void main(){
     float sc2 = dot(uSunDir, V)-nlc*nv, tc = sc2 > 0.0 ? max(nlc, nv) : 1.0;
     float onc = nlc*(0.84+0.30*sc2/max(tc, 0.05));
     float msh = mix(1.0, smoothstep(0.15, 0.95, tAO), 0.55*(1.0-nlc)*smoothstep(0.012, 0.04, tFp))*tSh;   // cavities lose a grazing sun first (marched micro-shadows close up)
-#ifndef TERRAIN_AMB_SAT
-#define TERRAIN_AMB_SAT 1.0
-#endif
-    // sky light on the ground: under broken cloud and with the sunlit desert around, it is far less blue than the clear
-    // sky's own irradiance (recipe.ambSat < 1 takes some of its saturation out, keeping its brightness)
-    vec3 amb = mix(vec3(dot(amb, vec3(0.2126, 0.7152, 0.0722))), amb, TERRAIN_AMB_SAT);
     vec3 cl = alb*0.3183*(uSunGround*max(onc,0.0)*sh*msh + amb*ao*tAO*(0.55+0.45*N.y));
     vec3 Hh = normalize(uSunDir+V); float nh = max(dot(N,Hh),0.0), vh = clamp(dot(V,Hh), 0.0, 1.0);
     float a = max(tRough*tRough, 0.03), a2 = a*a, dd = nh*nh*(a2-1.0)+1.0, D = a2/(3.14159*dd*dd);
@@ -424,9 +437,9 @@ void main(){
     // Smith visibility, capped: clods and pebbles shadow and mask far more than a microfacet height field at grazing
     // angles, so rough ground keeps a soft forward sheen instead of a mirror-like glare
     float Vis = min(0.5/(nlc*sqrt(nv2*nv2*(1.0-a2)+a2)+nv2*sqrt(nlc*nlc*(1.0-a2)+a2)+1e-4), mix(4.0, 0.9, smoothstep(0.55, 0.9, tRough)));
-    cl += uSunGround*sh*msh*tAO*D*Vis*(tF0+(1.0-tF0)*pow(1.0-vh, 5.0))*nlc;
+    cl += uSunGround*sh*msh*tAO*tSpec*D*Vis*(tF0+(1.0-tF0)*pow(1.0-vh, 5.0))*nlc;
     float fs = tF0+(max(1.0-tRough, tF0)-tF0)*pow(1.0-nv, 5.0);
-    cl += (tRough < 0.75 ? mix(skyRefl(reflect(-V, N)), amb*0.3183, tRough*tRough) : amb*0.3183)*fs*tAO*ao;   // rough ground: the sky's average will do
+    cl += (tRough < 0.75 ? mix(skyRefl(reflect(-V, N)), amb*0.3183, tRough*tRough) : amb*0.3183)*fs*tAO*tSpec*ao;   // rough ground: the sky's average will do
     col = mix(col, cl, tW);
   }
 #endif
@@ -453,6 +466,7 @@ void main(){
   else if (uDebug == 5) col = vec3(nl*4.0);
   else if (uDebug == 6) col = vec3(tRough);
   else if (uDebug == 9) col = vec3(tSh);
+  else if (uDebug == 10) col = vec3(tW, tSpec, 0.0);
 #endif
   gl_FragColor = vec4(sc.rgb+col*cov, 1.0);
 }`;
@@ -496,7 +510,7 @@ export class Terrain {
   //           scales: detail slots, near: {center:[xkm,zkm], extent km, res}, far: {center, extent, res}, groundAlt,
   //           uniforms: extra uniforms for the shading pass, defines: GLSL prepended to it,
   //           layers / layerSize / layerAniso / layerAnisoB: photoscanned materials (see above), partialGround: bool,
-  //           ambSat: saturation of the sky light on the layered ground (default 1) }
+  //           ambSat: saturation of the sky light on the ground (default 1: the sky's own) }
   constructor(pipe, recipe) {
     this.pipe = pipe; this.recipe = recipe;
     const mk = (res, type, fmt, mip) => {
@@ -589,6 +603,18 @@ export class Terrain {
     mean.dispose(); mp.material.dispose();
     this.uniforms.tLayerA.value = A.texture; this.uniforms.tLayerB.value = B.texture;
     return this;
+  }
+  // per-shot anisotropic filtering of the two layer arrays (a: albedo + height, b: normal + roughness + occlusion)
+  setLayerAniso(a, b = a) {
+    if (!this.layerA || !this.uniforms.tLayerA.value) return;
+    const r = this.pipe.renderer, gl = r.getContext(), ext = r.extensions.get('EXT_texture_filter_anisotropic');
+    if (!ext) return;
+    const key = `${a}:${b}`; if (this._aniso === key) return; this._aniso = key;
+    for (const [t, v] of [[this.layerA, a], [this.layerB, b]]) {
+      const tex = r.properties.get(t.texture).__webglTexture; if (!tex) continue;
+      t.texture.anisotropy = Math.min(v, this.pipe.maxAniso);
+      r.state.bindTexture(gl.TEXTURE_2D_ARRAY, tex); gl.texParameterf(gl.TEXTURE_2D_ARRAY, ext.TEXTURE_MAX_ANISOTROPY_EXT, Math.max(1, t.texture.anisotropy)); r.state.unbindTexture();
+    }
   }
   // deferred hook: called by the pipeline after the opaque scene pass
   shade(renderer, sceneTex, target) {

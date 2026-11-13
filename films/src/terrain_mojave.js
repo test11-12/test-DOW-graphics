@@ -470,7 +470,24 @@ void shadeTerrain(vec2 p, float h, inout vec3 N, float lap, vec4 m0, vec4 m1, fl
     vec3 graded = vec3(0.50,0.42,0.31)*(0.86+0.28*n3)*(0.92+0.16*n4)*(0.9+0.2*t5.r);
     float gl2 = dn(vec2(f.x*0.02, f.y), 0.11, fp).r;
     graded *= 0.94+0.12*gl2;
+#ifdef SCRUB_FIELD_GLSL
+    alb = mix(alb, graded, gk*0.8);
+    { // the dressed scrub (src/scrub_mojave.js) where its plants are not drawn: their cover tints the graded ground, as
+      // the drawn plants would hide it, so the scrub band thins into the distance instead of ending on a line
+      vec2 sd = scrubD(wxz);
+      float lam = (sd.x+sd.y)*(1.0-scrubDrawn(dist*uPixAngle)*scrubInst(wxz))/(SCRUB_PITCH*SCRUB_PITCH);
+      if (lam > 0.0){
+        vec3 V = -normalize(vRel);
+        float gr = sd.x/max(sd.x+sd.y, 1e-4)*0.86;
+        float cover = 1.0-exp(-lam*mix(0.9, 0.5, gr)/max(V.y, 0.03));
+        float back = smoothstep(-0.3, 0.8, dot(normalize(-V.xz), normalize(uSunDir.xz)));
+        vec3 veg = mix(mix(vec3(0.13, 0.135, 0.1), vec3(0.4, 0.33, 0.21), gr), mix(vec3(0.045, 0.045, 0.035), vec3(0.22, 0.17, 0.1), gr), back);
+        alb = mix(alb, veg, cover);
+      }
+    }
+#else
     alb = mix(alb, mix(graded, alb, 0.35*vv), gk*0.8);
+#endif
     // perimeter track on the far side of the runway
     float pt = abs(f.y+96.0);
     float ruts = exp(-sq((pt-0.85)/0.3));

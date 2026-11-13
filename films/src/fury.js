@@ -88,7 +88,7 @@ async function build(film) {
   const GU = { tGround: { value: ground }, uGround: { value: new THREE.Vector4(3.0, ground ? 1 : 0, 0, 0) }, uAcAO: { value: new THREE.Vector4() },
     uAcGear: { value: new THREE.Vector4(FURY.noseGear.x, FURY.mainGear.x, FURY.mainGear.z, 0.155) } };
   const scans = !film.off.has('scans');   // photoscanned ground layers and impostor scrub (off=scans: the procedural ground and scrub as before)
-  const terrain = new Terrain(pipe, { ...MOJAVE_TERRAIN, ...(scans ? { layers: MOJAVE_LAYERS, layerAniso: 4, layerAnisoB: 1, partialGround: true } : {}), uniforms: { ...cs.uniforms, ...GU }, defines: cs.defines, near: { ...MOJAVE_TERRAIN.near, res: nearRes }, far: { ...MOJAVE_TERRAIN.far, res: film.quality.lowTerrain ? 1024 : 2048 } });
+  const terrain = new Terrain(pipe, { ...MOJAVE_TERRAIN, ...(scans ? { layers: MOJAVE_LAYERS, layerAniso: 4, layerAnisoB: 1, partialGround: true } : {}), uniforms: { ...cs.uniforms, ...GU }, defines: cs.defines + (scans ? SCRUB_FIELD_MOJAVE.glsl : ''), near: { ...MOJAVE_TERRAIN.near, res: nearRes }, far: { ...MOJAVE_TERRAIN.far, res: film.quality.lowTerrain ? 1024 : 2048 } });
   lap('clouds+terrain ctor');
   // airfield dressing (group origin = runway midpoint)
   const field = new THREE.Group(); field.name = 'field';

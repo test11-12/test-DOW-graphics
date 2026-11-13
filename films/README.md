@@ -119,10 +119,14 @@ node tools/blender.mjs <generator> [args]     # Blender from $BLENDER, else /opt
 
 - `blender/ground_tex.py` writes the tiling ground material sets in `assets/shared/tex/ground/` (albedo,
   a grey two-up x|y normal, packed occlusion / roughness / height) that the terrain's material layers read.
-- `blender/scrub.py [--film=NAME --sun=AZ,EL]` bakes the desert scrub: each scanned plant rendered in Cycles
-  from 16 azimuths under the film's own sun, as two light groups (sun, sky) that the film relights, plus a
-  top-down shadow and occlusion decal per plant. It writes `assets/<film>/tex/scrub_*.webp` and
-  `src/scrub_atlas_<film>.js`; `src/scrub.js` draws them (see "Scrub" below). Re-bake when a film's sun moves.
+- `blender/scrub.py [--film=NAME --sun=AZ,EL --samples=N --probe=sheet.png]` bakes the desert scrub: each plant
+  (built from scanned parts in the real species' growth form: multi-stemmed creosote, rounded saltbush and
+  burrobush mounds, single bunchgrass bunches, dry grass round the shrubs' bases) rendered in Cycles from 16
+  azimuths under the film's own sun, as two light groups (sun, sky) that the film relights, plus a top-down shadow
+  and occlusion decal per plant. It writes `assets/<film>/tex/scrub_*.webp` and `src/scrub_atlas_<film>.js`;
+  `src/scrub.js` draws them (see "Scrub" below). Re-bake when a film's sun moves (film 1: `--sun=68,8`, film 2:
+  `--sun=305,7`; about an hour each on a busy 4-core machine). `--probe` renders two views of every plant to one
+  sheet and stops (a few minutes): use it to judge shape and colour first.
 
 Photoscanned materials and models come from [Poly Haven](https://polyhaven.com) and
 [ambientCG](https://ambientcg.com), both CC0.
@@ -179,18 +183,29 @@ the anisotropy of the two arrays (albedo + height; normal + roughness + occlusio
 lays the scan over itself k times finer (k a whole number) where the camera magnifies it; `relief` (metres per
 unit of the height channel) marches the scan's height field towards the sun within a few centimetres per pixel,
 so stones, cracks and broom ridges cast their own shadows under a low sun (`Surf.sh`, debug view `uDebug = 9`).
-Recipe options: `partialGround: true` finds the ground behind half-covered pixels (the fine blades at a plant's
-edge) instead of shading it on the impostor's plane; `ambSat` (0..1) takes saturation out of the sky light on
-the layered ground. Heights are R32F, or hi + lo in RG16F on GPUs without `OES_texture_float_linear` (`?hsplit=1`
-forces that path for testing); read them with `hLod()` / `hRead()`, which add the parts.
+Detail, normals, micro-shadows and the roughness that replaces lost normal detail (Toksvig-style) are gated on the
+pixel's geometric-mean footprint `tFpG`, so ground seen at a grazing angle keeps its across-view grain;
+`terrain.setLayerAniso(a, b)` sets the arrays' anisotropic filtering per shot (film 1 uses 8 / 8 when the camera
+is within 1.2 m of the ground, 4 / 1 otherwise). `Surf.sp` is specular occlusion (recessed joints and cracks lose
+the slab's sheen). Recipe options: `partialGround: true` finds the ground behind half-covered pixels (the fine
+blades at a plant's edge) instead of shading it on the impostor's plane; `ambSat` (0..1) takes saturation out of
+the sky light on the ground (and on the scrub, which reads it). The hero objects' shadow on the ground is
+bilinear-PCF filtered (no texel staircase). Heights are R32F, or hi + lo in RG16F on GPUs without
+`OES_texture_float_linear` (`?hsplit=1` forces that path for testing); read them with `hLod()` / `hRead()`,
+which add the parts.
 
 **Scrub** (`src/scrub.js`): `await buildScrub(pipe, { atlas, terrain, clouds, field })` returns
 `{ group, update(camera, film) }`. Plants are impostors relit from the baked sun and sky light groups, with
-baked ground-shadow decals; nothing is stored per plant. A field (`{ pitch, cell, bounds, density, species,
-glsl, sizes, tone }`, GLSL `scrubD` (grass, shrubs per slot), `scrubDensity`, `scrubGrassy`, `scrubDrawn`) says
-where plants grow and how big and bright each species is (`sizes`: scale on the baked plant, `tone`: gain on its
-baked albedo, or `[gain, saturation]`); the film's terrain recipe includes the same GLSL so the ground's tone
-stands in for plants too small to draw. Keep the scrub as the photographs show it: low (creosote under about
+baked ground-shadow decals; nothing is stored per plant. Their coverage is kept solid with distance (alpha scaled
+by mip level, then sharpened to a one-pixel edge) and the two nearest baked views morph by their alpha instead of
+cross-fading (no ghosts, no double exposure); each plant gets its own small tone departure. A field (`{ pitch,
+cell, bounds, density, species, glsl, sizes, tone, clump, scaleAt }`, GLSL `scrubD` (grass, shrubs per slot over
+the whole dressed ground), `scrubInst` (the share drawn as plants), `scrubDensity`, `scrubGrassy`, `scrubDrawn`)
+says where plants grow and how big and bright each species is (`sizes`: scale on the baked plant, `tone`:
+`[gain, saturation]` on its baked albedo, before the light; `clump`: up to this many bunchgrass bunches per grass
+slot; `scaleAt(x, z)`: a size factor by place); the film's terrain recipe includes the same GLSL and tints the
+ground with the cover of every plant not drawn (too small, or outside the instanced field), so the plants hand
+over to the ground's tone without a line. Keep the scrub as the photographs show it: low (creosote under about
 1.5 m), metres apart, graded strips beside the pavement. Film 1: `SCRUB_FIELD_NM` (in `scrub.js`); film 2:
 `src/scrub_mojave.js`.
 
