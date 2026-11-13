@@ -1,0 +1,21 @@
+{
+  "voice": "am_michael", "speed": 0.98,
+  "lines": [
+    { "id": "n01", "t": 1.1,  "text": "Edwards Air Force Base, California.", "say": "Edwards Air Force Base, California." },
+    { "id": "n02", "t": 6.6,  "text": "This is Anduril's YFQ-44A Fury. No cockpit, because no pilot.", "say": "This is Anduril's Y F Q forty-four A Fury. No cockpit, because no pilot." },
+    { "id": "n03", "t": 12.6, "text": "It first flew on Halloween, 2025.", "say": "It first flew on Halloween, twenty twenty-five." },
+    { "id": "n04", "t": 15.8, "text": "Under its wing: an AIM-120 AMRAAM. Since February it had flown with an inert one. This time it would fire.", "say": "Under its wing: an A I M one-twenty, Am-ram. Since February it had flown with an inert one. This time, it would fire." },
+    { "id": "n05", "t": 24.3, "text": "It took off from Edwards with the 412th Test Wing.", "say": "It took off from Edwards, with the four-twelfth Test Wing." },
+    { "id": "n06", "t": 29.3, "text": "Over the Mojave, in what the Air Force calls secluded airspace.", "say": "Over the Mojave, in what the Air Force calls secluded airspace." },
+    { "id": "n07", "t": 34.3, "text": "Anduril's account is short. Its Lattice software ingested a target track.", "say": "Anduril's account is short. Its Lattice software ingested a target track." },
+    { "id": "n08", "t": 39.4, "text": "An operator tasked the aircraft to engage.", "say": "An operator tasked the aircraft to engage." },
+    { "id": "n09", "t": 42.2, "text": "The Fury fired as instructed.", "say": "The Fury fired, as instructed." },
+    { "id": "n10", "t": 44.6, "text": "A human gave the order. The aircraft took the shot.", "say": "A human gave the order. The aircraft took the shot." },
+    { "id": "n11", "t": 48.4, "text": "Fox three.", "say": "Fox three." },
+    { "id": "n12", "t": 52.7, "text": "The target existed only as data.", "say": "The target existed only as data." },
+    { "id": "n13", "t": 55.3, "text": "The War Zone calls it the first live missile shot by any American CCA-type drone.", "say": "The War Zone calls it the first live missile shot by any American C C A type drone." },
+    { "id": "n14", "t": 61.0, "text": "Anduril called it an end-to-end, beyond-line-of-sight strike.", "say": "Anduril called it an end-to-end, beyond-line-of-sight strike." },
+    { "id": "n15", "t": 66.2, "text": "The Air Force's chief of staff: one step closer to delivering capabilities to the warfighter.", "say": "The Air Force's chief of staff: one step closer to delivering capabilities to the warfighter." },
+    { "id": "n16", "t": 73.4, "text": "Production orders for both CCA designs were announced in June.", "say": "Production orders for both C C A designs were announced in June." }
+  ]
+}

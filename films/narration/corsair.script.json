@@ -1,0 +1,16 @@
+{
+  "voice": "am_michael", "speed": 0.97,
+  "lines": [
+    { "id": "n01", "t": 1.2,  "text": "The Strait of Hormuz. July 12, 2026.", "say": "The Strait of Hormuz. July twelfth, twenty twenty-six." },
+    { "id": "n02", "t": 7.2,  "text": "This is a Corsair. Twenty-four feet long. Nobody aboard.", "say": "This is a Corsair. Twenty-four feet long. Nobody aboard." },
+    { "id": "n03", "t": 14.7, "text": "Saronic's figures: better than 35 knots, a thousand nautical miles, a thousand pounds of payload.", "say": "Saronic's figures: better than thirty-five knots, a thousand nautical miles, a thousand pounds of payload." },
+    { "id": "n04", "t": 22.6, "text": "On July 12, three of them ran in on Iran's naval base at Bandar Abbas.", "say": "On July twelfth, three of them ran in on Iran's naval base at Bandar Abbas." },
+    { "id": "n05", "t": 28.9, "text": "Central Command released two views of the attack. One from overhead, in infrared.", "say": "Central Command released two views of the attack. One from overhead, in infrared." },
+    { "id": "n06", "t": 36.9, "text": "The other from a camera on a bow, closing on a pier.", "say": "The other, from a camera on a bow, closing on a pier." },
+    { "id": "n07", "t": 43.3, "text": "The War Zone's read of that footage: what looks to be a Ghadir-class midget submarine, sitting on the dock.", "say": "The War Zone's read of that footage: what looks to be a Gha-deer class midget submarine, sitting on the dock." },
+    { "id": "n08", "t": 55.0, "text": "Central Command's account: three Corsairs hit the port.", "say": "Central Command's account: three Corsairs hit the port." },
+    { "id": "n09", "t": 58.9, "text": "It called the strike the first time American forces have employed sea drones in combat.", "say": "It called the strike the first time American forces have employed sea drones in combat." },
+    { "id": "n10", "t": 65.3, "text": "What the Pentagon has not said: where the boats launched, what they carried, and how much of the decision was a machine's.", "say": "What the Pentagon has not said: where the boats launched, what they carried, and how much of the decision was a machine's." },
+    { "id": "n11", "t": 73.3, "text": "The Navy signed a production contract for the Corsair in December. Seven months later, it was at war.", "say": "The Navy signed a production contract for the Corsair in December. Seven months later, it was at war." }
+  ]
+}
