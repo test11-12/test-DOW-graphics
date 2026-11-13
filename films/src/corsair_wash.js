@@ -147,18 +147,29 @@ export class BoatWash {
     }
     return c;
   }
+  // the exact pose at a film time (no cache, no rounding): the waterline and the footprint must sit where the hull is
+  // drawn, which is placed at the exact time, also at the jittered times of an accumulated frame
+  poseNow(time) {
+    const c = this._now || (this._now = { p: new THREE.Vector3(), ex: new THREE.Vector3(), ey: new THREE.Vector3(), ez: new THREE.Vector3() });
+    this.poseAt(time, c.p, this._q);
+    c.ex.set(1, 0, 0).applyQuaternion(this._q); c.ey.set(0, 1, 0).applyQuaternion(this._q); c.ez.set(0, 0, 1).applyQuaternion(this._q);
+    return c;
+  }
   // the waterline now: where each station's topside meets the sea
   solve(ocean, t) {
-    const P = this.pose(t), w = this._a;
+    const P = this.poseNow(t), w = this._a;
     for (let side = 0; side < 2; side++) {
       const sg = side ? 1 : -1, H = this.hw[side], B = this.bw[side];
       for (let i = 0; i < NST; i++) {
         const x = XS[i], k0 = zk(x), top = zg(x);
-        let h = H[i] || -0.3;
-        for (let it = 0; it < 4; it++) {
+        // from the same start every frame and iterated to convergence: the answer does not depend on which frame was
+        // rendered before (an accumulated frame, a worker's first frame and a retry all agree)
+        let h = -0.3;
+        for (let it = 0; it < 24; it++) {
           const b = hullHalf(x, h);
           w.copy(P.p).addScaledVector(P.ex, x).addScaledVector(P.ey, h).addScaledVector(P.ez, sg * b);
-          h = clamp(h + (ocean.heightAt(w.x, w.z, t) - w.y) / Math.max(P.ey.y, 0.5), k0 - 0.4, top + 0.1);
+          const h1 = clamp(h + (ocean.heightAt(w.x, w.z, t) - w.y) / Math.max(P.ey.y, 0.5), k0 - 0.4, top + 0.1), dh = h1 - h;
+          h = h1; if (Math.abs(dh) < 1e-4) break;
         }
         H[i] = h; B[i] = h > k0 ? hullHalf(x, h) : 0;
       }
@@ -245,7 +256,7 @@ export class BoatWash {
   }
   // the footprint for the ocean's contact foam: world position, heading, half-breadths, spray root, strength
   footprint(t, speed) {
-    const c = this.pose(t), l = Math.hypot(c.ex.x, c.ex.z) || 1;
+    const c = this.poseNow(t), l = Math.hypot(c.ex.x, c.ex.z) || 1;
     return { x: c.p.x, z: c.p.z, fx: c.ex.x / l, fz: c.ex.z / l, b: this.foot, xr: this.xr, k: smooth(5, 14, speed) };
   }
 }

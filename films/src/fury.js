@@ -491,12 +491,12 @@ startFilm({
       for (const e of W.acM) { e.m.roughness = Math.min(1, e.r * m.rough); e.m.envMapIntensity = e.e * m.env; }
       for (const e of W.mslM) { e.m.roughness = Math.min(1, e.r * m.mrough); e.m.envMapIntensity = e.e * m.menv; } }
     if (W.glow.visible && W.glow.userData.minPx) {   // the motor's flame never smaller than a few pixels: a point of light leading the trail
-      const pxPerM = film.pipe.h / (2 * Math.tan(c.fov * Math.PI / 360)) / Math.max(1, W.msl.getWorldPosition(tA).add(film.origin).distanceTo(c.pos));
+      const pxPerM = film.pipe.h / (film.pipe.ss || 1) / (2 * Math.tan(c.fov * Math.PI / 360)) / Math.max(1, W.msl.getWorldPosition(tA).add(film.origin).distanceTo(c.pos));
       const u = W.glow.material.uniforms.uSize; u.value = Math.max(u.value, W.glow.userData.minPx / pxPerM);
     }
     W.scrub.visible = shot.id === 's04' && !film.off.has('scrub');
     if (W.scrub.visible) { // thin the scrub out with distance: plants under about a pixel are skipped
-      const pxPerM = film.pipe.h / (2 * Math.tan(c.fov * Math.PI / 360));
+      const pxPerM = film.pipe.h / (film.pipe.ss || 1) / (2 * Math.tan(c.fov * Math.PI / 360));
       for (const im of W.scrub.children) {
         const u = im.userData, d = Math.hypot(u.cx - c.pos.x, u.cz - c.pos.z, FIELD_ALT - c.pos.y);
         const f = clamp((0.55 * pxPerM / Math.max(d - 130, 30) - 0.8) / 1.7, 0, 1);

@@ -786,13 +786,19 @@ void main(){
 // over sub-renders, read back by the final pass once
 const ACCUM_FRAG = /* glsl */`
 precision highp float;
-uniform sampler2D tColor, tBloom, tRays, tFlare, tAcc;
+uniform sampler2D tColor, tBloom, tRays, tFlare, tAcc, tDepth;
 uniform vec4 uK;              // bloom, rays, flare strength, exposure (this sub-render's weight)
-uniform vec3 uBloomTint; uniform float uFirst;
+uniform vec3 uBloomTint; uniform float uFirst, uLogFar;
+uniform vec2 uRaysNear;       // as in the final pass: shafts weighted by this sub-render's own depth
 varying vec2 vUv;
+float raysW(vec2 uv){
+  if (uRaysNear.y <= 0.0) return 1.0;
+  float z = exp2(texture2D(tDepth, uv).x*uLogFar)-1.0;
+  return mix(uRaysNear.x, 1.0, 1.0-exp(-z/uRaysNear.y));
+}
 void main(){
   ivec2 p = ivec2(gl_FragCoord.xy);
-  vec3 c = texture2D(tColor, vUv).rgb + texture2D(tBloom, vUv).rgb*uK.x*uBloomTint + texture2D(tRays, vUv).rgb*uK.y + texture2D(tFlare, vUv).rgb*uK.z;
+  vec3 c = texture2D(tColor, vUv).rgb + texture2D(tBloom, vUv).rgb*uK.x*uBloomTint + texture2D(tRays, vUv).rgb*uK.y*raysW(vUv) + texture2D(tFlare, vUv).rgb*uK.z;
   c = max(c, vec3(0.0))*uK.w;
   gl_FragColor = vec4((uFirst > 0.5 ? vec3(0.0) : texelFetch(tAcc, p, 0).rgb)+c, 1.0);
 }`;
@@ -940,7 +946,7 @@ export class Pipeline {
     this.accum = null;       // set between accumBegin() and accumEnd(): render() then accumulates instead of grading
     this.sunJitter = null;   // { dir:[x,y] rad across the solar disc, texel:[x,y] shadow-map texels } for one sub-render
     this.ss = 1;             // supersampling factor: internal buffers at ss x the canvas
-    this.pAccum = new Pass(ACCUM_FRAG, { tColor: { value: null }, tBloom: { value: null }, tRays: { value: null }, tFlare: { value: null }, tAcc: { value: null }, uK: { value: new THREE.Vector4() }, uBloomTint: { value: new THREE.Vector3(1, 1, 1) }, uFirst: { value: 1 } });
+    this.pAccum = new Pass(ACCUM_FRAG, { tColor: { value: null }, tBloom: { value: null }, tRays: { value: null }, tFlare: { value: null }, tAcc: { value: null }, uK: { value: new THREE.Vector4() }, uBloomTint: { value: new THREE.Vector3(1, 1, 1) }, uFirst: { value: 1 }, tDepth: shared.tDepth, uLogFar: shared.uLogFar, uRaysNear: this.pFinal.u.uRaysNear });
     this.pFinalSS = new Pass(FINAL_FRAG, { ...this.pFinal.u, uSharpenPx: { value: 1 } }, { defines: { SS_FINAL: '' } });
     this.pPresent = new Pass(PRESENT_FRAG, { tIn: { value: null }, tDetail: shared.tDetail, uK: { value: 1 }, uGrain: { value: 0 }, uFade: { value: 1 }, uFrame: shared.uFrame, uMode: this.pFinal.u.uMode, uThermal: this.pFinal.u.uThermal });
 
@@ -1055,7 +1061,7 @@ export class Pipeline {
   // differs per sub-render and converges in the mean; accumEnd() gives the final pass the frame's own seed back
   render(time, frameIndex, post = {}, seed) {
     const r = this.renderer, S = this.shared, cam = this.camera, sc = this.scene, H = this.hero;
-    if (this.prof) { this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }
+    if (this.prof) { if (!this.accum) this.prof = {}; r.getContext().finish(); this._pt = performance.now(); }   // accumulating: sums over the sub-renders
     if (H) H.begin();
     this.frame = frameIndex;
     S.uTime.value = time; S.uFrame.value = (seed ?? frameIndex) % 1024;
@@ -1208,7 +1214,7 @@ export class Pipeline {
       const sv = this._v.copy(this.atmo.sunDir).transformDirection(cam.matrixWorldInverse);
       const P = cam.projectionMatrix.elements;
       if (sv.z < -0.02) {
-        const sx = sv.x / -sv.z * P[0] * 0.5 + 0.5, sy = sv.y / -sv.z * P[5] * 0.5 + 0.5;
+        const sx = (sv.x / -sv.z * P[0] - P[8]) * 0.5 + 0.5, sy = (sv.y / -sv.z * P[5] - P[9]) * 0.5 + 0.5;   // P[8], P[9]: a sub-render's view offset (0 otherwise)
         const off = Math.max(Math.abs(sx - 0.5), Math.abs(sy - 0.5));
         rays *= Math.min(1, Math.max(0, (1.6 - off) / 0.6)) * Math.min(1, -sv.z / 0.25);
         if (rays > 0.001) {
@@ -1313,6 +1319,7 @@ export class Pipeline {
       this.rtAcc = [new THREE.WebGLRenderTarget(w, h, o), new THREE.WebGLRenderTarget(w, h, o)];
     }
     this.accum = { n: 0, i: 0, frame };
+    if (this.prof) this.prof = {};
   }
   accumAdd() {
     const a = this.accum, u = this.pAccum.u, uf = this.pFinal.u;
@@ -1344,6 +1351,7 @@ export class Pipeline {
       p.tIn.value = this.rtOut.texture;
       this.pPresent.render(r, null);
     } else this.pFinal.render(r, null);
+    if (this.prof) { r.getContext().finish(); this._pt = this._pt ?? performance.now(); this.mark('accumEnd'); }
   }
   // one sub-render's shadow light: tilted across the solar disc (0.53 deg) and its shadow-map raster shifted by a
   // fraction of a texel. Only the hero shadow map moves: the sky, sun disc and baked terrain keep the true sun.

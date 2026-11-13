@@ -13,6 +13,7 @@
 // 'all' is refused) and --fps must be the export's. --hero cannot be combined with --accum or --ss yet.
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { launchBrowser, checkGL } from './gpu.mjs';
@@ -49,10 +50,17 @@ if (opt.hero) {
   hero = { nohero: select, herolayer: pathToFileURL(heroDir).href + '/', herofps: FPS };
 }
 if (opt.hero && acc) die('--hero cannot be combined with --accum or --ss yet: the Cycles layer is one image per frame, and the jittered sub-renders would misregister it');
-const dir = path.join(root, 'frames', film, `${W}x${H}@${FPS}` + (acc ? `_a${ACC}_ss${SS}` + (opt.filter ? `_f${opt.filter}` : '') : '') + (opt.hero ? '-hero' : '')); fs.mkdirSync(dir, { recursive: true });
+// the frame cache is keyed by the settings and by the built page's content (a rebuilt film never reuses old frames)
+const pageFile = path.join(root, 'dist', `${film}.offline.html`);
+if (!fs.existsSync(pageFile)) die(`${pageFile} is missing: run "node tools/build.mjs ${film}" first`);
+const build = createHash('sha1').update(fs.readFileSync(pageFile)).digest('hex').slice(0, 8);
+const dir = path.join(root, 'frames', film, `${W}x${H}@${FPS}` + (acc ? `_a${ACC}_ss${SS}` + (opt.filter ? `_f${opt.filter}` : '') : '') + (opt.hero ? '-hero' : '') + `_${build}`); fs.mkdirSync(dir, { recursive: true });
 const out = path.resolve(root, opt.out || `out/${film}${opt.hero ? '-hero' : ''}.mp4`); fs.mkdirSync(path.dirname(out), { recursive: true });
 const url = pathToFileURL(path.join(root, 'dist', `${film}.offline.html`)).href + '?' + new URLSearchParams({ render: '1', w: W, h: H, ...(opt.nres ? { nres: opt.nres } : {}), ...(opt.msaa ? { msaa: opt.msaa } : {}), ...hero });
 const fname = i => path.join(dir, `f_${String(i).padStart(6, '0')}.jpg`);
+// with --hero a cached frame is only good if it is newer than the Cycles layer it was composited from
+const heroBin = i => opt.hero ? path.join(path.resolve(process.cwd(), opt.hero), `hero_${String(i).padStart(6, '0')}.bin`) : null;
+const cached = i => { if (!fs.existsSync(fname(i))) return false; const b = heroBin(i); return !b || !fs.existsSync(b) || fs.statSync(fname(i)).mtimeMs > fs.statSync(b).mtimeMs; };
 
 let glShown = false;
 // a browser with the film loaded; with --gpu the film's own WebGL context is checked every time (a browser that
@@ -76,6 +84,8 @@ async function open() {
 async function frameToDisk(page, i) {
   await page.evaluate(([t, o]) => window.FILM.renderFrame(t, o), [i / FPS, acc]);
   const buf = await page.screenshot({ type: 'jpeg', quality: Q });
+  // a GPU reset (Windows TDR, driver crash) during the readback leaves a black capture: check before keeping it
+  if (await page.evaluate(() => window.FILM.film.pipe.renderer.getContext().isContextLost())) throw new Error('WebGL context lost during the screenshot');
   const tmp = fname(i) + '.tmp'; fs.writeFileSync(tmp, buf); fs.renameSync(tmp, fname(i));
 }
 
@@ -83,7 +93,8 @@ const t0 = Date.now();
 const first = await open();
 const duration = await first.page.evaluate(() => window.FILM.duration);
 const from = Math.round(+(opt.from || 0) * FPS), to = Math.min(Math.round(+(opt.to || duration) * FPS), Math.floor(duration * FPS));
-let todo = []; for (let i = from; i < to; i++) if (opt.force || !fs.existsSync(fname(i))) todo.push(i);
+let todo = []; for (let i = from; i < to; i++) if (opt.force || !cached(i)) todo.push(i);
+if (opt.hero) { const miss = []; for (let i = from; i < to; i++) if (!fs.existsSync(heroBin(i))) miss.push(i); if (miss.length) die(`no Cycles layer for ${miss.length} frame(s) in ${opt.hero} (first: ${miss.slice(0, 8).join(', ')}): export and render those frames, or narrow --from/--to to the exported range`); }
 console.log(`${film}: ${W}x${H}@${FPS}${acc ? `, accum ${ACC}, ss ${SS}` : ''}, frames ${from}..${to - 1}, ${todo.length} to render, ${workers} worker(s)`);
 
 if (!opt['encode-only'] && todo.length) {
@@ -130,7 +141,7 @@ try { await first.browser.close(); } catch (e) { /* closed */ }
 const missing = []; for (let i = from; i < to; i++) if (!fs.existsSync(fname(i))) missing.push(i);
 if (missing.length) { console.error('missing frames:', missing.slice(0, 20).join(','), missing.length > 20 ? '…' : ''); process.exit(1); }
 const ff = ['-y', '-v', 'error', '-framerate', String(FPS), '-start_number', String(from), '-i', path.join(dir, 'f_%06d.jpg'), '-ss', String(from / FPS), '-i', wav,
-  '-frames:v', String(to - from), '-c:v', 'libx264', '-preset', 'slow', '-crf', String(opt.crf || 17), '-pix_fmt', 'yuv420p', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709',
+  '-frames:v', String(to - from), '-vf', 'scale=in_color_matrix=bt601:out_color_matrix=bt709:in_range=pc:out_range=tv', '-c:v', 'libx264', '-preset', 'slow', '-crf', String(opt.crf || 17), '-pix_fmt', 'yuv420p', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709', '-color_range', 'tv',
   '-af', 'alimiter=limit=0.82:attack=2:release=60:level=false', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', out];
 const r = spawnSync('ffmpeg', ff, { stdio: 'inherit' });
 if (r.status !== 0) process.exit(r.status || 1);

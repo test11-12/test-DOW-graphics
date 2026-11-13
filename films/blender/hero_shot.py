@@ -40,6 +40,7 @@ ap.add_argument('--catch-height', type=float, default=60); ap.add_argument('--no
 ap.add_argument('--ground-albedo'); ap.add_argument('--mblur', action='store_true'); ap.add_argument('--dof', action='store_true')
 ap.add_argument('--bounces', type=int, default=8); ap.add_argument('--no-exr', action='store_true'); ap.add_argument('--blend', action='store_true')
 ap.add_argument('--no-lights', action='store_true'); ap.add_argument('--min-samples', type=int, default=0)
+ap.add_argument('--redo', action='store_true')   # render frames whose layer already exists (default: skip them, so a stopped run resumes)
 A = ap.parse_args(d.args())
 EXP = os.path.abspath(A.export); OUT = os.path.abspath(A.out or os.path.join(EXP, 'cycles')); os.makedirs(OUT, exist_ok=True)
 INDEX = json.load(open(os.path.join(EXP, 'shots.json')))
@@ -102,8 +103,14 @@ def pick_device(want):
         if devs:
             for x in prefs.devices: x.use = x.type == t          # the GPU alone: a CPU in the mix slows OptiX down
             sc.cycles.device = 'GPU'; return t, [x.name for x in devs]
+    seen = [(x.name, x.type) for x in prefs.devices]
+    if want != 'CPU':   # never fall back quietly: a GPU sequence on the CPU runs 50-200x slower
+        raise SystemExit(f'--device {want}: Blender found no usable GPU ({seen or "no devices"}). Check the NVIDIA driver '
+                         '(nvidia-smi) and Blender 4.5 (Preferences > System > Cycles Render Devices), or pass --device CPU to render on the CPU.')
     prefs.compute_device_type = 'NONE'; sc.cycles.device = 'CPU'; return 'CPU', [f'{os.cpu_count()} threads']
-DEVICE, DEVNAMES = pick_device(A.device.upper() if A.device != 'auto' else 'auto')
+_want = A.device.upper() if A.device.lower() != 'auto' else 'auto'
+if _want not in ('auto', 'OPTIX', 'CUDA', 'HIP', 'ONEAPI', 'CPU'): raise SystemExit(f'--device {A.device}: use auto, OPTIX, CUDA, HIP, ONEAPI or CPU')
+DEVICE, DEVNAMES = pick_device(_want)
 d.log('device', DEVICE, DEVNAMES)
 W0, H0 = INDEX['size']
 sc.render.resolution_x, sc.render.resolution_y, sc.render.resolution_percentage = W0, H0, int(A.res)
@@ -432,8 +439,9 @@ def pack(exr, st, hero_z):
     col = np.concatenate([Cc, Al[..., None]], -1)[y0:y1, x0:x1].astype(np.float16)
     aux = np.concatenate([S, Zh[..., None]], -1)[y0:y1, x0:x1].astype(np.float32)
     binf = exr[:-4] + '.bin'
-    with open(binf, 'wb') as f:
+    with open(binf + '.tmp', 'wb') as f:   # written whole, then renamed: a crash never leaves a truncated layer
         f.write(struct.pack('<4s7i', b'HRO1', w, h, x0, y0, cw, chh, select_hash(SELECT))); f.write(col.tobytes()); f.write(aux.tobytes())
+    os.replace(binf + '.tmp', binf)
     # preview
     straight = np.where(Al[..., None] > 1e-4, Cc / np.maximum(Al[..., None], 1e-4), 0)
     rgba = np.concatenate([agx_display(straight, st['post']), np.clip(Al, 0, 1)[..., None]], -1)[::-1]
@@ -443,7 +451,17 @@ def pack(exr, st, hero_z):
     return binf, (x0, y0, cw, chh), n_edge
 
 def write_empty(i):
-    with open(os.path.join(OUT, f'hero_{i:06d}.bin'), 'wb') as f: f.write(struct.pack('<4s7i', b'HRO1', RW, RH, 0, 0, 0, 0, select_hash(SELECT)))
+    b = os.path.join(OUT, f'hero_{i:06d}.bin')
+    with open(b + '.tmp', 'wb') as f: f.write(struct.pack('<4s7i', b'HRO1', RW, RH, 0, 0, 0, 0, select_hash(SELECT)))
+    os.replace(b + '.tmp', b)
+
+# a layer is done when it exists, is newer than its export and was rendered for this hero selection
+def layer_done(i):
+    b = os.path.join(OUT, f'hero_{i:06d}.bin')
+    fj = os.path.join(EXP, FR[i]['file']) if i in FR else None
+    if not os.path.exists(b) or (fj and os.path.exists(fj) and os.path.getmtime(b) < os.path.getmtime(fj)): return False
+    with open(b, 'rb') as f: hd = f.read(32)
+    return len(hd) == 32 and struct.unpack('<4s7i', hd)[7] == select_hash(SELECT)
 
 timing = {'device': DEVICE, 'devices': DEVNAMES, 'threads': os.cpu_count(), 'samples': A.samples, 'noise': A.noise, 'size': [RW, RH], 'frames': {}}
 tf = os.path.join(OUT, 'timing.json')
@@ -452,6 +470,7 @@ if os.path.exists(tf):
     except Exception: pass
 for i in FRAMES:
     if state(i) is None: d.log(f'frame {i}: not exported, skipped'); continue
+    if not A.redo and layer_done(i): d.log(f'frame {i}: layer exists, skipped (--redo renders it again)'); continue
     t0 = time.time()
     st, nh, hero_z = setup_frame(i)
     if nh == 0:

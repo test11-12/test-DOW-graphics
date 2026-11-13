@@ -42,6 +42,8 @@ function heroSelect(heroDir, film, wanted) {
   return { info, select };
 }
 const { info, select } = heroSelect(heroDir, film, opt.heroes);
+if (opt.fps && info && +opt.fps !== info.fps) die(`the layers in ${heroDir} are numbered at ${info.fps} fps (${info.file}): leave --fps out, or export and render the heroes at ${opt.fps}`);
+if (opt.accum || opt.ss) die('--hero cannot be combined with --accum or --ss yet: the Cycles layer is one image per frame');
 const FPS = +(opt.fps || info?.fps || 0);   // the frame grid the layers are numbered on (0: the film's own, read below)
 
 const browser = await launchBrowser(opt, ['--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'], ['--allow-file-access-from-files']);   // --gpu: WebGL on the real GPU (tools/gpu.mjs)
@@ -54,6 +56,7 @@ const t0 = Date.now();
 await page.goto(pathToFileURL(path.join(root, 'dist', `${film}.offline.html`)).href + '?' + q);
 await page.waitForFunction(() => window.FILM && window.FILM.ready, null, { timeout: 1800000 });
 await page.evaluate(() => window.FILM.ready);
+if (opt.gpu) await checkGL(page, opt, 'film');
 console.log(`${film}: page ready in ${Math.round((Date.now() - t0) / 1000)} s`);
 // a still is rendered on the layers' frame grid: off the grid the engine would pose the scene up to a frame later
 // than the Cycles hero it loads (floor(t * fps)), misregistering it against the plate and the smoke

@@ -288,7 +288,9 @@ startFilm({
     const O = W.ocean, trs = shot.tracks || [], th = shot.thermal ? 1 : 0;
     // the camera's own velocity, so spray streaks show motion relative to the lens; exposure time from the shutter
     const cA = film.cameraOf(shot, lt, t), cB = film.cameraOf(shot, lt - 0.02, t - 0.02); camVel.copy(cA.pos).sub(cB.pos).multiplyScalar(50);
-    const expo = (shot.post?.shutter ?? 0.22) / 30;
+    // the spray streaks stand in for the shutter; an accumulated frame spreads the drops over the shutter itself, so each
+    // sub-render streaks over its own slice only and the slices join into one smear
+    const expo = (shot.post?.accumShutter ?? shot.post?.shutter ?? 0.22) / 30 / (film.accum?.n > 1 ? film.accum.n : 1);
     O.hulls = [];
     W.boats.forEach((b, i) => {
       const tr = trs[i], p = tr && tr(t), on = !!(p && p.on), w = W.spray[i];
