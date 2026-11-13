@@ -238,7 +238,7 @@ const shots = [
   { id: 's07', name: 'On the rail', t0: 44.0, t1: 46.7, terrain: 'air', shadow: { radius: 2.5, normalBias: 0.008 }, note: 'Simulated wing-station camera looking forward along the missile, the low sun in frame over the cloud deck.',
     pose: (lt, t, f) => poseAir(f, SIG.s07(t), t, { nav: 0 }),
     camera: (lt, t) => { const s = acAt(SIG.s07(t)); attitude(s.hdg, s.pitch, s.roll, q1); return { pos: body(s, [-2.62, -0.63, -2.78], true), look: body(s, [4.5, -0.50, -1.72], true), up: v3(0, 1, 0).applyQuaternion(q1), fov: 60, shake: { rot: 0.16, freq: 3.2, seed: 7, jolt: 0.07 }, focus: body(s, [FURY.station.x, -0.45, -1.2], true), focusRadius: 2.6 }; },
-    post: { ...AIR_POST, ...BACKLIT, rays: 0.35, exposure: 0.17, lensK: 0.06, grain: 0.055, sunDisk: 0.7, flare: { ...FLARE, streak: 0.05 }, envDeck: { alt: 5750, k: 0.9 } } },
+    post: { ...AIR_POST, ...BACKLIT, rays: 0.35, exposure: 0.17, lensK: 0.06, grain: 0.055, sunDisk: 0.7, flare: { ...FLARE, streak: 0.05 }, envDeck: { alt: AIR_CLOUDS.top - 350, k: 0.9 } } },
   { id: 's08', name: 'Fox three', t0: 46.7, t1: 52.2, terrain: 'air', mat: BACKLIT_MAT, note: 'Behind and below on the starboard side, long lens, slow motion, looking into the low sun: the motor lights under the far wing, the missile slides off the rail and outruns the jet, its smoke rolling back past it just under the sun, the edges towards the sun glowing.',
     pose: (lt, t, f) => poseAir(f, SIG.s08(t), t, { blur: V * SLOW / 30 * 0.25, stretch: 1.3 }),
     camera: (lt, t) => { const sig = SIG.s08(t), s = acAt(sig), j = t > T_IGN ? Math.exp(-(t - T_IGN) * 2.2) : 0, m = ease(lt / 5.5);
