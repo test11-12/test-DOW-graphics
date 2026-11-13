@@ -78,6 +78,8 @@ python tools/tts.py quarterhorse --models /path/to/models
 
 ## Offline quality on a GPU machine: accumulation, supersampling, `--gpu`
 
+Step-by-step for a Windows PC with an NVIDIA card: `RENDER_PC.md`.
+
 Everything here is switched off unless asked for; without the flags below, `render.mjs` and `shot.mjs` produce
 exactly the frames they always did (checked: stills before and after this code are bit-identical).
 
@@ -447,6 +449,12 @@ Data puts an RTX 5090 with OptiX very roughly 100-200× above a 4-thread share o
 So a 900-frame close-up sequence (30 s of film) is about 2-3.5 hours of `hero_shot.py` at 256 samples (7.5-15 hours if the
 wall-time row is the right one), plus the engine pass: about 15 minutes with hardware WebGL, 1.25-10 hours on
 SwiftShader. A full-frame 1080p layer is about 50 MB and its EXR about 55 MB: use `--no-exr` for sequences.
+
+**Films 1 and 3.** Both now load their vehicles from `.glb` (`src/quarterhorse_model.js`, `src/corsair_boat.js`) and
+register them as dynamic, so `--heroes=1` path-traces the Quarterhorse and the three Corsairs too. That path has only
+been checked on film 2: neither film defines `def.heroless` yet (their painted contact shadows stay on the plate), and
+the Corsair's engine-side water layer (`corsair_boat.js`) is not carried to Cycles. Check a composite of one frame
+before rendering a sequence of either.
 
 **Limits.** The heroes must come from `.glb` files on both sides (the engine and Blender render the same model).
 Cycles' depth is from the first sample: a covered pixel without one (a soft or thin edge, a first sample that missed)
